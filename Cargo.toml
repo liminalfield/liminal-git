@@ -1,0 +1,51 @@
+[package]
+name = "liminal-field-git"
+version = "0.1.0"
+edition = "2024"
+
+# This creates a dynamic library that Node.js can load
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Git operations - the core library
+git2 = "0.18"
+walkdir = "2.3"
+
+# Node.js native module bindings (optional for testing)
+napi = { version = "3.3", features = ["napi4", "tokio_rt"], optional = true }
+napi-derive = { version = "3.0", optional = true }
+
+# JSON serialization between Rust and JavaScript
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Async runtime (for future file watching, if needed)
+tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
+
+# Error handling
+anyhow = "1.0"
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# Path manipulation
+path-absolutize = "3.1"
+
+# Test utilities
+tempfile = "3.8"
+
+[build-dependencies]
+napi-build = "2.2.3"
+
+[features]
+default = ["napi-binding"]
+napi-binding = ["napi", "napi-derive"]
+
+[dev-dependencies]
+tempfile = "3.8"
+serial_test = "3.0"
+assert_matches = "1.5"
+tokio-test = "0.4"
+criterion = "0.5"
