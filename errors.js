@@ -1,4 +1,4 @@
-"use strict";
+'use strict';
 /**
  * Structured Git Error Handling
  *
@@ -34,7 +34,7 @@
  * }
  * ```
  */
-Object.defineProperty(exports, "__esModule", { value: true });
+Object.defineProperty(exports, '__esModule', { value: true });
 exports.parseStructuredGitError = parseStructuredGitError;
 exports.isFileNotFoundError = isFileNotFoundError;
 exports.isBranchNotFoundError = isBranchNotFoundError;
@@ -72,105 +72,111 @@ exports.isRetryableError = isRetryableError;
  * ```
  */
 function parseStructuredGitError(error) {
-    // Check if it's an Error object with a message
-    if (!error || typeof error !== 'object' || !('message' in error)) {
-        return null;
-    }
-    const message = error.message;
-    // Attempt to parse JSON from the message
-    try {
-        const parsed = JSON.parse(message);
-        // Validate it has the expected structure
-        if (parsed &&
-            typeof parsed === 'object' &&
-            'code' in parsed &&
-            'message' in parsed &&
-            'retriable' in parsed &&
-            'details' in parsed &&
-            typeof parsed.code === 'string' &&
-            typeof parsed.message === 'string' &&
-            typeof parsed.retriable === 'boolean' &&
-            typeof parsed.details === 'object') {
-            return parsed;
-        }
-    }
-    catch {
-        // Not JSON or invalid structure - return null
-        return null;
-    }
+  // Check if it's an Error object with a message
+  if (!error || typeof error !== 'object' || !('message' in error)) {
     return null;
+  }
+  const message = error.message;
+  // Attempt to parse JSON from the message
+  try {
+    const parsed = JSON.parse(message);
+    // Validate it has the expected structure
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      'code' in parsed &&
+      'message' in parsed &&
+      'retriable' in parsed &&
+      'details' in parsed &&
+      typeof parsed.code === 'string' &&
+      typeof parsed.message === 'string' &&
+      typeof parsed.retriable === 'boolean' &&
+      typeof parsed.details === 'object'
+    ) {
+      return parsed;
+    }
+  } catch {
+    // Not JSON or invalid structure - return null
+    return null;
+  }
+  return null;
 }
 /**
  * Type guard: Check if error is a file-not-found error
  */
 function isFileNotFoundError(error) {
-    return error.code === 'FILE_NOT_FOUND';
+  return error.code === 'FILE_NOT_FOUND';
 }
 /**
  * Type guard: Check if error is a branch-not-found error
  */
 function isBranchNotFoundError(error) {
-    return error.code === 'BRANCH_NOT_FOUND';
+  return error.code === 'BRANCH_NOT_FOUND';
 }
 /**
  * Type guard: Check if error is a merge conflict error
  */
 function isMergeConflictError(error) {
-    return error.code === 'MERGE_CONFLICT';
+  return error.code === 'MERGE_CONFLICT';
 }
 /**
  * Type guard: Check if error is an invalid path error
  */
 function isInvalidPathError(error) {
-    return error.code === 'INVALID_PATH';
+  return error.code === 'INVALID_PATH';
 }
 /**
  * Type guard: Check if error is an unstaged-changes-would-be-lost error
  */
 function isUnstagedChangesWouldBeLostError(error) {
-    return error.code === 'UNSTAGED_CHANGES_WOULD_BE_LOST';
+  return error.code === 'UNSTAGED_CHANGES_WOULD_BE_LOST';
 }
 /**
  * Type guard: Check if error is a config-missing error
  */
 function isConfigMissingError(error) {
-    return error.code === 'CONFIG_MISSING';
+  return error.code === 'CONFIG_MISSING';
 }
 /**
  * Type guard: Check if error is a repository error (any repository-related error)
  */
 function isRepositoryError(error) {
-    return (error.code === 'REPOSITORY_NOT_FOUND' ||
-        error.code === 'REPOSITORY_CORRUPTED' ||
-        error.code === 'INVALID_REPOSITORY');
+  return (
+    error.code === 'REPOSITORY_NOT_FOUND' ||
+    error.code === 'REPOSITORY_CORRUPTED' ||
+    error.code === 'INVALID_REPOSITORY'
+  );
 }
 /**
  * Type guard: Check if error is a file error (any file-related error)
  */
 function isFileError(error) {
-    return (error.code === 'FILE_NOT_FOUND' ||
-        error.code === 'FILE_NOT_IN_REPOSITORY' ||
-        error.code === 'PATH_TRAVERSAL');
+  return (
+    error.code === 'FILE_NOT_FOUND' ||
+    error.code === 'FILE_NOT_IN_REPOSITORY' ||
+    error.code === 'PATH_TRAVERSAL'
+  );
 }
 /**
  * Type guard: Check if error is a branch error (any branch-related error)
  */
 function isBranchError(error) {
-    return (error.code === 'BRANCH_NOT_FOUND' ||
-        error.code === 'BRANCH_ALREADY_EXISTS' ||
-        error.code === 'CANNOT_DELETE_CURRENT_BRANCH' ||
-        error.code === 'BRANCH_NOT_MERGED');
+  return (
+    error.code === 'BRANCH_NOT_FOUND' ||
+    error.code === 'BRANCH_ALREADY_EXISTS' ||
+    error.code === 'CANNOT_DELETE_CURRENT_BRANCH' ||
+    error.code === 'BRANCH_NOT_MERGED'
+  );
 }
 /**
  * Type guard: Check if error is a tag error (any tag-related error)
  */
 function isTagError(error) {
-    return (error.code === 'TAG_NOT_FOUND' ||
-        error.code === 'TAG_ALREADY_EXISTS');
+  return error.code === 'TAG_NOT_FOUND' || error.code === 'TAG_ALREADY_EXISTS';
 }
 /**
  * Type guard: Check if error is retryable
  */
 function isRetryableError(error) {
-    return error.retriable;
+  return error.retriable;
 }

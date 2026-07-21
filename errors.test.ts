@@ -112,10 +112,7 @@ describe('parseStructuredGitError', () => {
 });
 
 describe('Type guards', () => {
-  const createStructuredError = (
-    code: string,
-    retriable = false
-  ): StructuredGitError => ({
+  const createStructuredError = (code: string, retriable = false): StructuredGitError => ({
     code: code as any,
     message: `Test ${code}`,
     retriable,

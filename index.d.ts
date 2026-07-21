@@ -8,12 +8,24 @@ export declare class GitService {
    * Loads feature flags from LIMINAL_FEATURE_FLAGS environment variable.
    * Uses try_init() to safely handle multiple instantiations.
    */
-  constructor()
-  isRepository(path: string): boolean
-  getStatus(bookPath: string): GitStatus
-  commitFile(bookPath: string, filePath: string, message: string, userName: string, userEmail: string): string
-  commitFiles(bookPath: string, filePaths: Array<string>, message: string, userName: string, userEmail: string): string
-  stageFile(bookPath: string, filePath: string): boolean
+  constructor();
+  isRepository(path: string): boolean;
+  getStatus(bookPath: string): GitStatus;
+  commitFile(
+    bookPath: string,
+    filePath: string,
+    message: string,
+    userName: string,
+    userEmail: string,
+  ): string;
+  commitFiles(
+    bookPath: string,
+    filePaths: Array<string>,
+    message: string,
+    userName: string,
+    userEmail: string,
+  ): string;
+  stageFile(bookPath: string, filePath: string): boolean;
   /**
    * Unstage a file from the index (reset to HEAD state)
    *
@@ -25,49 +37,76 @@ export declare class GitService {
    * * `file_path` - Path to file to unstage
    * * `force` - Reserved for future use (currently ignored, unstaging is inherently safe)
    */
-  unstageFile(bookPath: string, filePath: string, force?: boolean | undefined | null): boolean
-  getStagedFiles(bookPath: string): Array<string>
-  stageDeletion(bookPath: string, filePath: string): boolean
-  stageRename(bookPath: string, oldPath: string, newPath: string): boolean
-  commitStagedChanges(bookPath: string, message: string, userName: string, userEmail: string): string
-  moveFile(bookPath: string, sourcePath: string, destPath: string, message: string, userName: string, userEmail: string): string
-  moveDirectory(bookPath: string, sourcePath: string, destPath: string, message: string, userName: string, userEmail: string): string
-  initRepository(path: string): boolean
-  initRepositoryWithConfig(path: string, config: RepositoryConfig): boolean
+  unstageFile(bookPath: string, filePath: string, force?: boolean | undefined | null): boolean;
+  getStagedFiles(bookPath: string): Array<string>;
+  stageDeletion(bookPath: string, filePath: string): boolean;
+  stageRename(bookPath: string, oldPath: string, newPath: string): boolean;
+  commitStagedChanges(
+    bookPath: string,
+    message: string,
+    userName: string,
+    userEmail: string,
+  ): string;
+  moveFile(
+    bookPath: string,
+    sourcePath: string,
+    destPath: string,
+    message: string,
+    userName: string,
+    userEmail: string,
+  ): string;
+  moveDirectory(
+    bookPath: string,
+    sourcePath: string,
+    destPath: string,
+    message: string,
+    userName: string,
+    userEmail: string,
+  ): string;
+  initRepository(path: string): boolean;
+  initRepositoryWithConfig(path: string, config: RepositoryConfig): boolean;
   /**
    * Initialize a Git repository in a directory that already contains files.
    * Used for book duplication where content is copied first, then git is initialized.
    */
-  initRepositoryInExistingDir(path: string): boolean
+  initRepositoryInExistingDir(path: string): boolean;
   /**
    * Remove all remotes from a repository.
    * Used when duplicating a book with "clone history" to prevent accidental pushes.
    */
-  removeAllRemotes(repoPath: string): Array<string>
-  isRepositoryHealthy(repoPath: string): RepositoryHealth
-  repairRepository(repoPath: string): boolean
-  configureRepository(repoPath: string, config: GitConfig): boolean
+  removeAllRemotes(repoPath: string): Array<string>;
+  isRepositoryHealthy(repoPath: string): RepositoryHealth;
+  repairRepository(repoPath: string): boolean;
+  configureRepository(repoPath: string, config: GitConfig): boolean;
   /** Get a Git configuration value (repo-local only, no global fallback) */
-  getConfig(repoPath: string, key: string): string | null
+  getConfig(repoPath: string, key: string): string | null;
   /** Get a Git configuration value with global fallback */
-  getConfigWithFallback(repoPath: string, key: string): string | null
+  getConfigWithFallback(repoPath: string, key: string): string | null;
   /** Set a Git configuration value (repo-local only) */
-  setConfig(repoPath: string, key: string, value: string): void
+  setConfig(repoPath: string, key: string, value: string): void;
   /** Remove a Git configuration value (repo-local only) */
-  unsetConfig(repoPath: string, key: string): void
-  createGitignore(repoPath: string, patterns: Array<string>): boolean
-  createGitattributes(repoPath: string, rules: Array<string>): boolean
-  getRepositoryInfo(repoPath: string): RepositoryInfo
-  getCommitHistory(repoPath: string, limit?: number | undefined | null, offset?: number | undefined | null): CommitHistory
+  unsetConfig(repoPath: string, key: string): void;
+  createGitignore(repoPath: string, patterns: Array<string>): boolean;
+  createGitattributes(repoPath: string, rules: Array<string>): boolean;
+  getRepositoryInfo(repoPath: string): RepositoryInfo;
+  getCommitHistory(
+    repoPath: string,
+    limit?: number | undefined | null,
+    offset?: number | undefined | null,
+  ): CommitHistory;
   /**
    * Get commit history for a specific file efficiently
    *
    * Uses tree entry OID comparison instead of full diffs for O(1) per-commit filtering.
    * Much faster than scanning all commits and checking diffs.
    */
-  getFileHistory(repoPath: string, filePath: string, limit?: number | undefined | null): CommitHistory
-  getFileAtCommit(repoPath: string, filePath: string, commitHash: string): FileAtCommit
-  restoreFileFromCommit(repoPath: string, filePath: string, commitHash: string): boolean
+  getFileHistory(
+    repoPath: string,
+    filePath: string,
+    limit?: number | undefined | null,
+  ): CommitHistory;
+  getFileAtCommit(repoPath: string, filePath: string, commitHash: string): FileAtCommit;
+  restoreFileFromCommit(repoPath: string, filePath: string, commitHash: string): boolean;
   /**
    * Discard uncommitted changes in a file (restore to HEAD state)
    *
@@ -75,7 +114,7 @@ export declare class GitService {
    * discarding any uncommitted changes. Both the working tree and index are
    * updated to match HEAD.
    */
-  discardChanges(repoPath: string, filePath: string): boolean
+  discardChanges(repoPath: string, filePath: string): boolean;
   /**
    * Amend the last commit with new changes
    *
@@ -88,225 +127,232 @@ export declare class GitService {
    * * `user_name` - Optional user name (empty string = read from config)
    * * `user_email` - Optional user email (empty string = read from config)
    */
-  commitAmend(repoPath: string, message: string, userName: string, userEmail: string): string
-  getDeletedFiles(repoPath: string, limit?: number | undefined | null): Array<DeletedFileEntry>
-  getFileDiff(repoPath: string, filePath: string): FileDiff
-  getCommitDiff(repoPath: string, commitHash: string): CommitDiff
+  commitAmend(repoPath: string, message: string, userName: string, userEmail: string): string;
+  getDeletedFiles(repoPath: string, limit?: number | undefined | null): Array<DeletedFileEntry>;
+  getFileDiff(repoPath: string, filePath: string): FileDiff;
+  getCommitDiff(repoPath: string, commitHash: string): CommitDiff;
   /**
    * Get unified diff string for a file (working tree vs HEAD)
    *
    * Returns a unified diff string suitable for display in a diff viewer.
    * Handles new files, binary files, and modified files.
    */
-  getDiff(bookPath: string, filePath: string): string
+  getDiff(bookPath: string, filePath: string): string;
   /** List all branches in the repository */
-  listBranches(repoPath: string, includeRemote?: boolean | undefined | null): Promise<Array<BranchInfo>>
+  listBranches(
+    repoPath: string,
+    includeRemote?: boolean | undefined | null,
+  ): Promise<Array<BranchInfo>>;
   /** Get information about the current branch */
-  getCurrentBranch(repoPath: string): Promise<BranchInfo | null>
+  getCurrentBranch(repoPath: string): Promise<BranchInfo | null>;
   /** Create a new branch */
-  createBranch(repoPath: string, options: CreateBranchOptions): Promise<BranchInfo>
+  createBranch(repoPath: string, options: CreateBranchOptions): Promise<BranchInfo>;
   /** Switch to a different branch */
-  checkoutBranch(repoPath: string, branchName: string): Promise<BranchInfo>
+  checkoutBranch(repoPath: string, branchName: string): Promise<BranchInfo>;
   /** Delete a branch (with safety checks) */
-  deleteBranch(repoPath: string, branchName: string, force?: boolean | undefined | null): Promise<boolean>
+  deleteBranch(
+    repoPath: string,
+    branchName: string,
+    force?: boolean | undefined | null,
+  ): Promise<boolean>;
   /** List all tags in the repository */
-  listTags(repoPath: string): Promise<Array<TagInfo>>
+  listTags(repoPath: string): Promise<Array<TagInfo>>;
   /** Create a new tag */
-  createTag(repoPath: string, options: CreateTagOptions): Promise<TagInfo>
+  createTag(repoPath: string, options: CreateTagOptions): Promise<TagInfo>;
   /** Delete a tag */
-  deleteTag(repoPath: string, tagName: string): Promise<boolean>
+  deleteTag(repoPath: string, tagName: string): Promise<boolean>;
   /** Get tag information by name */
-  getTag(repoPath: string, tagName: string): Promise<TagInfo | null>
+  getTag(repoPath: string, tagName: string): Promise<TagInfo | null>;
 }
 
 /** Tracking information relative to upstream branch */
 export interface AheadBehind {
   /** Number of commits ahead of upstream */
-  ahead: number
+  ahead: number;
   /** Number of commits behind upstream */
-  behind: number
+  behind: number;
 }
 
 export interface BranchInfo {
   /** Branch name (e.g., "main", "feature/new-feature") */
-  name: string
+  name: string;
   /** Whether this is the currently checked out branch */
-  isCurrent: boolean
+  isCurrent: boolean;
   /** Whether this is a remote branch */
-  isRemote: boolean
+  isRemote: boolean;
   /** Hash of the commit this branch points to */
-  commitHash: string
+  commitHash: string;
   /** Message of the commit this branch points to */
-  commitMessage: string
+  commitMessage: string;
   /** ISO timestamp of when this branch was last updated */
-  lastUpdated: string
+  lastUpdated: string;
   /** How many commits ahead/behind the default branch (for local branches) */
-  aheadBehind?: AheadBehind
+  aheadBehind?: AheadBehind;
 }
 
 export interface CommitDiff {
-  commitHash: string
-  parentHash?: string
-  files: Array<FileDiff>
-  totalAdditions: number
-  totalDeletions: number
-  filesChanged: number
+  commitHash: string;
+  parentHash?: string;
+  files: Array<FileDiff>;
+  totalAdditions: number;
+  totalDeletions: number;
+  filesChanged: number;
 }
 
 export interface CommitHistory {
-  commits: Array<CommitInfo>
-  totalCount: number
-  hasMore: boolean
+  commits: Array<CommitInfo>;
+  totalCount: number;
+  hasMore: boolean;
 }
 
 export interface CommitInfo {
-  hash: string
-  shortHash: string
-  message: string
-  authorName: string
-  authorEmail: string
-  timestamp: string
-  parentHashes: Array<string>
-  fileChanges: number
-  insertions: number
-  deletions: number
+  hash: string;
+  shortHash: string;
+  message: string;
+  authorName: string;
+  authorEmail: string;
+  timestamp: string;
+  parentHashes: Array<string>;
+  fileChanges: number;
+  insertions: number;
+  deletions: number;
 }
 
 /** Options for creating a new branch */
 export interface CreateBranchOptions {
   /** Name for the new branch */
-  name: string
+  name: string;
   /** Commit hash to branch from (if None, branches from current HEAD) */
-  fromCommit?: string
+  fromCommit?: string;
   /** Whether to immediately switch to the new branch after creation */
-  checkout: boolean
+  checkout: boolean;
 }
 
 /** Options for creating a new tag */
 export interface CreateTagOptions {
   /** Name for the new tag */
-  name: string
+  name: string;
   /** Commit hash to tag (if None, tags current HEAD) */
-  targetCommit?: string
+  targetCommit?: string;
   /** Tag message (if provided, creates annotated tag; otherwise lightweight tag) */
-  message?: string
+  message?: string;
   /** Whether to overwrite existing tag with same name */
-  force: boolean
+  force: boolean;
   /** User name for annotated tag signature (optional, falls back to git config) */
-  userName?: string
+  userName?: string;
   /** User email for annotated tag signature (optional, falls back to git config) */
-  userEmail?: string
+  userEmail?: string;
 }
 
 export interface DeletedFileEntry {
   /** Repo-relative file path (e.g., "pages/foo.md") */
-  path: string
+  path: string;
   /** Unix timestamp (in seconds) when the file was deleted */
-  deletedAt: number
+  deletedAt: number;
   /** Commit hash where the file was last seen (before deletion) */
-  lastCommit: string
+  lastCommit: string;
   /** Commit message of the deletion commit */
-  lastCommitMessage: string
+  lastCommitMessage: string;
 }
 
 export interface DiffHunk {
-  oldStart: number
-  oldLines: number
-  newStart: number
-  newLines: number
-  lines: Array<DiffLine>
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: Array<DiffLine>;
 }
 
 export interface DiffLine {
-  lineType: string
-  content: string
-  oldLineNumber?: number
-  newLineNumber?: number
+  lineType: string;
+  content: string;
+  oldLineNumber?: number;
+  newLineNumber?: number;
 }
 
 export interface FileAtCommit {
-  path: string
-  content: string
-  exists: boolean
-  commitHash: string
+  path: string;
+  content: string;
+  exists: boolean;
+  commitHash: string;
 }
 
 export interface FileDiff {
-  filePath: string
-  oldPath?: string
-  status: string
-  hunks: Array<DiffHunk>
-  additions: number
-  deletions: number
-  isBinary: boolean
+  filePath: string;
+  oldPath?: string;
+  status: string;
+  hunks: Array<DiffHunk>;
+  additions: number;
+  deletions: number;
+  isBinary: boolean;
 }
 
 export interface FileStatus {
-  path: string
-  status: string
-  staged: boolean
+  path: string;
+  status: string;
+  staged: boolean;
 }
 
 export interface GitConfig {
-  userName?: string
-  userEmail?: string
-  coreAutocrlf?: string
-  coreSafecrlf?: string
+  userName?: string;
+  userEmail?: string;
+  coreAutocrlf?: string;
+  coreSafecrlf?: string;
 }
 
 export interface GitStatus {
-  modifiedFiles: Array<FileStatus>
-  deletedFiles: Array<FileStatus>
-  addedFiles: Array<FileStatus>
-  untrackedFiles: Array<FileStatus>
-  stagedFiles: Array<FileStatus>
-  renamedFiles: Array<RenamedStatus>
-  isClean: boolean
-  currentBranch?: string
+  modifiedFiles: Array<FileStatus>;
+  deletedFiles: Array<FileStatus>;
+  addedFiles: Array<FileStatus>;
+  untrackedFiles: Array<FileStatus>;
+  stagedFiles: Array<FileStatus>;
+  renamedFiles: Array<RenamedStatus>;
+  isClean: boolean;
+  currentBranch?: string;
 }
 
 export interface RenamedStatus {
-  oldPath: string
-  newPath: string
-  staged: boolean
+  oldPath: string;
+  newPath: string;
+  staged: boolean;
 }
 
 export interface RepositoryConfig {
-  description?: string
-  defaultBranch?: string
-  lineEnding?: string
+  description?: string;
+  defaultBranch?: string;
+  lineEnding?: string;
 }
 
 export interface RepositoryHealth {
-  isHealthy: boolean
-  issues: Array<string>
-  warnings: Array<string>
+  isHealthy: boolean;
+  issues: Array<string>;
+  warnings: Array<string>;
 }
 
 export interface RepositoryInfo {
-  path: string
-  isBare: boolean
-  headCommit?: string
-  branchCount: number
-  commitCount: number
-  hasUncommittedChanges: boolean
-  remoteUrls: Array<string>
+  path: string;
+  isBare: boolean;
+  headCommit?: string;
+  branchCount: number;
+  commitCount: number;
+  hasUncommittedChanges: boolean;
+  remoteUrls: Array<string>;
 }
 
 /** Information about a git tag */
 export interface TagInfo {
   /** Tag name (e.g., "v1.0.0", "chapter-5-complete") */
-  name: string
+  name: string;
   /** Hash of the commit this tag points to */
-  commitHash: string
+  commitHash: string;
   /** Message of the commit this tag points to */
-  commitMessage: string
+  commitMessage: string;
   /** Tag message (for annotated tags only) */
-  tagMessage?: string
+  tagMessage?: string;
   /** Tagger information (for annotated tags only) */
-  tagger?: string
+  tagger?: string;
   /** ISO timestamp of when this tag was created */
-  created: string
+  created: string;
   /** Whether this is an annotated tag (vs lightweight tag) */
-  isAnnotated: boolean
+  isAnnotated: boolean;
 }

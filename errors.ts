@@ -225,9 +225,7 @@ export type ConfigMissingError = StructuredGitError<ConfigMissingDetails>;
  * }
  * ```
  */
-export function parseStructuredGitError(
-  error: unknown
-): StructuredGitError | null {
+export function parseStructuredGitError(error: unknown): StructuredGitError | null {
   // Check if it's an Error object with a message
   if (!error || typeof error !== 'object' || !('message' in error)) {
     return null;
@@ -265,9 +263,7 @@ export function parseStructuredGitError(
 /**
  * Type guard: Check if error is a file-not-found error
  */
-export function isFileNotFoundError(
-  error: StructuredGitError<any>
-): error is FileNotFoundError {
+export function isFileNotFoundError(error: StructuredGitError<any>): error is FileNotFoundError {
   return error.code === 'FILE_NOT_FOUND';
 }
 
@@ -275,7 +271,7 @@ export function isFileNotFoundError(
  * Type guard: Check if error is a branch-not-found error
  */
 export function isBranchNotFoundError(
-  error: StructuredGitError<any>
+  error: StructuredGitError<any>,
 ): error is BranchNotFoundError {
   return error.code === 'BRANCH_NOT_FOUND';
 }
@@ -283,18 +279,14 @@ export function isBranchNotFoundError(
 /**
  * Type guard: Check if error is a merge conflict error
  */
-export function isMergeConflictError(
-  error: StructuredGitError<any>
-): error is MergeConflictError {
+export function isMergeConflictError(error: StructuredGitError<any>): error is MergeConflictError {
   return error.code === 'MERGE_CONFLICT';
 }
 
 /**
  * Type guard: Check if error is an invalid path error
  */
-export function isInvalidPathError(
-  error: StructuredGitError<any>
-): error is InvalidPathError {
+export function isInvalidPathError(error: StructuredGitError<any>): error is InvalidPathError {
   return error.code === 'INVALID_PATH';
 }
 
@@ -302,7 +294,7 @@ export function isInvalidPathError(
  * Type guard: Check if error is an unstaged-changes-would-be-lost error
  */
 export function isUnstagedChangesWouldBeLostError(
-  error: StructuredGitError<any>
+  error: StructuredGitError<any>,
 ): error is UnstagedChangesWouldBeLostError {
   return error.code === 'UNSTAGED_CHANGES_WOULD_BE_LOST';
 }
@@ -310,9 +302,7 @@ export function isUnstagedChangesWouldBeLostError(
 /**
  * Type guard: Check if error is a config-missing error
  */
-export function isConfigMissingError(
-  error: StructuredGitError<any>
-): error is ConfigMissingError {
+export function isConfigMissingError(error: StructuredGitError<any>): error is ConfigMissingError {
   return error.code === 'CONFIG_MISSING';
 }
 
@@ -354,10 +344,7 @@ export function isBranchError(error: StructuredGitError<any>): boolean {
  * Type guard: Check if error is a tag error (any tag-related error)
  */
 export function isTagError(error: StructuredGitError<any>): boolean {
-  return (
-    error.code === 'TAG_NOT_FOUND' ||
-    error.code === 'TAG_ALREADY_EXISTS'
-  );
+  return error.code === 'TAG_NOT_FOUND' || error.code === 'TAG_ALREADY_EXISTS';
 }
 
 /**
