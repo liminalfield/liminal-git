@@ -358,7 +358,7 @@ pub fn get_deleted_files_impl(
 
     // Check cache - return if HEAD unchanged OR cache is recent (< 30s)
     {
-        let cache = DELETED_FILES_CACHE.lock().unwrap();
+        let cache = DELETED_FILES_CACHE.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(ref cached) = *cache {
             let cache_valid = cached.repo_path == repo_path && (
                 cached.head_commit == head_commit ||
@@ -496,7 +496,7 @@ pub fn get_deleted_files_impl(
 
     // Store in cache
     {
-        let mut cache = DELETED_FILES_CACHE.lock().unwrap();
+        let mut cache = DELETED_FILES_CACHE.lock().unwrap_or_else(|p| p.into_inner());
         *cache = Some(DeletedFilesCache {
             repo_path: repo_path.to_string(),
             head_commit,

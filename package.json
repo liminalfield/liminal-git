@@ -7,10 +7,6 @@
     ".": {
       "types": "./index.d.ts",
       "default": "./index.js"
-    },
-    "./errors": {
-      "types": "./errors.d.ts",
-      "default": "./errors.js"
     }
   },
   "napi": {
@@ -25,13 +21,11 @@
   "scripts": {
     "build": "napi build --platform --release",
     "build:debug": "napi build --platform",
-    "build:errors": "tsc errors.ts --declaration --module commonjs --target es2020 --moduleResolution node --esModuleInterop",
-    "test": "npm run build:errors && cargo test --lib --no-default-features && jest",
+    "test": "cargo test --lib --no-default-features",
     "test:rust": "cargo test --lib --no-default-features",
-    "test:js": "npm run build:errors && jest",
     "test:unit": "cargo test --lib --features test-utils",
     "test:integration": "cargo test --test '*' --features test-utils",
-    "prepublishOnly": "npm run build:errors && napi prepublish -t npm",
+    "prepublishOnly": "napi prepublish -t npm",
     "artifacts": "napi artifacts",
     "version": "napi version"
   },

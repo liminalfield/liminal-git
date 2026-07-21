@@ -304,7 +304,11 @@ fn checkout_branch_internal_impl(repo: &Repository, branch_name: &str, force: bo
         match repo.checkout_tree(target_tree.as_object(), Some(&mut checkout_builder)) {
             Ok(_) => {
                 // Checkout succeeded - now update HEAD
-                repo.set_head(branch_ref.name().unwrap())
+                repo.set_head(
+                    branch_ref.name().ok_or_else(|| GitError::InvalidBranchName {
+                        name: "<non-UTF-8 branch ref>".to_string(),
+                    })?,
+                )
                     .map_err(|e| GitError::from(e).with_operation("set_head"))?;
 
                 // Refresh working tree to match new HEAD
@@ -351,7 +355,11 @@ fn checkout_branch_internal_impl(repo: &Repository, branch_name: &str, force: bo
         repo.checkout_tree(target_tree.as_object(), Some(&mut checkout_builder))
             .map_err(|e| GitError::from(e).with_operation("checkout_tree"))?;
 
-        repo.set_head(branch_ref.name().unwrap())
+        repo.set_head(
+                    branch_ref.name().ok_or_else(|| GitError::InvalidBranchName {
+                        name: "<non-UTF-8 branch ref>".to_string(),
+                    })?,
+                )
             .map_err(|e| GitError::from(e).with_operation("set_head"))?;
 
         Ok(())
