@@ -169,7 +169,7 @@ git config liminal.checkoutStrategy "force"
 - Lists all tags with metadata
 - Returns: name, commit hash, message, tagger, created timestamp
 
-See [`docs/MIGRATION_PHASE3.md`](../docs/MIGRATION_PHASE3.md) for detailed operation documentation, error handling patterns, and usage examples.
+See [`docs/archive/MIGRATION_PHASE3.md`](../../../docs/archive/MIGRATION_PHASE3.md) for detailed operation documentation, error handling patterns, and usage examples.
 
 ## Structured Errors
 
