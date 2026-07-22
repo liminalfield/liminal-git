@@ -1,11 +1,42 @@
 // utils.rs
+use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use crate::errors::GitError;
 
 #[cfg(feature = "napi-binding")]
 use napi::Error as NapiError;
 #[cfg(feature = "napi-binding")]
 use napi::Status;
+
+// Per-repo lock registry (#390). Mutating git ops on the same repo run under
+// this lock so concurrent IPC handlers can't race the index/HEAD. Read-only ops
+// don't take it. Keyed by repo path; BTreeMap::new() is const so no lazy init.
+static REPO_LOCKS: Mutex<BTreeMap<String, Arc<Mutex<()>>>> = Mutex::new(BTreeMap::new());
+
+/// The mutating-operation lock for a repo path (created on first use).
+pub fn repo_lock(repo_path: &str) -> Arc<Mutex<()>> {
+    let mut locks = REPO_LOCKS.lock().unwrap_or_else(|p| p.into_inner());
+    locks
+        .entry(repo_path.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+}
+
+/// Run a blocking git2 operation off the JS thread on tokio's blocking pool,
+/// converting a GitError to a NAPI error with the caller's structured-errors
+/// flag. Keeps napi async methods from blocking the main event loop (#390).
+#[cfg(feature = "napi-binding")]
+pub async fn run_blocking<T, F>(structured: bool, f: F) -> Result<T, NapiError>
+where
+    F: FnOnce() -> Result<T, GitError> + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| NapiError::from_reason(format!("git task failed to run: {e}")))?
+        .map_err(|e| git_error_to_napi_with_flags(e, structured))
+}
 
 #[cfg(feature = "napi-binding")]
 pub fn validate_and_normalize_path(repo_path: &str, file_path: &str) -> Result<std::path::PathBuf, NapiError> {

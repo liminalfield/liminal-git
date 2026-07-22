@@ -11,8 +11,6 @@ use log::info;
 use napi::bindgen_prelude::*;
 #[cfg(feature = "napi-binding")]
 use crate::GitService;
-#[cfg(feature = "napi-binding")]
-use crate::utils::git_error_to_napi_with_flags;
 
 // ===== PURE GIT IMPLEMENTATIONS (always available) =====
 
@@ -202,29 +200,35 @@ fn extract_tag_info_impl(repo: &Repository, tag_name: &str) -> std::result::Resu
 #[cfg(feature = "napi-binding")]
 pub async fn list_tags(service: &GitService, repo_path: String) -> Result<Vec<TagInfo>> {
     let structured = service.feature_flags().structured_errors;
-    list_tags_impl(&repo_path)
-        .map_err(|e| git_error_to_napi_with_flags(e, structured))
+    crate::utils::run_blocking(structured, move || list_tags_impl(&repo_path)).await
 }
 
 #[cfg(feature = "napi-binding")]
 pub async fn create_tag(service: &GitService, repo_path: String, options: CreateTagOptions) -> Result<TagInfo> {
     let structured = service.feature_flags().structured_errors;
-    create_tag_impl(&repo_path, &options)
-        .map_err(|e| git_error_to_napi_with_flags(e, structured))
+    crate::utils::run_blocking(structured, move || {
+        let _lock = crate::utils::repo_lock(&repo_path);
+        let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+        create_tag_impl(&repo_path, &options)
+    })
+    .await
 }
 
 #[cfg(feature = "napi-binding")]
 pub async fn delete_tag(service: &GitService, repo_path: String, tag_name: String) -> Result<bool> {
     let structured = service.feature_flags().structured_errors;
-    delete_tag_impl(&repo_path, &tag_name)
-        .map_err(|e| git_error_to_napi_with_flags(e, structured))
+    crate::utils::run_blocking(structured, move || {
+        let _lock = crate::utils::repo_lock(&repo_path);
+        let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+        delete_tag_impl(&repo_path, &tag_name)
+    })
+    .await
 }
 
 #[cfg(feature = "napi-binding")]
 pub async fn get_tag(service: &GitService, repo_path: String, tag_name: String) -> Result<Option<TagInfo>> {
     let structured = service.feature_flags().structured_errors;
-    get_tag_impl(&repo_path, &tag_name)
-        .map_err(|e| git_error_to_napi_with_flags(e, structured))
+    crate::utils::run_blocking(structured, move || get_tag_impl(&repo_path, &tag_name)).await
 }
 
 #[cfg(test)]

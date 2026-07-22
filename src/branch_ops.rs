@@ -11,8 +11,6 @@ use log::info;
 use napi::bindgen_prelude::*;
 #[cfg(feature = "napi-binding")]
 use crate::GitService;
-#[cfg(feature = "napi-binding")]
-use crate::utils::git_error_to_napi_with_flags;
 
 // ===== PURE GIT IMPLEMENTATIONS (always available) =====
 
@@ -515,15 +513,14 @@ pub async fn list_branches(
 ) -> Result<Vec<BranchInfo>> {
     let include_remote = include_remote.unwrap_or(false);
     let structured = service.feature_flags().structured_errors;
-    list_branches_impl(&repo_path, include_remote)
-        .map_err(|e| git_error_to_napi_with_flags(e, structured))
+    crate::utils::run_blocking(structured, move || list_branches_impl(&repo_path, include_remote))
+        .await
 }
 
 #[cfg(feature = "napi-binding")]
 pub async fn get_current_branch(service: &GitService, repo_path: String) -> Result<Option<BranchInfo>> {
     let structured = service.feature_flags().structured_errors;
-    get_current_branch_impl(&repo_path)
-        .map_err(|e| git_error_to_napi_with_flags(e, structured))
+    crate::utils::run_blocking(structured, move || get_current_branch_impl(&repo_path)).await
 }
 
 #[cfg(feature = "napi-binding")]
@@ -533,15 +530,23 @@ pub async fn create_branch(
     options: CreateBranchOptions,
 ) -> Result<BranchInfo> {
     let structured = service.feature_flags().structured_errors;
-    create_branch_impl(&repo_path, &options)
-        .map_err(|e| git_error_to_napi_with_flags(e, structured))
+    crate::utils::run_blocking(structured, move || {
+        let _lock = crate::utils::repo_lock(&repo_path);
+        let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+        create_branch_impl(&repo_path, &options)
+    })
+    .await
 }
 
 #[cfg(feature = "napi-binding")]
 pub async fn checkout_branch(service: &GitService, repo_path: String, branch_name: String) -> Result<BranchInfo> {
     let structured = service.feature_flags().structured_errors;
-    checkout_branch_impl(&repo_path, &branch_name)
-        .map_err(|e| git_error_to_napi_with_flags(e, structured))
+    crate::utils::run_blocking(structured, move || {
+        let _lock = crate::utils::repo_lock(&repo_path);
+        let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+        checkout_branch_impl(&repo_path, &branch_name)
+    })
+    .await
 }
 
 #[cfg(feature = "napi-binding")]
@@ -553,8 +558,12 @@ pub async fn delete_branch(
 ) -> Result<bool> {
     let force = force.unwrap_or(false);
     let structured = service.feature_flags().structured_errors;
-    delete_branch_impl(&repo_path, &branch_name, force)
-        .map_err(|e| git_error_to_napi_with_flags(e, structured))
+    crate::utils::run_blocking(structured, move || {
+        let _lock = crate::utils::repo_lock(&repo_path);
+        let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+        delete_branch_impl(&repo_path, &branch_name, force)
+    })
+    .await
 }
 
 #[cfg(test)]

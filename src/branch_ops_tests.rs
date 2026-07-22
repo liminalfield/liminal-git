@@ -337,3 +337,42 @@ fn test_calculate_ahead_behind_against_default() {
         assert_eq!((ab.ahead, ab.behind), (2, 1));
     }
 }
+
+// ===== per-repo mutex serialization (#390 criteria 2 + 4) =====
+
+#[test]
+#[serial_test::serial]
+fn test_repo_lock_serializes_concurrent_commits() {
+    use std::thread;
+
+    let (_tmp, repo_path) = setup_test_repo();
+    write_and_commit(&repo_path, "base.txt", "base"); // 1 base commit
+    let path = repo_path.to_str().unwrap().to_string();
+
+    // 8 threads each commit a distinct file to the SAME repo, serialized by the
+    // per-repo lock. Without serialization the concurrent index/HEAD writes
+    // would race and drop commits.
+    let mut handles = Vec::new();
+    for i in 0..8 {
+        let path = path.clone();
+        handles.push(thread::spawn(move || {
+            let file = format!("f{}.txt", i);
+            std::fs::write(std::path::Path::new(&path).join(&file), format!("content {}", i))
+                .expect("write file");
+
+            let lock = crate::utils::repo_lock(&path);
+            let _guard = lock.lock().unwrap_or_else(|p| p.into_inner());
+            crate::commit_file_impl(&path, &file, &format!("commit {}", i), "T", "t@e.com")
+                .expect("commit under lock");
+        }));
+    }
+    for h in handles {
+        h.join().expect("thread join");
+    }
+
+    // Serialized commits form a linear history: base + 8 = 9.
+    let repo = Repository::open(&repo_path).unwrap();
+    let mut walk = repo.revwalk().unwrap();
+    walk.push_head().unwrap();
+    assert_eq!(walk.count(), 9, "all 8 concurrent commits serialized onto HEAD");
+}
