@@ -3,15 +3,19 @@ use crate::errors::GitError;
 use crate::types::{CommitInfo, CommitHistory, FileAtCommit, FileDiff, CommitDiff, DeletedFileEntry};
 use crate::utils::normalize_git_path;
 use log::info;
+use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-// Cache for deleted files - valid if HEAD matches OR cache is < 30 seconds old
-// Time-based validity prevents cache thrashing during rapid auto-commits
-static DELETED_FILES_CACHE: Mutex<Option<DeletedFilesCache>> = Mutex::new(None);
+// Per-repo cache for deleted files, keyed by repo path — valid if HEAD matches
+// OR the entry is < 30s old (time-based validity avoids thrashing during rapid
+// auto-commits). Keying by path stops multiple open books from evicting each
+// other's entries (the old single-slot cache thrashed across repos). BTreeMap
+// is used because its `new()` is const, so the static needs no lazy init.
+static DELETED_FILES_CACHE: Mutex<BTreeMap<String, DeletedFilesCache>> =
+    Mutex::new(BTreeMap::new());
 
 struct DeletedFilesCache {
-    repo_path: String,
     head_commit: String,
     files: Vec<DeletedFileEntry>,
     cached_at: Instant,
@@ -356,14 +360,12 @@ pub fn get_deleted_files_impl(
         Err(_) => return Ok(Vec::new()), // No commits yet
     };
 
-    // Check cache - return if HEAD unchanged OR cache is recent (< 30s)
+    // Check this repo's cache entry — return if HEAD unchanged OR recent (< 30s).
     {
         let cache = DELETED_FILES_CACHE.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(ref cached) = *cache {
-            let cache_valid = cached.repo_path == repo_path && (
-                cached.head_commit == head_commit ||
-                cached.cached_at.elapsed() < Duration::from_secs(30)
-            );
+        if let Some(cached) = cache.get(repo_path) {
+            let cache_valid = cached.head_commit == head_commit
+                || cached.cached_at.elapsed() < Duration::from_secs(30);
             if cache_valid {
                 info!("get_deleted_files: cache hit in {}ms", start.elapsed().as_millis());
                 return Ok(cached.files.clone());
@@ -494,15 +496,17 @@ pub fn get_deleted_files_impl(
         start.elapsed().as_millis()
     );
 
-    // Store in cache
+    // Store this repo's entry (keyed by path, so other open books are untouched).
     {
         let mut cache = DELETED_FILES_CACHE.lock().unwrap_or_else(|p| p.into_inner());
-        *cache = Some(DeletedFilesCache {
-            repo_path: repo_path.to_string(),
-            head_commit,
-            files: deleted_files.clone(),
-            cached_at: Instant::now(),
-        });
+        cache.insert(
+            repo_path.to_string(),
+            DeletedFilesCache {
+                head_commit,
+                files: deleted_files.clone(),
+                cached_at: Instant::now(),
+            },
+        );
     }
 
     Ok(deleted_files)
