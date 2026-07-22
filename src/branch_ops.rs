@@ -233,9 +233,12 @@ pub fn delete_branch_impl(
 
     // Check if branch is merged (unless force)
     if !force && !is_branch_merged_impl(&repo, &branch)? {
+        // Real count of commits on the branch not reachable from HEAD, so the
+        // error tells the user exactly how much work would be lost.
+        let commits_ahead = commits_ahead_of_head_impl(&repo, &branch).unwrap_or(1);
         return Err(GitError::BranchNotMerged {
             name: branch_name.to_string(),
-            commits_ahead: 1, // Simplified - would need graph walking for exact count
+            commits_ahead,
         });
     }
 
@@ -447,19 +450,28 @@ fn is_branch_merged_impl(repo: &Repository, branch: &Branch) -> std::result::Res
     Ok(is_ancestor)
 }
 
+/// Number of commits on `branch` that are not reachable from HEAD.
+fn commits_ahead_of_head_impl(repo: &Repository, branch: &Branch) -> std::result::Result<u32, GitError> {
+    let branch_commit = branch.get().peel_to_commit()
+        .map_err(|e| GitError::from(e).with_operation("peel_to_commit"))?;
+    let head_commit = repo.head().and_then(|head| head.peel_to_commit())
+        .map_err(|e| GitError::from(e).with_operation("get_head_commit"))?;
+
+    let (ahead, _behind) = repo.graph_ahead_behind(branch_commit.id(), head_commit.id())
+        .map_err(|e| GitError::from(e).with_operation("graph_ahead_behind"))?;
+    Ok(ahead as u32)
+}
+
 fn calculate_ahead_behind_impl(repo: &Repository, branch: &Branch) -> std::result::Result<AheadBehind, GitError> {
-    // This is a simplified version - in a real implementation you'd check against upstream
-    // For now, we'll compare against main/master branch
-    let default_branches = ["main", "master"];
+    let branch_commit = branch.get().peel_to_commit()
+        .map_err(|e| GitError::from(e).with_operation("peel_to_commit"))?;
 
-    for default_branch in &default_branches {
-        if let Ok(default_ref) = repo.find_branch(default_branch, BranchType::Local) {
-            let branch_commit = branch.get().peel_to_commit()
-                .map_err(|e| GitError::from(e).with_operation("peel_to_commit"))?;
-            let default_commit = default_ref.get().peel_to_commit()
-                .map_err(|e| GitError::from(e).with_operation("peel_to_commit"))?;
-
-            let (ahead, behind) = repo.graph_ahead_behind(branch_commit.id(), default_commit.id())
+    // Prefer the branch's configured upstream (tracking) branch — that's the
+    // ahead/behind a user actually cares about when one is set.
+    if let Ok(upstream) = branch.upstream() {
+        if let Ok(upstream_commit) = upstream.get().peel_to_commit() {
+            let (ahead, behind) = repo
+                .graph_ahead_behind(branch_commit.id(), upstream_commit.id())
                 .map_err(|e| GitError::from(e).with_operation("graph_ahead_behind"))?;
             return Ok(AheadBehind {
                 ahead: ahead as u32,
@@ -468,7 +480,28 @@ fn calculate_ahead_behind_impl(repo: &Repository, branch: &Branch) -> std::resul
         }
     }
 
-    // If no default branch found, return zeros
+    // Fall back to the local default branch (main/master), skipping self so a
+    // main branch isn't compared against itself.
+    let branch_name = branch.name().ok().flatten();
+    for default_branch in ["main", "master"] {
+        if branch_name == Some(default_branch) {
+            continue;
+        }
+        if let Ok(default_ref) = repo.find_branch(default_branch, BranchType::Local) {
+            let default_commit = default_ref.get().peel_to_commit()
+                .map_err(|e| GitError::from(e).with_operation("peel_to_commit"))?;
+
+            let (ahead, behind) = repo
+                .graph_ahead_behind(branch_commit.id(), default_commit.id())
+                .map_err(|e| GitError::from(e).with_operation("graph_ahead_behind"))?;
+            return Ok(AheadBehind {
+                ahead: ahead as u32,
+                behind: behind as u32,
+            });
+        }
+    }
+
+    // No upstream and no default branch to compare against.
     Ok(AheadBehind { ahead: 0, behind: 0 })
 }
 

@@ -256,3 +256,84 @@ fn test_checkout_branch_safe_strategy_default() {
         _ => panic!("Expected UnstagedChangesWouldBeLost error, got: {:?}", result),
     }
 }
+
+// ===== ahead/behind + real commits_ahead (#390 criterion 3) =====
+
+/// Check out the default branch, tolerating either `master` or `main`.
+fn checkout_default(repo_path: &PathBuf) {
+    checkout_branch_impl(repo_path.to_str().unwrap(), "master")
+        .or_else(|_| checkout_branch_impl(repo_path.to_str().unwrap(), "main"))
+        .expect("checkout default branch");
+}
+
+/// Write a file then commit it to the current branch.
+fn write_and_commit(repo_path: &PathBuf, file: &str, message: &str) {
+    create_test_file(repo_path, file, message);
+    commit_file(repo_path, file, message);
+}
+
+#[test]
+#[serial_test::serial]
+fn test_commits_ahead_of_head_counts_real_commits() {
+    let (_tmp, repo_path) = setup_test_repo();
+    write_and_commit(&repo_path, "a.txt", "A"); // default branch = A
+    create_branch(&repo_path, "feature"); // feature = A
+
+    // Two commits on feature, then back to the default branch so HEAD = A.
+    checkout_branch_impl(repo_path.to_str().unwrap(), "feature").expect("checkout feature");
+    write_and_commit(&repo_path, "b.txt", "B");
+    write_and_commit(&repo_path, "c.txt", "C");
+    checkout_default(&repo_path);
+
+    let repo = Repository::open(&repo_path).unwrap();
+    let branch = repo.find_branch("feature", git2::BranchType::Local).unwrap();
+    // Two commits on feature are not reachable from HEAD — not the old stub of 1.
+    assert_eq!(commits_ahead_of_head_impl(&repo, &branch).unwrap(), 2);
+}
+
+#[test]
+#[serial_test::serial]
+fn test_delete_unmerged_branch_reports_real_commits_ahead() {
+    let (_tmp, repo_path) = setup_test_repo();
+    write_and_commit(&repo_path, "a.txt", "A");
+    create_branch(&repo_path, "feature");
+    checkout_branch_impl(repo_path.to_str().unwrap(), "feature").expect("checkout feature");
+    write_and_commit(&repo_path, "b.txt", "B");
+    write_and_commit(&repo_path, "c.txt", "C");
+    checkout_default(&repo_path);
+
+    match delete_branch_impl(repo_path.to_str().unwrap(), "feature", false) {
+        Err(GitError::BranchNotMerged { commits_ahead, .. }) => {
+            assert_eq!(commits_ahead, 2, "reports the real ahead count, not the stub of 1");
+        }
+        other => panic!("expected BranchNotMerged, got {:?}", other),
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn test_calculate_ahead_behind_against_default() {
+    let (_tmp, repo_path) = setup_test_repo();
+    write_and_commit(&repo_path, "a.txt", "A"); // default = A
+    create_branch(&repo_path, "feature"); // feature = A
+
+    // Advance the default one commit: feature is 0 ahead, 1 behind.
+    write_and_commit(&repo_path, "d.txt", "D");
+    {
+        let repo = Repository::open(&repo_path).unwrap();
+        let branch = repo.find_branch("feature", git2::BranchType::Local).unwrap();
+        let ab = calculate_ahead_behind_impl(&repo, &branch).unwrap();
+        assert_eq!((ab.ahead, ab.behind), (0, 1));
+    }
+
+    // Advance feature two commits: now 2 ahead, 1 behind of the default.
+    checkout_branch_impl(repo_path.to_str().unwrap(), "feature").expect("checkout feature");
+    write_and_commit(&repo_path, "e.txt", "E");
+    write_and_commit(&repo_path, "f.txt", "F");
+    {
+        let repo = Repository::open(&repo_path).unwrap();
+        let branch = repo.find_branch("feature", git2::BranchType::Local).unwrap();
+        let ab = calculate_ahead_behind_impl(&repo, &branch).unwrap();
+        assert_eq!((ab.ahead, ab.behind), (2, 1));
+    }
+}
