@@ -84,8 +84,7 @@ impl GitService {
         validate_user_info(&user_name, &user_email)?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            let _lock = utils::repo_lock(&book_path);
-            let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+            let _guard = utils::lock_repo(&book_path)?;
             commit_file_impl(&book_path, &file_path, &message, &user_name, &user_email)
         })
         .await
@@ -106,8 +105,7 @@ impl GitService {
         validate_user_info(&user_name, &user_email)?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            let _lock = utils::repo_lock(&book_path);
-            let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+            let _guard = utils::lock_repo(&book_path)?;
             commit_files_impl(&book_path, &file_paths, &message, &user_name, &user_email)
         })
         .await
@@ -119,8 +117,7 @@ impl GitService {
         validate_file_path(&file_path)?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            let _lock = utils::repo_lock(&book_path);
-            let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+            let _guard = utils::lock_repo(&book_path)?;
             stage_file_impl(&book_path, &file_path)
         })
         .await
@@ -148,8 +145,7 @@ impl GitService {
         let force_flag = force.unwrap_or(false);
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            let _lock = utils::repo_lock(&book_path);
-            let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+            let _guard = utils::lock_repo(&book_path)?;
             unstage_file_impl(&book_path, &file_path, force_flag)
         })
         .await
@@ -168,8 +164,7 @@ impl GitService {
         validate_file_path(&file_path)?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            let _lock = utils::repo_lock(&book_path);
-            let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+            let _guard = utils::lock_repo(&book_path)?;
             stage_deletion_impl(&book_path, &file_path)
         })
         .await
@@ -187,8 +182,7 @@ impl GitService {
         validate_file_path(&new_path)?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            let _lock = utils::repo_lock(&book_path);
-            let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+            let _guard = utils::lock_repo(&book_path)?;
             stage_rename_impl(&book_path, &old_path, &new_path)
         })
         .await
@@ -205,8 +199,7 @@ impl GitService {
         validate_repo_path(&book_path)?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            let _lock = utils::repo_lock(&book_path);
-            let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+            let _guard = utils::lock_repo(&book_path)?;
             commit_staged_changes_impl(&book_path, &message, &user_name, &user_email)
         })
         .await
@@ -229,8 +222,7 @@ impl GitService {
         validate_user_info(&user_name, &user_email)?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            let _lock = utils::repo_lock(&book_path);
-            let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+            let _guard = utils::lock_repo(&book_path)?;
             move_file_impl(
                 &book_path,
                 &source_path,
@@ -260,8 +252,7 @@ impl GitService {
         validate_user_info(&user_name, &user_email)?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            let _lock = utils::repo_lock(&book_path);
-            let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+            let _guard = utils::lock_repo(&book_path)?;
             move_directory_impl(
                 &book_path,
                 &source_path,
@@ -279,12 +270,14 @@ impl GitService {
     pub async fn init_repository(&self, path: String) -> Result<bool> {
         validate_directory_for_init(&path)?;
         let structured = self.feature_flags().structured_errors;
-        utils::run_blocking(structured, move || {
-            let _lock = utils::repo_lock(&path);
-            let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
-            init_repository_impl(&path)
-        })
-        .await
+        // Deliberately unlocked, and it cannot be otherwise: the lock file
+        // lives inside .git, which does not exist yet, and creating it early
+        // would make the directory non-empty — failing this operation's own
+        // emptiness check. There is also nothing to protect. No repository
+        // exists, so no index or HEAD can be raced, and two concurrent inits
+        // resolve cleanly on their own: one wins and the other is rejected for
+        // a non-empty directory.
+        utils::run_blocking(structured, move || init_repository_impl(&path)).await
     }
 
     #[napi]
@@ -296,9 +289,9 @@ impl GitService {
         validate_directory_for_init(&path)?;
         validate_repository_config(&config)?;
         let structured = self.feature_flags().structured_errors;
+        // Unlocked for the same reason as `init_repository`: no .git yet, so
+        // nowhere to put the lock file and no repository state to protect.
         utils::run_blocking(structured, move || {
-            let _lock = utils::repo_lock(&path);
-            let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
             init_repository_with_config_impl(&path, &config)
         })
         .await
@@ -310,9 +303,9 @@ impl GitService {
     pub async fn init_repository_in_existing_dir(&self, path: String) -> Result<bool> {
         validate_repo_path(&path)?;
         let structured = self.feature_flags().structured_errors;
+        // Unlocked for the same reason as `init_repository`: no .git yet, so
+        // nowhere to put the lock file and no repository state to protect.
         utils::run_blocking(structured, move || {
-            let _lock = utils::repo_lock(&path);
-            let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
             init_repository_in_existing_dir_impl(&path)
         })
         .await
@@ -325,8 +318,7 @@ impl GitService {
         validate_repo_path(&repo_path)?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            let _lock = utils::repo_lock(&repo_path);
-            let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+            let _guard = utils::lock_repo(&repo_path)?;
             remove_all_remotes_impl(&repo_path)
         })
         .await
@@ -345,8 +337,7 @@ impl GitService {
         validate_repo_path(&repo_path)?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            let _lock = utils::repo_lock(&repo_path);
-            let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+            let _guard = utils::lock_repo(&repo_path)?;
             repair_repository_impl(&repo_path)
         })
         .await
@@ -359,8 +350,7 @@ impl GitService {
         validate_git_config(&config)?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            let _lock = utils::repo_lock(&repo_path);
-            let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+            let _guard = utils::lock_repo(&repo_path)?;
             configure_repository_impl(&repo_path, &config)
         })
         .await
@@ -392,8 +382,7 @@ impl GitService {
         validate_repo_path(&repo_path)?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            let _lock = utils::repo_lock(&repo_path);
-            let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+            let _guard = utils::lock_repo(&repo_path)?;
             set_config_impl(&repo_path, &key, &value)
         })
         .await
@@ -405,8 +394,7 @@ impl GitService {
         validate_repo_path(&repo_path)?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            let _lock = utils::repo_lock(&repo_path);
-            let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+            let _guard = utils::lock_repo(&repo_path)?;
             unset_config_impl(&repo_path, &key)
         })
         .await
@@ -419,8 +407,7 @@ impl GitService {
         validate_gitignore_patterns(&patterns)?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            let _lock = utils::repo_lock(&repo_path);
-            let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+            let _guard = utils::lock_repo(&repo_path)?;
             create_gitignore_impl(&repo_path, &patterns)
         })
         .await
@@ -436,8 +423,7 @@ impl GitService {
         validate_gitattributes_rules(&rules)?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            let _lock = utils::repo_lock(&repo_path);
-            let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+            let _guard = utils::lock_repo(&repo_path)?;
             create_gitattributes_impl(&repo_path, &rules)
         })
         .await
@@ -519,8 +505,7 @@ impl GitService {
         validate_restore_operation(&repo_path, &file_path, &commit_hash)?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            let _lock = utils::repo_lock(&repo_path);
-            let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+            let _guard = utils::lock_repo(&repo_path)?;
             restore_file_from_commit_impl(&repo_path, &file_path, &commit_hash)
         })
         .await
@@ -537,8 +522,7 @@ impl GitService {
         validate_file_path(&file_path)?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            let _lock = utils::repo_lock(&repo_path);
-            let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+            let _guard = utils::lock_repo(&repo_path)?;
             discard_changes_impl(&repo_path, &file_path)
         })
         .await
@@ -565,8 +549,7 @@ impl GitService {
         validate_repo_path(&repo_path)?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            let _lock = utils::repo_lock(&repo_path);
-            let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+            let _guard = utils::lock_repo(&repo_path)?;
             // Convert empty strings to None for lenient validation.
             let name = if user_name.trim().is_empty() {
                 None

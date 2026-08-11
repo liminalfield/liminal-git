@@ -66,6 +66,16 @@ pub enum GitError {
         files: Vec<String>,
     },
     DetachedHead,
+    /// Another holder of the repository lock did not release it in time.
+    ///
+    /// Unlike every other variant here, nothing is actually wrong: the
+    /// repository is intact and the request was valid. It is the one genuinely
+    /// retriable failure this library produces, and callers are expected to
+    /// treat it that way rather than surfacing it as a fault.
+    RepositoryLocked {
+        path: String,
+        waited_ms: u64,
+    },
 
     // Config errors
     ConfigMissing {
@@ -160,6 +170,11 @@ impl fmt::Display for GitError {
                 files.len()
             ),
             GitError::DetachedHead => write!(f, "Detached HEAD state"),
+            GitError::RepositoryLocked { path, waited_ms } => write!(
+                f,
+                "Repository is locked by another process: {} (waited {}ms)",
+                path, waited_ms
+            ),
 
             GitError::ConfigMissing {
                 key,
@@ -309,7 +324,9 @@ impl GitError {
     pub fn is_retryable(&self) -> bool {
         matches!(
             self,
-            GitError::IoError { .. } | GitError::RepositoryCorrupted { .. }
+            GitError::IoError { .. }
+                | GitError::RepositoryCorrupted { .. }
+                | GitError::RepositoryLocked { .. }
         )
     }
 
@@ -327,6 +344,7 @@ impl GitError {
             GitError::UncommittedChanges { .. } => "UNCOMMITTED_CHANGES",
             GitError::UnstagedChangesWouldBeLost { .. } => "UNSTAGED_CHANGES_WOULD_BE_LOST",
             GitError::DetachedHead => "DETACHED_HEAD",
+            GitError::RepositoryLocked { .. } => "REPOSITORY_LOCKED",
             GitError::ConfigMissing { .. } => "CONFIG_MISSING",
             GitError::BranchNotFound { .. } => "BRANCH_NOT_FOUND",
             GitError::BranchAlreadyExists { .. } => "BRANCH_ALREADY_EXISTS",
@@ -408,6 +426,10 @@ impl GitError {
             }
             GitError::DetachedHead => {
                 // No additional details for this variant
+            }
+            GitError::RepositoryLocked { path, waited_ms } => {
+                details.set("path", path.as_str())?;
+                details.set("waitedMs", *waited_ms as u32)?;
             }
             GitError::ConfigMissing {
                 key,
@@ -557,6 +579,13 @@ impl GitError {
             }
             GitError::DetachedHead => {
                 // No additional details
+            }
+            GitError::RepositoryLocked { path, waited_ms } => {
+                details.insert("path".to_string(), serde_json::Value::String(path.clone()));
+                details.insert(
+                    "waitedMs".to_string(),
+                    serde_json::Value::Number((*waited_ms).into()),
+                );
             }
             GitError::ConfigMissing {
                 key,

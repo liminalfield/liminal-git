@@ -396,8 +396,7 @@ fn test_repo_lock_serializes_concurrent_commits() {
             )
             .expect("write file");
 
-            let lock = crate::utils::repo_lock(&path);
-            let _guard = lock.lock().unwrap_or_else(|p| p.into_inner());
+            let _guard = crate::utils::lock_repo(&path).expect("acquire repo lock");
             crate::commit_file_impl(&path, &file, &format!("commit {}", i), "T", "t@e.com")
                 .expect("commit under lock");
         }));

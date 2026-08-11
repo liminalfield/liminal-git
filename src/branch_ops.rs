@@ -630,8 +630,7 @@ pub async fn create_branch(
 ) -> Result<BranchInfo> {
     let structured = service.feature_flags().structured_errors;
     crate::utils::run_blocking(structured, move || {
-        let _lock = crate::utils::repo_lock(&repo_path);
-        let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+        let _guard = crate::utils::lock_repo(&repo_path)?;
         create_branch_impl(&repo_path, &options)
     })
     .await
@@ -645,8 +644,7 @@ pub async fn checkout_branch(
 ) -> Result<BranchInfo> {
     let structured = service.feature_flags().structured_errors;
     crate::utils::run_blocking(structured, move || {
-        let _lock = crate::utils::repo_lock(&repo_path);
-        let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+        let _guard = crate::utils::lock_repo(&repo_path)?;
         checkout_branch_impl(&repo_path, &branch_name)
     })
     .await
@@ -662,8 +660,7 @@ pub async fn delete_branch(
     let force = force.unwrap_or(false);
     let structured = service.feature_flags().structured_errors;
     crate::utils::run_blocking(structured, move || {
-        let _lock = crate::utils::repo_lock(&repo_path);
-        let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+        let _guard = crate::utils::lock_repo(&repo_path)?;
         delete_branch_impl(&repo_path, &branch_name, force)
     })
     .await

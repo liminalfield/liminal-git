@@ -2,10 +2,12 @@
 name = "liminal-git"
 version = "0.1.0"
 edition = "2024"
-# Verified, not inferred. Edition 2024 alone would allow 1.85, but the code
-# uses let-chains (`if let ... && let ...`), which were unstable until 1.88 —
-# 1.85 fails with 23 instances of E0658. The msrv job in CI holds this honest.
-rust-version = "1.88"
+# Verified, not inferred. Two things set this floor, and the higher one wins:
+#   - let-chains (`if let ... && let ...`), unstable until 1.88 — 1.85 fails
+#     with 23 instances of E0658.
+#   - `std::fs::File::try_lock`, stabilised in 1.89 and used by `lock_repo`.
+# The msrv job in CI holds this honest.
+rust-version = "1.89"
 description = "Native git operations for Node.js, built on libgit2 via napi-rs."
 authors = ["Oluf Andrews <oluf@oandrews.com>"]
 license = "MIT"

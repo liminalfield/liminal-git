@@ -247,8 +247,7 @@ pub async fn create_tag(
 ) -> Result<TagInfo> {
     let structured = service.feature_flags().structured_errors;
     crate::utils::run_blocking(structured, move || {
-        let _lock = crate::utils::repo_lock(&repo_path);
-        let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+        let _guard = crate::utils::lock_repo(&repo_path)?;
         create_tag_impl(&repo_path, &options)
     })
     .await
@@ -258,8 +257,7 @@ pub async fn create_tag(
 pub async fn delete_tag(service: &GitService, repo_path: String, tag_name: String) -> Result<bool> {
     let structured = service.feature_flags().structured_errors;
     crate::utils::run_blocking(structured, move || {
-        let _lock = crate::utils::repo_lock(&repo_path);
-        let _guard = _lock.lock().unwrap_or_else(|p| p.into_inner());
+        let _guard = crate::utils::lock_repo(&repo_path)?;
         delete_tag_impl(&repo_path, &tag_name)
     })
     .await

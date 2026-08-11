@@ -1,42 +1,178 @@
 // utils.rs
 use crate::errors::GitError;
 use std::collections::BTreeMap;
-use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::fs::{File, OpenOptions, TryLockError};
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 #[cfg(feature = "napi-binding")]
 use napi::Error as NapiError;
 #[cfg(feature = "napi-binding")]
 use napi::Status;
 
-// Per-repo lock registry (#390). Mutating git ops on the same repo run under
-// this lock so concurrent IPC handlers can't race the index/HEAD. Read-only ops
-// don't take it. BTreeMap::new() is const, so no lazy init.
-static REPO_LOCKS: Mutex<BTreeMap<String, Arc<Mutex<()>>>> = Mutex::new(BTreeMap::new());
-
-/// The mutating-operation lock for a repo path (created on first use).
+/// How long to wait for a repository lock before giving up.
 ///
-/// The key is the canonicalised path, not the caller's string. The path
-/// arrives from JavaScript and two callers can name one repository
-/// differently — `/books/a` and `/books/a/`, a relative path against the
-/// process cwd, or a symlink into the real location. Keyed by the raw string
-/// those produce different entries, so both operations acquire different
-/// locks and proceed at once: a mutual exclusion that silently isn't one, in
-/// exactly the concurrent situation the lock exists for.
-///
-/// `canonicalize` requires the path to exist. When it doesn't there is no
-/// repository to serialise access to, so falling back to the raw string is
-/// safe — the caller is about to fail its own path validation anyway.
-pub fn repo_lock(repo_path: &str) -> Arc<Mutex<()>> {
-    let key = std::fs::canonicalize(repo_path)
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| repo_path.to_string());
+/// Blocking forever is the wrong failure: a wedged or stopped holder would hang
+/// the caller with no diagnosis. A bounded wait turns that into a retriable
+/// `RepositoryLocked` naming the path and the time spent. Ten seconds is far
+/// longer than any operation here takes and short enough that a person notices
+/// an error rather than a freeze.
+const LOCK_TIMEOUT: Duration = Duration::from_secs(10);
 
-    let mut locks = REPO_LOCKS.lock().unwrap_or_else(|p| p.into_inner());
-    locks
-        .entry(key)
-        .or_insert_with(|| Arc::new(Mutex::new(())))
-        .clone()
+/// Poll interval while waiting. Deliberately not a blocking `flock` call — see
+/// `lock_repo`, which needs a deadline that a blocking acquire cannot give it.
+const LOCK_POLL: Duration = Duration::from_millis(25);
+
+/// In-process half of the lock (#390), keyed by canonicalised repo path.
+///
+/// The values are `&'static` rather than `Arc` so that a guard can own its
+/// `MutexGuard<'static, ()>` without a self-referential struct. Leaking is
+/// sound here because the registry never removed entries anyway: it is bounded
+/// by the number of distinct repositories a process touches.
+static REPO_LOCKS: Mutex<BTreeMap<String, &'static Mutex<()>>> = Mutex::new(BTreeMap::new());
+
+/// Held for the duration of a mutating operation. Releases on drop.
+///
+/// Fields drop in declaration order: the file lock is released first, then the
+/// in-process mutex. Either order is correct; this one is stated so a later
+/// reordering is a visible decision rather than an accident.
+#[must_use = "the lock is released as soon as the guard is dropped, so binding \
+              it to `_` protects nothing"]
+pub struct RepoLock {
+    _file: File,
+    _process: MutexGuard<'static, ()>,
+}
+
+/// Where the lock file lives for a repository.
+///
+/// Inside the git directory, which pins the lock to the *repository* rather
+/// than to a user or a machine. A path under `$TMPDIR` or `~/.local/state`
+/// would be simpler and wrong: two users sharing a repository on a network
+/// volume would take different locks and exclude nobody. `.git/` also keeps it
+/// out of `git status`, which a file in the working tree would not.
+/// Resolve a caller's path string to the two things a lock is identified by:
+/// the registry key and the lock file.
+///
+/// Split out from `lock_repo` so it can be tested directly. The property that
+/// matters — that every spelling of one repository resolves to one identity —
+/// is otherwise only observable by watching two threads contend, which is a
+/// slow and indirect way to assert something exact.
+pub(crate) fn lock_identity(repo_path: &str) -> Result<(String, PathBuf), GitError> {
+    let canonical = std::fs::canonicalize(repo_path).map_err(|e| GitError::IoError {
+        operation: "canonicalize_repo_path".to_string(),
+        error: format!("{}: {}", repo_path, e),
+    })?;
+
+    let key = canonical.to_string_lossy().into_owned();
+    let path = lock_file_path(&canonical);
+    Ok((key, path))
+}
+
+fn lock_file_path(repo_path: &Path) -> PathBuf {
+    let dot_git = repo_path.join(".git");
+
+    // A worktree or submodule has `.git` as a *file* containing "gitdir: …".
+    // Following it keeps every checkout of one repository on one lock.
+    if dot_git.is_file()
+        && let Ok(contents) = std::fs::read_to_string(&dot_git)
+        && let Some(rest) = contents.trim().strip_prefix("gitdir:")
+    {
+        let resolved = PathBuf::from(rest.trim());
+        let resolved = if resolved.is_absolute() {
+            resolved
+        } else {
+            repo_path.join(resolved)
+        };
+        return resolved.join("liminal-git.lock");
+    }
+
+    dot_git.join("liminal-git.lock")
+}
+
+/// Take the mutating-operation lock for a repository.
+///
+/// Two layers, because one is not enough:
+///
+/// * An in-process mutex, which is all this used to be. It serialises threads
+///   within one process and nothing else.
+/// * An OS advisory file lock, which serialises *processes*. Without it, a
+///   second application instance, a CLI built on this library, or a background
+///   job in another process could interleave with an operation here and corrupt
+///   the index.
+///
+/// Note precisely what the second layer does and does not cover. It excludes
+/// other users of *this library*, because exclusion requires agreeing on the
+/// same lock file. It does not exclude `git` itself: a commit run from a
+/// terminal knows nothing about `.git/liminal-git.lock`. Git defends its own
+/// index with `.git/index.lock`, which gives partial overlap by accident rather
+/// than by coordination. Taking git's lock instead was considered and rejected
+/// — holding it across a whole multi-step operation would make ordinary git
+/// commands fail in confusing ways, and libgit2 takes it internally already.
+///
+/// The advisory lock is deliberately an `flock`/`LockFileEx` on an open file
+/// rather than a sentinel file that is created and deleted. The kernel drops
+/// the lock when the descriptor closes — including when the process is killed
+/// or crashes — so there is no stale lock to detect, no owner PID to record,
+/// and no cleanup path to get wrong. A sentinel file would need all three, and
+/// would deadlock the repository the first time a process died at the wrong
+/// moment.
+///
+/// The key is the canonicalised path, not the caller's string. One repository
+/// can be named `/books/a`, `/books/a/`, a relative path, or a symlink into the
+/// real location; keyed literally, those are different entries, and both
+/// callers proceed at once — a mutual exclusion that silently isn't one, in
+/// exactly the situation the lock exists for.
+pub fn lock_repo(repo_path: &str) -> Result<RepoLock, GitError> {
+    let (key, path) = lock_identity(repo_path)?;
+
+    let process_mutex: &'static Mutex<()> = {
+        let mut locks = REPO_LOCKS.lock().unwrap_or_else(|p| p.into_inner());
+        locks
+            .entry(key.clone())
+            .or_insert_with(|| Box::leak(Box::new(Mutex::new(()))))
+    };
+    let process_guard = process_mutex.lock().unwrap_or_else(|p| p.into_inner());
+
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .map_err(|e| GitError::IoError {
+            operation: "open_repo_lock_file".to_string(),
+            error: format!("{}: {}", path.display(), e),
+        })?;
+
+    // try_lock in a loop rather than a blocking acquire, because a blocking
+    // acquire has no deadline and a wedged holder would hang the caller.
+    let started = Instant::now();
+    loop {
+        match file.try_lock() {
+            Ok(()) => {
+                return Ok(RepoLock {
+                    _file: file,
+                    _process: process_guard,
+                });
+            }
+            Err(TryLockError::WouldBlock) => {
+                if started.elapsed() >= LOCK_TIMEOUT {
+                    return Err(GitError::RepositoryLocked {
+                        path: key,
+                        waited_ms: started.elapsed().as_millis() as u64,
+                    });
+                }
+                std::thread::sleep(LOCK_POLL);
+            }
+            Err(TryLockError::Error(e)) => {
+                return Err(GitError::IoError {
+                    operation: "lock_repository".to_string(),
+                    error: e.to_string(),
+                });
+            }
+        }
+    }
 }
 
 /// Run a blocking git2 operation off the JS thread on tokio's blocking pool,
@@ -120,6 +256,11 @@ pub fn git_error_to_napi_with_flags(error: GitError, structured: bool) -> NapiEr
         GitError::NothingToCommit => Status::GenericFailure,
         GitError::MergeConflict { .. } => Status::GenericFailure,
         GitError::DetachedHead => Status::GenericFailure,
+        // No napi status means "try again shortly", so this rides on
+        // GenericFailure. Callers distinguish it by the structured error's
+        // code (REPOSITORY_LOCKED) and its retriable flag, which is the only
+        // variant here that sets it for a reason other than I/O.
+        GitError::RepositoryLocked { .. } => Status::GenericFailure,
         GitError::IoError { .. } => Status::GenericFailure,
         GitError::GitOperationFailure { .. } => Status::GenericFailure,
     };
@@ -373,17 +514,17 @@ mod tests {
         }
     }
 
-    /// Different spellings of one repository must share one lock.
+    /// Every spelling of one repository must resolve to one lock identity.
     ///
     /// This is the property the registry exists for, and the one a raw-string
-    /// key quietly failed to provide. `Arc::ptr_eq` is the assertion that
-    /// matters: two equal-but-distinct `Mutex<()>` values would satisfy any
-    /// weaker comparison while excluding nothing.
+    /// key quietly failed to provide: distinct strings meant distinct mutexes,
+    /// so two writers to the same repository both proceeded.
     #[test]
-    fn repo_lock_is_keyed_by_identity_not_spelling() {
+    fn lock_identity_collapses_spellings() {
         let (_temp, repo_path) = setup_test_repo();
         let canonical = std::fs::canonicalize(&repo_path).unwrap();
         let base = canonical.to_string_lossy().into_owned();
+        std::fs::create_dir_all(canonical.join("sub")).unwrap();
 
         let spellings = [
             base.clone(),
@@ -392,14 +533,14 @@ mod tests {
             format!("{base}/sub/.."),                 // a round trip through a child
             repo_path.to_string_lossy().into_owned(), // possibly a symlinked /tmp
         ];
-        std::fs::create_dir_all(canonical.join("sub")).unwrap();
 
-        let first = repo_lock(&spellings[0]);
+        let first = lock_identity(&spellings[0]).expect("resolve identity");
         for spelling in &spellings[1..] {
-            assert!(
-                Arc::ptr_eq(&first, &repo_lock(spelling)),
-                "{spelling:?} got a different lock than {:?} — two writers to \
-                 the same repository would run concurrently",
+            let other = lock_identity(spelling).expect("resolve identity");
+            assert_eq!(
+                first, other,
+                "{spelling:?} resolved to a different lock than {:?} — two \
+                 writers to the same repository would run concurrently",
                 spellings[0],
             );
         }
@@ -407,14 +548,117 @@ mod tests {
 
     /// The converse: distinct repositories must not contend.
     #[test]
-    fn repo_lock_separates_distinct_repos() {
+    fn lock_identity_separates_distinct_repos() {
         let (_temp_a, path_a) = setup_test_repo();
         let (_temp_b, path_b) = setup_test_repo();
 
-        assert!(!Arc::ptr_eq(
-            &repo_lock(&path_a.to_string_lossy()),
-            &repo_lock(&path_b.to_string_lossy()),
-        ));
+        let a = lock_identity(&path_a.to_string_lossy()).unwrap();
+        let b = lock_identity(&path_b.to_string_lossy()).unwrap();
+        assert_ne!(a, b);
+    }
+
+    /// The lock file belongs to the repository, not the working tree.
+    ///
+    /// Inside `.git/` it is invisible to `git status`. In the working tree it
+    /// would show up as an untracked file in every repository the library
+    /// touches — which, for an application managing a user's documents, means
+    /// junk appearing in their project.
+    #[test]
+    fn lock_file_lives_inside_the_git_directory() {
+        let (_temp, repo_path) = setup_test_repo();
+        let (_key, lock_path) = lock_identity(&repo_path.to_string_lossy()).unwrap();
+
+        assert_eq!(lock_path.file_name().unwrap(), "liminal-git.lock");
+        assert_eq!(lock_path.parent().unwrap().file_name().unwrap(), ".git");
+    }
+
+    /// Two threads must not hold the lock at once.
+    ///
+    /// Asserted by timing rather than by inspection: the second acquisition
+    /// cannot complete until the first releases, so it must take at least as
+    /// long as the first holder slept. A test that merely acquired twice in
+    /// sequence would pass against a lock that does nothing.
+    #[test]
+    fn lock_excludes_a_second_thread() {
+        let (_temp, repo_path) = setup_test_repo();
+        let path = repo_path.to_string_lossy().into_owned();
+        let hold = Duration::from_millis(250);
+
+        let guard = lock_repo(&path).expect("first acquire");
+
+        let other = {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                let started = Instant::now();
+                let _guard = lock_repo(&path).expect("second acquire");
+                started.elapsed()
+            })
+        };
+
+        std::thread::sleep(hold);
+        drop(guard);
+
+        let waited = other.join().expect("thread join");
+        assert!(
+            waited >= hold,
+            "second acquisition took {waited:?}, less than the {hold:?} the \
+             first holder was holding it — the lock is not excluding anything"
+        );
+    }
+
+    /// The lock must exclude *other processes*, which is the entire reason it
+    /// is a file lock and not just the mutex it used to be.
+    ///
+    /// A separate process probes the lock file directly rather than calling
+    /// `lock_repo`, so the assertion is immediate instead of waiting out
+    /// `LOCK_TIMEOUT`. The probe runs as a test in a fresh copy of this same
+    /// binary, which keeps it portable — spawning `flock(1)` would work only
+    /// on Linux.
+    #[test]
+    fn lock_excludes_another_process() {
+        // Re-entered as the child; the real work is in `lock_file_probe`.
+        if std::env::var("LIMINAL_LOCK_PROBE").is_ok() {
+            return;
+        }
+
+        let (_temp, repo_path) = setup_test_repo();
+        let path = repo_path.to_string_lossy().into_owned();
+        let (_key, lock_path) = lock_identity(&path).unwrap();
+
+        let _guard = lock_repo(&path).expect("parent acquires");
+
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "utils::tests::lock_file_probe", "--nocapture"])
+            .env("LIMINAL_LOCK_PROBE", &lock_path)
+            .output()
+            .expect("spawn probe process");
+
+        assert!(
+            output.status.success(),
+            "a separate process was able to take the lock this one holds\n{}",
+            String::from_utf8_lossy(&output.stdout),
+        );
+    }
+
+    /// The child half of `lock_excludes_another_process`. Inert without the
+    /// environment variable, so a normal test run does nothing here.
+    #[test]
+    fn lock_file_probe() {
+        let Ok(lock_path) = std::env::var("LIMINAL_LOCK_PROBE") else {
+            return;
+        };
+
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .expect("open the lock file the parent holds");
+
+        match file.try_lock() {
+            Err(TryLockError::WouldBlock) => {} // correct: the parent holds it
+            Ok(()) => panic!("acquired a lock the parent process is holding"),
+            Err(e) => panic!("probing the lock failed: {e}"),
+        }
     }
 
     fn setup_test_repo() -> (tempfile::TempDir, PathBuf) {
