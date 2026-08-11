@@ -1,79 +1,78 @@
 // validation.rs
 
-use napi::Error as NapiError;
-use napi::Status;
+use crate::errors::GitError;
 use std::path::Path;
 use crate::types::{RepositoryConfig, GitConfig};
 
-pub fn validate_repo_path(repo_path: &str) -> Result<(), NapiError> {
+pub fn validate_repo_path(repo_path: &str) -> Result<(), GitError> {
     if repo_path.is_empty() {
-        return Err(NapiError::new(Status::InvalidArg, "Repository path cannot be empty"));
+        return Err(GitError::InvalidPath { path: repo_path.to_string(), reason: "Repository path cannot be empty".to_string() });
     }
 
     // Check for null bytes (security issue)
     if repo_path.contains('\0') {
-        return Err(NapiError::new(Status::InvalidArg, "Repository path contains null bytes"));
+        return Err(GitError::InvalidPath { path: repo_path.to_string(), reason: "Repository path contains null bytes".to_string() });
     }
 
     // Check path length (prevent extremely long paths)
     if repo_path.len() > 4096 {
-        return Err(NapiError::new(Status::InvalidArg, "Repository path too long"));
+        return Err(GitError::InvalidPath { path: repo_path.to_string(), reason: "Repository path too long".to_string() });
     }
 
     let path = Path::new(repo_path);
 
     // Check if path exists
     if !path.exists() {
-        return Err(NapiError::new(Status::InvalidArg, "Repository path does not exist"));
+        return Err(GitError::InvalidPath { path: repo_path.to_string(), reason: "Repository path does not exist".to_string() });
     }
 
     // Check if it's a directory
     if !path.is_dir() {
-        return Err(NapiError::new(Status::InvalidArg, "Repository path is not a directory"));
+        return Err(GitError::InvalidPath { path: repo_path.to_string(), reason: "Repository path is not a directory".to_string() });
     }
 
     Ok(())
 }
 
-pub fn validate_file_path(file_path: &str) -> Result<(), NapiError> {
+pub fn validate_file_path(file_path: &str) -> Result<(), GitError> {
     if file_path.is_empty() {
-        return Err(NapiError::new(Status::InvalidArg, "File path cannot be empty"));
+        return Err(GitError::InvalidPath { path: file_path.to_string(), reason: "File path cannot be empty".to_string() });
     }
 
     // Check for null bytes
     if file_path.contains('\0') {
-        return Err(NapiError::new(Status::InvalidArg, "File path contains null bytes"));
+        return Err(GitError::InvalidPath { path: file_path.to_string(), reason: "File path contains null bytes".to_string() });
     }
 
     // Check path length
     if file_path.len() > 4096 {
-        return Err(NapiError::new(Status::InvalidArg, "File path too long"));
+        return Err(GitError::InvalidPath { path: file_path.to_string(), reason: "File path too long".to_string() });
     }
 
     // Check for suspicious patterns
     if file_path.contains("..") {
-        return Err(NapiError::new(Status::InvalidArg, "Path traversal not allowed"));
+        return Err(GitError::InvalidPath { path: file_path.to_string(), reason: "Path traversal not allowed".to_string() });
     }
 
     Ok(())
 }
 
-pub fn validate_directory_path(dir_path: &str) -> Result<(), NapiError> {
+pub fn validate_directory_path(dir_path: &str) -> Result<(), GitError> {
     if dir_path.is_empty() {
-        return Err(NapiError::new(Status::InvalidArg, "Directory path cannot be empty"));
+        return Err(GitError::InvalidPath { path: dir_path.to_string(), reason: "Directory path cannot be empty".to_string() });
     }
 
     if dir_path.contains('\0') {
-        return Err(NapiError::new(Status::InvalidArg, "Directory path contains null bytes"));
+        return Err(GitError::InvalidPath { path: dir_path.to_string(), reason: "Directory path contains null bytes".to_string() });
     }
 
     if dir_path.len() > 4096 {
-        return Err(NapiError::new(Status::InvalidArg, "Directory path too long"));
+        return Err(GitError::InvalidPath { path: dir_path.to_string(), reason: "Directory path too long".to_string() });
     }
 
     // Check for suspicious patterns (e.g., path traversal)
     if dir_path.contains("..") {
-        return Err(NapiError::new(Status::InvalidArg, "Path traversal not allowed"));
+        return Err(GitError::InvalidPath { path: dir_path.to_string(), reason: "Path traversal not allowed".to_string() });
     }
 
     // Note: We don't check if the directory exists or is a directory here,
@@ -83,43 +82,43 @@ pub fn validate_directory_path(dir_path: &str) -> Result<(), NapiError> {
     Ok(())
 }
 
-pub fn validate_commit_message(message: &str) -> Result<(), NapiError> {
+pub fn validate_commit_message(message: &str) -> Result<(), GitError> {
     if message.is_empty() {
-        return Err(NapiError::new(Status::InvalidArg, "Commit message cannot be empty"));
+        return Err(GitError::InvalidArgument { argument: "message".to_string(), reason: "Commit message cannot be empty".to_string() });
     }
 
     if message.len() > 10000 {
-        return Err(NapiError::new(Status::InvalidArg, "Commit message too long"));
+        return Err(GitError::InvalidArgument { argument: "message".to_string(), reason: "Commit message too long".to_string() });
     }
 
     // Check for null bytes
     if message.contains('\0') {
-        return Err(NapiError::new(Status::InvalidArg, "Commit message contains null bytes"));
+        return Err(GitError::InvalidArgument { argument: "message".to_string(), reason: "Commit message contains null bytes".to_string() });
     }
 
     Ok(())
 }
 
-pub fn validate_user_info(user_name: &str, user_email: &str) -> Result<(), NapiError> {
+pub fn validate_user_info(user_name: &str, user_email: &str) -> Result<(), GitError> {
     if user_name.is_empty() {
-        return Err(NapiError::new(Status::InvalidArg, "User name cannot be empty"));
+        return Err(GitError::InvalidArgument { argument: "user_name".to_string(), reason: "User name cannot be empty".to_string() });
     }
 
     if user_email.is_empty() {
-        return Err(NapiError::new(Status::InvalidArg, "User email cannot be empty"));
+        return Err(GitError::InvalidArgument { argument: "user_email".to_string(), reason: "User email cannot be empty".to_string() });
     }
 
     if user_name.len() > 255 {
-        return Err(NapiError::new(Status::InvalidArg, "User name too long"));
+        return Err(GitError::InvalidArgument { argument: "user_name".to_string(), reason: "User name too long".to_string() });
     }
 
     if user_email.len() > 255 {
-        return Err(NapiError::new(Status::InvalidArg, "User email too long"));
+        return Err(GitError::InvalidArgument { argument: "user_email".to_string(), reason: "User email too long".to_string() });
     }
 
     // Basic email validation
     if !user_email.contains('@') || !user_email.contains('.') {
-        return Err(NapiError::new(Status::InvalidArg, "Invalid email format"));
+        return Err(GitError::InvalidArgument { argument: "user_email".to_string(), reason: "Invalid email format".to_string() });
     }
 
     // More thorough email validation
@@ -128,30 +127,30 @@ pub fn validate_user_info(user_name: &str, user_email: &str) -> Result<(), NapiE
     let domain_part = &user_email[at_pos + 1..];
 
     if local_part.is_empty() {
-        return Err(NapiError::new(Status::InvalidArg, "Invalid email format: missing local part"));
+        return Err(GitError::InvalidArgument { argument: "user_email".to_string(), reason: "Invalid email format: missing local part".to_string() });
     }
     if domain_part.is_empty() {
-        return Err(NapiError::new(Status::InvalidArg, "Invalid email format: missing domain"));
+        return Err(GitError::InvalidArgument { argument: "user_email".to_string(), reason: "Invalid email format: missing domain".to_string() });
     }
     if !domain_part.contains('.') {
-        return Err(NapiError::new(Status::InvalidArg, "Invalid email format: domain missing dot"));
+        return Err(GitError::InvalidArgument { argument: "user_email".to_string(), reason: "Invalid email format: domain missing dot".to_string() });
     }
 
     // Check for null bytes
     if user_name.contains('\0') || user_email.contains('\0') {
-        return Err(NapiError::new(Status::InvalidArg, "User info contains null bytes"));
+        return Err(GitError::InvalidArgument { argument: "user_info".to_string(), reason: "User info contains null bytes".to_string() });
     }
 
     Ok(())
 }
 
-pub fn validate_file_paths(file_paths: &[String]) -> Result<(), NapiError> {
+pub fn validate_file_paths(file_paths: &[String]) -> Result<(), GitError> {
     if file_paths.is_empty() {
-        return Err(NapiError::new(Status::InvalidArg, "File paths list cannot be empty"));
+        return Err(GitError::InvalidArgument { argument: "file_paths".to_string(), reason: "File paths list cannot be empty".to_string() });
     }
 
     if file_paths.len() > 1000 {
-        return Err(NapiError::new(Status::InvalidArg, "Too many files to process"));
+        return Err(GitError::InvalidArgument { argument: "file_paths".to_string(), reason: "Too many files to process".to_string() });
     }
 
     for file_path in file_paths {
@@ -162,39 +161,39 @@ pub fn validate_file_paths(file_paths: &[String]) -> Result<(), NapiError> {
 }
 
 
-pub fn validate_repository_config(config: &RepositoryConfig) -> Result<(), NapiError> {
+pub fn validate_repository_config(config: &RepositoryConfig) -> Result<(), GitError> {
     if let Some(ref description) = config.description {
         if description.len() > 1000 {
-            return Err(NapiError::new(Status::InvalidArg, "Repository description too long"));
+            return Err(GitError::InvalidArgument { argument: "config".to_string(), reason: "Repository description too long".to_string() });
         }
         if description.contains('\0') {
-            return Err(NapiError::new(Status::InvalidArg, "Repository description contains null bytes"));
+            return Err(GitError::InvalidArgument { argument: "config".to_string(), reason: "Repository description contains null bytes".to_string() });
         }
     }
 
     if let Some(ref branch) = config.default_branch {
         if branch.is_empty() {
-            return Err(NapiError::new(Status::InvalidArg, "Default branch name cannot be empty"));
+            return Err(GitError::InvalidArgument { argument: "config".to_string(), reason: "Default branch name cannot be empty".to_string() });
         }
         if branch.len() > 255 {
-            return Err(NapiError::new(Status::InvalidArg, "Default branch name too long"));
+            return Err(GitError::InvalidArgument { argument: "config".to_string(), reason: "Default branch name too long".to_string() });
         }
         if branch.contains('\0') || branch.contains(' ') || branch.starts_with('-') {
-            return Err(NapiError::new(Status::InvalidArg, "Invalid branch name format"));
+            return Err(GitError::InvalidArgument { argument: "config".to_string(), reason: "Invalid branch name format".to_string() });
         }
     }
 
     if let Some(ref line_ending) = config.line_ending {
         match line_ending.as_str() {
             "lf" | "crlf" | "auto" => {},
-            _ => return Err(NapiError::new(Status::InvalidArg, "Invalid line ending option. Must be 'lf', 'crlf', or 'auto'")),
+            _ => return Err(GitError::InvalidArgument { argument: "config".to_string(), reason: "Invalid line ending option. Must be 'lf', 'crlf', or 'auto'".to_string() }),
         }
     }
 
     Ok(())
 }
 
-pub fn validate_git_config(config: &GitConfig) -> Result<(), NapiError> {
+pub fn validate_git_config(config: &GitConfig) -> Result<(), GitError> {
     if let Some(ref user_name) = config.user_name {
         validate_user_info(user_name, "dummy@example.com")?;
     }
@@ -206,128 +205,128 @@ pub fn validate_git_config(config: &GitConfig) -> Result<(), NapiError> {
     if let Some(ref autocrlf) = config.core_autocrlf {
         match autocrlf.as_str() {
             "true" | "false" | "input" => {},
-            _ => return Err(NapiError::new(Status::InvalidArg, "Invalid core.autocrlf value. Must be 'true', 'false', or 'input'")),
+            _ => return Err(GitError::InvalidArgument { argument: "config".to_string(), reason: "Invalid core.autocrlf value. Must be 'true', 'false', or 'input'".to_string() }),
         }
     }
 
     if let Some(ref safecrlf) = config.core_safecrlf {
         match safecrlf.as_str() {
             "true" | "false" | "warn" => {},
-            _ => return Err(NapiError::new(Status::InvalidArg, "Invalid core.safecrlf value. Must be 'true', 'false', or 'warn'")),
+            _ => return Err(GitError::InvalidArgument { argument: "config".to_string(), reason: "Invalid core.safecrlf value. Must be 'true', 'false', or 'warn'".to_string() }),
         }
     }
 
     Ok(())
 }
 
-pub fn validate_gitignore_patterns(patterns: &[String]) -> Result<(), NapiError> {
+pub fn validate_gitignore_patterns(patterns: &[String]) -> Result<(), GitError> {
     if patterns.is_empty() {
-        return Err(NapiError::new(Status::InvalidArg, "Gitignore patterns cannot be empty"));
+        return Err(GitError::InvalidArgument { argument: "patterns".to_string(), reason: "Gitignore patterns cannot be empty".to_string() });
     }
 
     if patterns.len() > 1000 {
-        return Err(NapiError::new(Status::InvalidArg, "Too many gitignore patterns"));
+        return Err(GitError::InvalidArgument { argument: "patterns".to_string(), reason: "Too many gitignore patterns".to_string() });
     }
 
     for pattern in patterns {
         if pattern.len() > 4096 {
-            return Err(NapiError::new(Status::InvalidArg, "Gitignore pattern too long"));
+            return Err(GitError::InvalidArgument { argument: "patterns".to_string(), reason: "Gitignore pattern too long".to_string() });
         }
         if pattern.contains('\0') {
-            return Err(NapiError::new(Status::InvalidArg, "Gitignore pattern contains null bytes"));
+            return Err(GitError::InvalidArgument { argument: "patterns".to_string(), reason: "Gitignore pattern contains null bytes".to_string() });
         }
     }
 
     Ok(())
 }
 
-pub fn validate_gitattributes_rules(rules: &[String]) -> Result<(), NapiError> {
+pub fn validate_gitattributes_rules(rules: &[String]) -> Result<(), GitError> {
     if rules.is_empty() {
-        return Err(NapiError::new(Status::InvalidArg, "Gitattributes rules cannot be empty"));
+        return Err(GitError::InvalidArgument { argument: "rules".to_string(), reason: "Gitattributes rules cannot be empty".to_string() });
     }
 
     if rules.len() > 1000 {
-        return Err(NapiError::new(Status::InvalidArg, "Too many gitattributes rules"));
+        return Err(GitError::InvalidArgument { argument: "rules".to_string(), reason: "Too many gitattributes rules".to_string() });
     }
 
     for rule in rules {
         if rule.len() > 4096 {
-            return Err(NapiError::new(Status::InvalidArg, "Gitattributes rule too long"));
+            return Err(GitError::InvalidArgument { argument: "rules".to_string(), reason: "Gitattributes rule too long".to_string() });
         }
         if rule.contains('\0') {
-            return Err(NapiError::new(Status::InvalidArg, "Gitattributes rule contains null bytes"));
+            return Err(GitError::InvalidArgument { argument: "rules".to_string(), reason: "Gitattributes rule contains null bytes".to_string() });
         }
     }
 
     Ok(())
 }
 
-pub fn validate_directory_for_init(path: &str) -> Result<(), NapiError> {
+pub fn validate_directory_for_init(path: &str) -> Result<(), GitError> {
     validate_repo_path(path)?;
 
     let path_buf = Path::new(path);
 
     // Check if directory exists
     if !path_buf.exists() {
-        return Err(NapiError::new(Status::InvalidArg, "Directory does not exist"));
+        return Err(GitError::InvalidPath { path: path.to_string(), reason: "Directory does not exist".to_string() });
     }
 
     // Check if it's already a git repository
     if path_buf.join(".git").exists() {
-        return Err(NapiError::new(Status::InvalidArg, "Directory is already a git repository"));
+        return Err(GitError::InvalidPath { path: path.to_string(), reason: "Directory is already a git repository".to_string() });
     }
 
     Ok(())
 }
 
 
-pub fn validate_commit_hash(commit_hash: &str) -> Result<(), NapiError> {
+pub fn validate_commit_hash(commit_hash: &str) -> Result<(), GitError> {
     if commit_hash.is_empty() {
-        return Err(NapiError::new(Status::InvalidArg, "Commit hash cannot be empty"));
+        return Err(GitError::InvalidArgument { argument: "commit_hash".to_string(), reason: "Commit hash cannot be empty".to_string() });
     }
 
     if commit_hash.len() < 4 || commit_hash.len() > 40 {
-        return Err(NapiError::new(Status::InvalidArg, "Invalid commit hash length"));
+        return Err(GitError::InvalidArgument { argument: "commit_hash".to_string(), reason: "Invalid commit hash length".to_string() });
     }
 
     if !commit_hash.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(NapiError::new(Status::InvalidArg, "Commit hash must contain only hexadecimal characters"));
+        return Err(GitError::InvalidArgument { argument: "commit_hash".to_string(), reason: "Commit hash must contain only hexadecimal characters".to_string() });
     }
 
     Ok(())
 }
 
-pub fn validate_history_pagination(limit: Option<usize>, offset: Option<usize>) -> Result<(), NapiError> {
+pub fn validate_history_pagination(limit: Option<usize>, offset: Option<usize>) -> Result<(), GitError> {
     if let Some(limit) = limit {
         if limit == 0 {
-            return Err(NapiError::new(Status::InvalidArg, "Limit must be greater than 0"));
+            return Err(GitError::InvalidArgument { argument: "limit".to_string(), reason: "Limit must be greater than 0".to_string() });
         }
         if limit > 1000 {
-            return Err(NapiError::new(Status::InvalidArg, "Limit cannot exceed 1000"));
+            return Err(GitError::InvalidArgument { argument: "limit".to_string(), reason: "Limit cannot exceed 1000".to_string() });
         }
     }
 
     if let Some(offset) = offset {
         if offset > 100000 {
-            return Err(NapiError::new(Status::InvalidArg, "Offset too large"));
+            return Err(GitError::InvalidArgument { argument: "offset".to_string(), reason: "Offset too large".to_string() });
         }
     }
 
     Ok(())
 }
 
-pub fn validate_file_path_for_history(file_path: &str) -> Result<(), NapiError> {
+pub fn validate_file_path_for_history(file_path: &str) -> Result<(), GitError> {
     validate_file_path(file_path)?;
 
     // Additional validation for history operations
     if file_path.starts_with('/') {
-        return Err(NapiError::new(Status::InvalidArg, "File path should be relative to repository root"));
+        return Err(GitError::InvalidPath { path: file_path.to_string(), reason: "File path should be relative to repository root".to_string() });
     }
 
     Ok(())
 }
 
-pub fn validate_restore_operation(repo_path: &str, file_path: &str, commit_hash: &str) -> Result<(), NapiError> {
+pub fn validate_restore_operation(repo_path: &str, file_path: &str, commit_hash: &str) -> Result<(), GitError> {
     validate_repo_path(repo_path)?;
     validate_file_path_for_history(file_path)?;
     validate_commit_hash(commit_hash)?;
@@ -342,7 +341,7 @@ pub fn validate_restore_operation(repo_path: &str, file_path: &str, commit_hash:
     Ok(())
 }
 
-pub fn validate_diff_parameters(repo_path: &str, file_path: Option<&str>) -> Result<(), NapiError> {
+pub fn validate_diff_parameters(repo_path: &str, file_path: Option<&str>) -> Result<(), GitError> {
     validate_repo_path(repo_path)?;
 
     if let Some(path) = file_path {
@@ -352,13 +351,13 @@ pub fn validate_diff_parameters(repo_path: &str, file_path: Option<&str>) -> Res
     Ok(())
 }
 
-pub fn validate_deleted_files_limit(limit: Option<usize>) -> Result<(), NapiError> {
+pub fn validate_deleted_files_limit(limit: Option<usize>) -> Result<(), GitError> {
     if let Some(limit) = limit {
         if limit == 0 {
-            return Err(NapiError::new(Status::InvalidArg, "Limit must be greater than 0"));
+            return Err(GitError::InvalidArgument { argument: "limit".to_string(), reason: "Limit must be greater than 0".to_string() });
         }
         if limit > 500 {
-            return Err(NapiError::new(Status::InvalidArg, "Limit for deleted files cannot exceed 500"));
+            return Err(GitError::InvalidArgument { argument: "limit".to_string(), reason: "Limit for deleted files cannot exceed 500".to_string() });
         }
     }
 

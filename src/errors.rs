@@ -99,6 +99,14 @@ pub enum GitError {
         path: String,
         reason: String,
     },
+    /// An argument that is not a path failed validation — a commit message, a
+    /// user name, a pagination limit. `argument` names the parameter so a
+    /// caller can point at the right field; `reason` is the message shown to
+    /// the user and is what crosses the N-API boundary verbatim.
+    InvalidArgument {
+        argument: String,
+        reason: String,
+    },
     InvalidCommitHash {
         hash: String,
     },
@@ -171,6 +179,8 @@ impl fmt::Display for GitError {
 
             GitError::InvalidPath { path, reason } =>
                 write!(f, "Invalid path '{}': {}", path, reason),
+            GitError::InvalidArgument { argument, reason } =>
+                write!(f, "Invalid argument '{}': {}", argument, reason),
             GitError::InvalidCommitHash { hash } =>
                 write!(f, "Invalid commit hash: {}", hash),
             GitError::InvalidBranchName { name } =>
@@ -189,6 +199,32 @@ impl fmt::Display for GitError {
 }
 
 impl std::error::Error for GitError {}
+
+/// Convert to napi::Error at the N-API boundary.
+///
+/// This exists so the validators in `validation.rs` can return GitError — and
+/// therefore be tested without linking napi — while the ~79 call sites in
+/// git_service.rs keep using a bare `?`.
+///
+/// The two validation variants map to `Status::InvalidArg` carrying the bare
+/// `reason`, which is byte-for-byte the message those call sites produced when
+/// validation returned `napi::Error` directly. JS callers see no change.
+///
+/// Errors from git operations do not travel this path — they go through
+/// `utils::run_blocking`, which honours the `structured_errors` feature flag.
+/// The generic arm here is a backstop, not the main road.
+#[cfg(feature = "napi-binding")]
+impl From<GitError> for napi::Error {
+    fn from(err: GitError) -> Self {
+        match err {
+            GitError::InvalidPath { ref reason, .. }
+            | GitError::InvalidArgument { ref reason, .. } => {
+                napi::Error::new(napi::Status::InvalidArg, reason.clone())
+            }
+            other => napi::Error::new(napi::Status::GenericFailure, other.to_string()),
+        }
+    }
+}
 
 /// Convert from git2::Error to GitError
 ///
@@ -278,6 +314,7 @@ impl GitError {
             GitError::TagNotFound { .. } => "TAG_NOT_FOUND",
             GitError::TagAlreadyExists { .. } => "TAG_ALREADY_EXISTS",
             GitError::InvalidPath { .. } => "INVALID_PATH",
+            GitError::InvalidArgument { .. } => "INVALID_ARGUMENT",
             GitError::InvalidCommitHash { .. } => "INVALID_COMMIT_HASH",
             GitError::InvalidBranchName { .. } => "INVALID_BRANCH_NAME",
             GitError::InvalidTagName { .. } => "INVALID_TAG_NAME",
@@ -372,6 +409,10 @@ impl GitError {
             }
             GitError::InvalidPath { path, reason } => {
                 details.set("path", path.as_str())?;
+                details.set("reason", reason.as_str())?;
+            }
+            GitError::InvalidArgument { argument, reason } => {
+                details.set("argument", argument.as_str())?;
                 details.set("reason", reason.as_str())?;
             }
             GitError::InvalidCommitHash { hash } => {
@@ -490,6 +531,10 @@ impl GitError {
             }
             GitError::InvalidPath { path, reason } => {
                 details.insert("path".to_string(), serde_json::Value::String(path.clone()));
+                details.insert("reason".to_string(), serde_json::Value::String(reason.clone()));
+            }
+            GitError::InvalidArgument { argument, reason } => {
+                details.insert("argument".to_string(), serde_json::Value::String(argument.clone()));
                 details.insert("reason".to_string(), serde_json::Value::String(reason.clone()));
             }
             GitError::InvalidCommitHash { hash } => {

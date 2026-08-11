@@ -10,8 +10,12 @@ pub mod utils;
 pub mod feature_flags;
 pub mod errors;
 
-// Validation module only needed for NAPI bindings
-#[cfg(feature = "napi-binding")]
+// Validation is pure logic — string and filesystem checks — and returns
+// GitError, so it is NOT gated. It used to be, because it returned
+// napi::Error; that gating made its 50 tests unreachable, since a target
+// linking napi cannot build as a standalone test binary (napi resolves its
+// symbols from the host Node process at runtime). Conversion to napi::Error
+// happens at the boundary in git_service.rs via `From`.
 pub mod validation;
 pub mod repository_ops;
 pub mod file_ops;

@@ -112,6 +112,7 @@ pub fn git_error_to_napi_with_flags(error: GitError, structured: bool) -> NapiEr
         GitError::FileNotFound { .. } => Status::GenericFailure,
         GitError::PathTraversal { .. } => Status::InvalidArg,
         GitError::InvalidPath { .. } => Status::InvalidArg,
+        GitError::InvalidArgument { .. } => Status::InvalidArg,
         GitError::InvalidBranchName { .. } => Status::InvalidArg,
         GitError::InvalidTagName { .. } => Status::InvalidArg,
         GitError::InvalidCommitHash { .. } => Status::InvalidArg,
