@@ -2,7 +2,7 @@ use tempfile::TempDir;
 use serial_test::serial;
 
 // Import the git service modules - note: hyphens become underscores
-use liminal_field_git::{GitService, test_utils};
+use liminal_git::{GitService, test_utils};
 
 mod fixtures;
 use fixtures::create_repos;
@@ -269,7 +269,7 @@ fn test_concurrent_operations() {
 fn test_repository_with_complex_history() {
     // Use the complex fixture
     create_repos::create_all_fixtures().unwrap();
-    let complex_repo = liminal_field_git::test_utils::TestRepo::from_fixture("complex-repo").unwrap();
+    let complex_repo = liminal_git::test_utils::TestRepo::from_fixture("complex-repo").unwrap();
     let repo_path = complex_repo.path_str().to_string();
     let git_service = create_git_service();
 
@@ -323,8 +323,8 @@ fn test_binary_file_handling() {
 #[test]
 fn test_cleanup_and_isolation() {
     // Each test should start with a clean state
-    let test_repo1 = liminal_field_git::test_utils::TestRepo::new().unwrap();
-    let test_repo2 = liminal_field_git::test_utils::TestRepo::new().unwrap();
+    let test_repo1 = liminal_git::test_utils::TestRepo::new().unwrap();
+    let test_repo2 = liminal_git::test_utils::TestRepo::new().unwrap();
     let git_service = create_git_service();
 
     // Repos should be independent

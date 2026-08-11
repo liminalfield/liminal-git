@@ -1,0 +1,12 @@
+# Rust build output
+/target/
+
+# napi build output — the compiled addon is built on install, never committed.
+# See the `prepare` script in package.json.
+*.node
+
+# Node
+node_modules/
+
+# OS
+.DS_Store

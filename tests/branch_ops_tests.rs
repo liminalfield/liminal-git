@@ -3,7 +3,7 @@ mod common;
 #[cfg(test)]
 mod branch_ops_tests {
     use crate::common::*;
-    use liminal_field_git::*;
+    use liminal_git::*;
     use std::fs;
 
     #[test]

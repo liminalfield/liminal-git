@@ -3,7 +3,7 @@ mod common;
 #[cfg(test)]
 mod tag_ops_tests {
     use crate::common::*;
-    use liminal_field_git::*;
+    use liminal_git::*;
 
     #[test]
     fn test_list_tags_impl_empty_repo() {

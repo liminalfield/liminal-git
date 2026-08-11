@@ -257,7 +257,7 @@ echo "🎉 Your Rust git service is ready for production!"
 if [ "$QUICK_MODE" = false ]; then
     echo
     echo "📁 Generated artifacts:"
-    echo "• Documentation: target/doc/liminal_field_git/index.html"
+    echo "• Documentation: target/doc/liminal_git/index.html"
     if [ "$COVERAGE" = true ]; then
         echo "• Coverage report: target/coverage/tarpaulin-report.html"
     fi
@@ -269,7 +269,7 @@ fi
 echo
 echo "🚀 Next steps:"
 echo "• Review benchmark results in target/criterion/"
-echo "• Check documentation at target/doc/liminal_field_git/index.html"
+echo "• Check documentation at target/doc/liminal_git/index.html"
 if [ "$COVERAGE" = true ]; then
     echo "• Review coverage report at target/coverage/tarpaulin-report.html"
 fi

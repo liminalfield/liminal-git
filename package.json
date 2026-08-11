@@ -1,6 +1,11 @@
 {
-  "name": "liminal-field-git",
+  "name": "liminal-git",
   "version": "0.1.0",
+  "description": "Native git operations for Node.js, built on libgit2 via napi-rs.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/liminalfield/liminal-git.git"
+  },
   "main": "index.js",
   "types": "index.d.ts",
   "exports": {
@@ -10,7 +15,7 @@
     }
   },
   "napi": {
-    "binaryName": "liminal-field-git",
+    "binaryName": "liminal-git",
     "targets": [
       "x86_64-pc-windows-msvc",
       "x86_64-unknown-linux-gnu",
@@ -19,6 +24,8 @@
     ]
   },
   "scripts": {
+    "//prepare": "Runs on `npm install` from a git URL, which is how Nocturne consumes this. The compiled addon is not committed, so without this a git install yields source and no binding. Requires a Rust toolchain and a C compiler on the installing machine — a deliberate choice: consumers build from source rather than being shipped binaries.",
+    "prepare": "napi build --platform --release",
     "build": "napi build --platform --release",
     "build:debug": "napi build --platform",
     "test": "cargo test --lib --no-default-features",

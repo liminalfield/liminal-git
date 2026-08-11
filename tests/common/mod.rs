@@ -14,7 +14,7 @@ pub use std::fs;
 pub use tempfile::TempDir;
 
 // Re-export all operation functions for easy access in tests
-pub use liminal_field_git::{
+pub use liminal_git::{
     file_ops::*,
     repository_ops::*,
     history_ops::*,
@@ -23,7 +23,7 @@ pub use liminal_field_git::{
 
 // Branch and tag operations only available with NAPI feature
 #[cfg(feature = "napi-binding")]
-pub use liminal_field_git::{
+pub use liminal_git::{
     branch_ops::*,
     tag_ops::*,
 };

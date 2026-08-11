@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::{TempDir, Builder};
 use git2::{Repository, Signature, Time, Oid};
-use liminal_field_git::types::GitStatus;
+use liminal_git::types::GitStatus;
 
 /// Test utilities for git operations
 pub struct TestRepo {

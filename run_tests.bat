@@ -270,7 +270,7 @@ echo 🎉 Your Rust git service is ready for production!
 if "%QUICK_MODE%"=="false" (
     echo.
     echo 📁 Generated artifacts:
-    echo • Documentation: target\doc\liminal_field_git\index.html
+    echo • Documentation: target\doc\liminal_git\index.html
     if "%COVERAGE%"=="true" (
         echo • Coverage report: target\coverage\tarpaulin-report.html
     )
@@ -282,7 +282,7 @@ if "%QUICK_MODE%"=="false" (
 echo.
 echo 🚀 Next steps:
 echo • Review benchmark results in target\criterion\
-echo • Check documentation at target\doc\liminal_field_git\index.html
+echo • Check documentation at target\doc\liminal_git\index.html
 if "%COVERAGE%"=="true" (
     echo • Review coverage report at target\coverage\tarpaulin-report.html
 )

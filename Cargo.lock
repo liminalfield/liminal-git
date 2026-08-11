@@ -792,7 +792,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "liminal-field-git"
+name = "liminal-git"
 version = "0.1.0"
 dependencies = [
  "anyhow",

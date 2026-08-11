@@ -2,7 +2,7 @@
 
 use std::path::Path;
 use git2::Repository;
-use liminal_field_git::types::GitStatus;
+use liminal_git::types::GitStatus;
 
 /// Assert that git status matches expected values
 pub fn assert_git_status_matches(

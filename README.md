@@ -27,7 +27,7 @@ This is automatically done before:
 - Running tests (`npm test` or `npm run test:js`)
 - Publishing (`prepublishOnly` hook)
 
-**Module Format**: The package is CommonJS (main module uses `require()`), so `errors.ts` is compiled to CommonJS with `--module commonjs --esModuleInterop`. This ensures `require('liminal-field-git/errors')` works correctly.
+**Module Format**: The package is CommonJS (main module uses `require()`), so `errors.ts` is compiled to CommonJS with `--module commonjs --esModuleInterop`. This ensures `require('liminal-git/errors')` works correctly.
 
 ### Testing
 
@@ -203,14 +203,14 @@ All error codes are stable and documented:
 Import the error handling helpers from the companion `errors` module:
 
 ```typescript
-import { GitService } from 'liminal-field-git';
+import { GitService } from 'liminal-git';
 import {
   parseStructuredGitError,
   isFileNotFoundError,
   isBranchError,
   type StructuredGitError,
   type FileNotFoundError,
-} from 'liminal-field-git/errors';
+} from 'liminal-git/errors';
 
 const gitService = new GitService();
 
@@ -239,7 +239,7 @@ try {
 }
 ```
 
-**Available exports from `liminal-field-git/errors`**:
+**Available exports from `liminal-git/errors`**:
 
 - `parseStructuredGitError(err)` - Parse structured error from exception
 - Type guards: `isFileNotFoundError`, `isBranchNotFoundError`, `isMergeConflictError`, etc.

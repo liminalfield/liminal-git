@@ -1,5 +1,5 @@
 // tests/phase2_tests.rs
-use liminal_field_git::{GitService, RepositoryConfig, RepositoryHealth, GitConfig, RepositoryInfo};
+use liminal_git::{GitService, RepositoryConfig, RepositoryHealth, GitConfig, RepositoryInfo};
 use tempfile::TempDir;
 use std::fs;
 
