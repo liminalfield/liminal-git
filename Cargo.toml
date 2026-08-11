@@ -7,6 +7,7 @@ edition = "2024"
 # 1.85 fails with 23 instances of E0658. The msrv job in CI holds this honest.
 rust-version = "1.88"
 description = "Native git operations for Node.js, built on libgit2 via napi-rs."
+license = "MIT"
 repository = "https://github.com/liminalfield/liminal-git"
 
 # This creates a dynamic library that Node.js can load

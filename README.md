@@ -378,4 +378,14 @@ cargo clippy --all-targets
 
 ## License
 
-[Your license here]
+MIT — see [LICENSE](LICENSE).
+
+The compiled addon is not only this project's code. libgit2 is **statically
+linked** into every binary, under GPLv2 *with a linking exception*. That
+exception is what lets liminal-git be MIT, and lets anything linking liminal-git
+choose its own terms; the GPL still governs libgit2 itself.
+
+Crate metadata will not tell you this — `libgit2-sys` declares
+`MIT OR Apache-2.0`, which describes the Rust binding rather than the C library
+it vendors and compiles in. See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md),
+which ships with the package.
