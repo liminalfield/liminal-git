@@ -163,6 +163,22 @@ jobs:
       - name: npm ci (builds the addon via the prepare script)
         run: npm ci
 
+      # That build regenerates index.js and index.d.ts from the Rust source,
+      # so if they differ from what is committed, the committed ones are
+      # stale. This is not cosmetic: the declarations shipped to consumers
+      # once described 38 async methods as synchronous, because the methods
+      # became async and nobody re-ran the generator.
+      #
+      # Linux only. The check is about content, and running it on three
+      # platforms only adds line-ending false positives.
+      - name: The committed bindings match the Rust source
+        if: runner.os == 'Linux'
+        run: |
+          if ! git diff --exit-code -- index.js index.d.ts; then
+            echo "::error::index.js / index.d.ts are stale. Run 'npm run build' and commit the result."
+            exit 1
+          fi
+
       - name: The addon exists and Node can load it
         shell: bash
         run: |
