@@ -1,0 +1,163 @@
+name: CI
+
+# ---------------------------------------------------------------------------
+# There are deliberately NO `push` or `pull_request` triggers.
+#
+# This repository is private, and Actions minutes on private repositories are
+# billed against the account allowance. Until it goes public, this workflow
+# runs only when someone asks for it — from the Actions tab, or:
+#
+#     gh workflow run ci.yml -R liminalfield/liminal-git
+#     gh workflow run ci.yml -R liminalfield/liminal-git -f platforms=all
+#
+# To restore automatic runs when the repository is public, add:
+#
+#     push:
+#       branches: [main]
+#     pull_request:
+#
+# and delete this comment. Nothing else needs to change.
+# ---------------------------------------------------------------------------
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: "Platforms to test on"
+        type: choice
+        default: linux
+        options:
+          - linux
+          - all
+        required: true
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Smaller cache, faster restore; debug info is not useful in CI.
+  CARGO_PROFILE_DEV_DEBUG: 0
+
+jobs:
+  # Cheapest job, and it gates the rest: a formatting slip should not spend
+  # macOS minutes (billed at 10x) before it is caught.
+  lint:
+    name: Format and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --check
+
+      # Both feature sets are linted because they compile different code.
+      # --no-default-features is how the tests build; the default napi feature
+      # is how the addon builds. A lint clean under one can be dirty under the
+      # other.
+      - name: Clippy (test profile)
+        run: cargo clippy --no-default-features --all-targets -- -D warnings
+
+      - name: Clippy (napi profile)
+        run: cargo clippy --lib -- -D warnings
+
+  test:
+    name: Test (${{ matrix.os }})
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.platforms == 'all' && '["ubuntu-latest", "macos-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # --no-default-features is required, not a preference. A test binary
+      # cannot link napi: napi resolves its symbols from the host Node process
+      # at run time, so with the feature on this fails at the linker.
+      - name: Test
+        run: cargo test --no-default-features --no-fail-fast
+
+      # The addon itself is never exercised above, since it cannot be. This at
+      # least proves it still compiles on this platform.
+      - name: Check the napi build compiles
+        run: cargo check --lib
+
+  # The floor claimed by `rust-version` in Cargo.toml. Without this job the
+  # number is an assertion nobody checks, and it drifts the first time someone
+  # uses a newer language feature.
+  msrv:
+    name: MSRV
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read rust-version from Cargo.toml
+        id: msrv
+        run: |
+          version=$(grep '^rust-version' Cargo.toml | cut -d'"' -f2)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Cargo.toml declares rust-version = $version"
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build and test on the declared minimum
+        run: |
+          cargo check --lib
+          cargo test --no-default-features --no-fail-fast
+
+  # Consumers install this from a git URL, which runs the `prepare` script and
+  # builds the addon from source. That path is the product, so it is tested
+  # rather than assumed — it needs a Rust toolchain and a C compiler on the
+  # installing machine, and it is worth knowing the day that stops being true.
+  build-addon:
+    name: Build addon (${{ matrix.os }})
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.platforms == 'all' && '["ubuntu-latest", "macos-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Runs `prepare`, which is `napi build --platform --release`.
+      - name: npm ci (builds the addon via the prepare script)
+        run: npm ci
+
+      - name: The addon exists and Node can load it
+        shell: bash
+        run: |
+          ls -la ./*.node
+          node -e "
+            const { GitService } = require('./index.js');
+            const service = new GitService();
+            if (typeof service.getStatus !== 'function') {
+              throw new Error('GitService loaded but getStatus is missing');
+            }
+            console.log('addon loaded, GitService constructed');
+          "

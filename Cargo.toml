@@ -2,6 +2,12 @@
 name = "liminal-git"
 version = "0.1.0"
 edition = "2024"
+# Verified, not inferred. Edition 2024 alone would allow 1.85, but the code
+# uses let-chains (`if let ... && let ...`), which were unstable until 1.88 —
+# 1.85 fails with 23 instances of E0658. The msrv job in CI holds this honest.
+rust-version = "1.88"
+description = "Native git operations for Node.js, built on libgit2 via napi-rs."
+repository = "https://github.com/liminalfield/liminal-git"
 
 # This creates a dynamic library that Node.js can load
 [lib]
