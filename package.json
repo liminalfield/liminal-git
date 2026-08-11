@@ -8,6 +8,12 @@
   },
   "main": "index.js",
   "types": "index.d.ts",
+  "//files": "Without this, npm falls back to .gitignore to decide what to pack — and .gitignore excludes *.node, because the addon is built on install rather than committed. The result was a package containing every Rust source file and no binding at all, failing on require with 'Cannot find native binding'. The Rust sources are not needed in the installed package: `prepare` runs in npm's own clone, which has the full checkout regardless of this list.",
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "*.node"
+  ],
   "exports": {
     ".": {
       "types": "./index.d.ts",

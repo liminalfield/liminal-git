@@ -16,3 +16,6 @@ node_modules/
 
 # OS
 .DS_Store
+
+# npm pack output (the CI packed-install check creates this)
+*.tgz

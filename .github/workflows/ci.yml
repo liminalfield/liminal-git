@@ -179,6 +179,33 @@ jobs:
             exit 1
           fi
 
+      # Building inside a clone is not the same as installing this package, and
+      # the difference is where the real failure lived: `npm pack` applies the
+      # `files` allowlist, and without one npm falls back to .gitignore — which
+      # excludes *.node, since the addon is built on install rather than
+      # committed. Every check above passed while the installable package
+      # contained all the Rust sources and no binding whatsoever.
+      #
+      # So: pack it, install the tarball somewhere else, and require it from
+      # there. Installing a tarball does not run `prepare`, which is the point
+      # — this proves the packed artifact carries a working binary.
+      - name: A packed install loads from outside the repo
+        shell: bash
+        run: |
+          npm pack
+          work="${RUNNER_TEMP}/packtest"
+          rm -rf "$work" && mkdir -p "$work" && cd "$work"
+          npm init -y > /dev/null
+          npm install "$GITHUB_WORKSPACE"/liminal-git-*.tgz
+          node -e "
+            const { GitService } = require('liminal-git');
+            const service = new GitService();
+            if (typeof service.getStatus !== 'function') {
+              throw new Error('packed install loaded but getStatus is missing');
+            }
+            console.log('packed install loads and constructs');
+          "
+
       - name: The addon exists and Node can load it
         shell: bash
         run: |
