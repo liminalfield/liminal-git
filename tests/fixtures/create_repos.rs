@@ -1,6 +1,6 @@
+use git2::{Repository, Signature, Time};
 use std::fs;
 use std::path::Path;
-use git2::{Repository, Signature, Time};
 
 /// Create all test fixture repositories
 pub fn create_all_fixtures() -> Result<(), Box<dyn std::error::Error>> {
@@ -100,7 +100,10 @@ fn create_complex_repo() -> Result<(), Box<dyn std::error::Error>> {
     // First commit: Initial project structure
     fs::write(repo_path.join("README.md"), "# Complex Test Repository")?;
     fs::create_dir_all(repo_path.join("src"))?;
-    fs::write(repo_path.join("src/lib.rs"), "pub fn hello() { println!(\"Hello\"); }")?;
+    fs::write(
+        repo_path.join("src/lib.rs"),
+        "pub fn hello() { println!(\"Hello\"); }",
+    )?;
 
     let mut index = repo.index()?;
     index.add_path(Path::new("README.md"))?;
@@ -109,22 +112,21 @@ fn create_complex_repo() -> Result<(), Box<dyn std::error::Error>> {
 
     let tree_id = index.write_tree()?;
     let tree = repo.find_tree(tree_id)?;
-    let first_commit = repo.commit(
-        Some("HEAD"),
-        &sig,
-        &sig,
-        "Initial commit",
-        &tree,
-        &[],
-    )?;
+    let first_commit = repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])?;
 
     // Second commit: Add documentation
     fs::create_dir_all(repo_path.join("docs"))?;
-    fs::write(repo_path.join("docs/guide.md"), "# User Guide\n\nThis is a guide.")?;
-    fs::write(repo_path.join("Cargo.toml"), r#"[package]
+    fs::write(
+        repo_path.join("docs/guide.md"),
+        "# User Guide\n\nThis is a guide.",
+    )?;
+    fs::write(
+        repo_path.join("Cargo.toml"),
+        r#"[package]
 name = "test-project"
 version = "0.1.0"
-"#)?;
+"#,
+    )?;
 
     index.add_path(Path::new("docs/guide.md"))?;
     index.add_path(Path::new("Cargo.toml"))?;
@@ -143,15 +145,21 @@ version = "0.1.0"
     )?;
 
     // Third commit: Update existing files
-    fs::write(repo_path.join("README.md"), "# Complex Test Repository\n\nUpdated with more content.")?;
-    fs::write(repo_path.join("src/lib.rs"), r#"pub fn hello() {
+    fs::write(
+        repo_path.join("README.md"),
+        "# Complex Test Repository\n\nUpdated with more content.",
+    )?;
+    fs::write(
+        repo_path.join("src/lib.rs"),
+        r#"pub fn hello() {
     println!("Hello from updated lib!");
 }
 
 pub fn goodbye() {
     println!("Goodbye!");
 }
-"#)?;
+"#,
+    )?;
 
     index.add_path(Path::new("README.md"))?;
     index.add_path(Path::new("src/lib.rs"))?;
@@ -172,7 +180,9 @@ pub fn goodbye() {
     // Create files in various states for testing
 
     // Modified file (not staged)
-    fs::write(repo_path.join("src/lib.rs"), r#"pub fn hello() {
+    fs::write(
+        repo_path.join("src/lib.rs"),
+        r#"pub fn hello() {
     println!("Hello from modified lib!");
 }
 
@@ -184,20 +194,30 @@ pub fn goodbye() {
 pub fn new_function() {
     println!("This is new!");
 }
-"#)?;
+"#,
+    )?;
 
     // Staged file
-    fs::write(repo_path.join("src/staged.rs"), "// This file is staged but not committed")?;
+    fs::write(
+        repo_path.join("src/staged.rs"),
+        "// This file is staged but not committed",
+    )?;
     index.add_path(Path::new("src/staged.rs"))?;
     index.write()?;
 
     // Untracked files
-    fs::write(repo_path.join("untracked.txt"), "This file is not tracked by git")?;
+    fs::write(
+        repo_path.join("untracked.txt"),
+        "This file is not tracked by git",
+    )?;
     fs::create_dir_all(repo_path.join("temp"))?;
     fs::write(repo_path.join("temp/temp_file.txt"), "Temporary file")?;
 
     // Binary file
-    fs::write(repo_path.join("binary.dat"), [0x00, 0x01, 0x02, 0x03, 0xFF, 0xFE, 0xFD])?;
+    fs::write(
+        repo_path.join("binary.dat"),
+        [0x00, 0x01, 0x02, 0x03, 0xFF, 0xFE, 0xFD],
+    )?;
 
     println!("Created complex repository at {:?}", repo_path);
     Ok(())
@@ -221,6 +241,10 @@ mod tests {
         // Restore original directory
         std::env::set_current_dir(original_dir).unwrap();
 
-        assert!(result.is_ok(), "Failed to create fixtures: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Failed to create fixtures: {:?}",
+            result.err()
+        );
     }
 }

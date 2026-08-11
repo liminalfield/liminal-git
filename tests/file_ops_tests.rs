@@ -4,7 +4,6 @@ mod common;
 mod file_ops_tests {
     use crate::common::*;
     use git2::{Repository, Signature};
-    
 
     fn create_test_repo_with_history() -> (TempDir, String) {
         let temp_dir = TempDir::new().unwrap();
@@ -16,21 +15,47 @@ mod file_ops_tests {
         // Create initial file and commit
         let file1 = temp_dir.path().join("file1.txt");
         fs::write(&file1, "Initial content").unwrap();
-        commit_file_impl(&path, &file1.to_string_lossy(), "Initial commit", "Test User", "test@example.com").unwrap();
+        commit_file_impl(
+            &path,
+            &file1.to_string_lossy(),
+            "Initial commit",
+            "Test User",
+            "test@example.com",
+        )
+        .unwrap();
 
         // Modify file and commit again
         fs::write(&file1, "Modified content").unwrap();
-        commit_file_impl(&path, &file1.to_string_lossy(), "Second commit", "Test User", "test@example.com").unwrap();
+        commit_file_impl(
+            &path,
+            &file1.to_string_lossy(),
+            "Second commit",
+            "Test User",
+            "test@example.com",
+        )
+        .unwrap();
 
         // Create second file and commit
         let file2 = temp_dir.path().join("file2.txt");
         fs::write(&file2, "Second file content").unwrap();
-        commit_file_impl(&path, &file2.to_string_lossy(), "Third commit", "Test User", "test@example.com").unwrap();
+        commit_file_impl(
+            &path,
+            &file2.to_string_lossy(),
+            "Third commit",
+            "Test User",
+            "test@example.com",
+        )
+        .unwrap();
 
         (temp_dir, path)
     }
 
-    fn commit_impl(repo: &Repository, message: &str, name: &str, email: &str) -> Result<git2::Oid, anyhow::Error> {
+    fn commit_impl(
+        repo: &Repository,
+        message: &str,
+        name: &str,
+        email: &str,
+    ) -> Result<git2::Oid, anyhow::Error> {
         let signature = Signature::now(name, email)?;
         let mut index = repo.index()?;
         let tree_id = index.write_tree()?;
@@ -62,18 +87,11 @@ mod file_ops_tests {
                 return Err(anyhow::anyhow!("No changes to commit"));
             }
 
-            let commit_id = repo.commit(
-                Some("HEAD"),
-                &signature,
-                &signature,
-                message,
-                &tree,
-                &[],
-            )?;
+            let commit_id =
+                repo.commit(Some("HEAD"), &signature, &signature, message, &tree, &[])?;
             Ok(commit_id)
         }
     }
-
 
     #[test]
     fn test_commit_file_impl_success() {
@@ -85,7 +103,7 @@ mod file_ops_tests {
             "test.txt",
             INITIAL_COMMIT_MSG,
             TEST_USER_NAME,
-            TEST_USER_EMAIL
+            TEST_USER_EMAIL,
         );
 
         assert_result_is_ok(&result);
@@ -106,7 +124,7 @@ mod file_ops_tests {
             "nonexistent.txt",
             INITIAL_COMMIT_MSG,
             TEST_USER_NAME,
-            TEST_USER_EMAIL
+            TEST_USER_EMAIL,
         );
 
         assert_result_is_error(&result);
@@ -117,7 +135,9 @@ mod file_ops_tests {
         let test_repo = TestRepo::new().unwrap();
 
         // Create and commit a file
-        test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("test.txt", "content", "Initial commit")
+            .unwrap();
 
         // Try to commit the same file again without changes
         let result = commit_file_impl(
@@ -125,14 +145,17 @@ mod file_ops_tests {
             "test.txt",
             "Another commit",
             "Test User",
-            "test@example.com"
+            "test@example.com",
         );
 
         // Assert the variant, not the prose. This matched on "No changes"
         // until the duplicate error modules were unified and the message
         // became "Nothing to commit" — and nothing noticed, because this
         // target had not compiled since.
-        assert!(matches!(result, Err(GitError::NothingToCommit)), "got {result:?}");
+        assert!(
+            matches!(result, Err(GitError::NothingToCommit)),
+            "got {result:?}"
+        );
     }
 
     #[test]
@@ -148,7 +171,7 @@ mod file_ops_tests {
             &files,
             "Multi-file commit",
             "Test User",
-            "test@example.com"
+            "test@example.com",
         );
 
         assert!(result.is_ok());
@@ -165,7 +188,9 @@ mod file_ops_tests {
         let test_repo = TestRepo::new().unwrap();
 
         // Create initial commit
-        test_repo.add_and_commit("existing.txt", "initial", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("existing.txt", "initial", "Initial commit")
+            .unwrap();
 
         // Modify existing file and add new file
         test_repo.add_file("existing.txt", "modified").unwrap();
@@ -177,7 +202,7 @@ mod file_ops_tests {
             &files,
             "Update existing and add new",
             "Test User",
-            "test@example.com"
+            "test@example.com",
         );
 
         assert!(result.is_ok());
@@ -192,13 +217,20 @@ mod file_ops_tests {
         let test_repo = TestRepo::new().unwrap();
 
         // Create initial commit
-        test_repo.add_and_commit("first.txt", "first", "First commit").unwrap();
+        test_repo
+            .add_and_commit("first.txt", "first", "First commit")
+            .unwrap();
 
         // Stage a new file
         test_repo.add_file("second.txt", "second").unwrap();
         test_repo.stage_file("second.txt").unwrap();
 
-        let result = commit_impl(&test_repo.repo, "Second commit", "Test User", "test@example.com");
+        let result = commit_impl(
+            &test_repo.repo,
+            "Second commit",
+            "Test User",
+            "test@example.com",
+        );
         assert!(result.is_ok());
 
         // Verify we now have 2 commits
@@ -213,10 +245,17 @@ mod file_ops_tests {
         let test_repo = TestRepo::new().unwrap();
 
         // Create initial commit
-        test_repo.add_and_commit("first.txt", "first", "First commit").unwrap();
+        test_repo
+            .add_and_commit("first.txt", "first", "First commit")
+            .unwrap();
 
         // Try to commit without any staged changes
-        let result = commit_impl(&test_repo.repo, "Empty commit", "Test User", "test@example.com");
+        let result = commit_impl(
+            &test_repo.repo,
+            "Empty commit",
+            "Test User",
+            "test@example.com",
+        );
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("No changes"));
     }
@@ -235,7 +274,7 @@ mod file_ops_tests {
             "large.txt",
             "Add large file",
             "Test User",
-            "test@example.com"
+            "test@example.com",
         );
 
         assert!(result.is_ok());
@@ -260,7 +299,7 @@ mod file_ops_tests {
             "binary.dat",
             "Add binary file",
             "Test User",
-            "test@example.com"
+            "test@example.com",
         );
 
         assert!(result.is_ok());
@@ -282,7 +321,7 @@ mod file_ops_tests {
         let files = vec![
             "测试.txt".to_string(),
             "файл.txt".to_string(),
-            "🦀_rust.rs".to_string()
+            "🦀_rust.rs".to_string(),
         ];
 
         let result = commit_files_impl(
@@ -290,7 +329,7 @@ mod file_ops_tests {
             &files,
             "Add unicode files",
             "Test User",
-            "test@example.com"
+            "test@example.com",
         );
 
         assert!(result.is_ok());
@@ -305,12 +344,16 @@ mod file_ops_tests {
         let test_repo = TestRepo::new().unwrap();
 
         // Create files in nested directories
-        test_repo.add_file("deep/nested/path/file.txt", "nested content").unwrap();
-        test_repo.add_file("another/deep/structure/test.rs", "rust content").unwrap();
+        test_repo
+            .add_file("deep/nested/path/file.txt", "nested content")
+            .unwrap();
+        test_repo
+            .add_file("another/deep/structure/test.rs", "rust content")
+            .unwrap();
 
         let files = vec![
             "deep/nested/path/file.txt".to_string(),
-            "another/deep/structure/test.rs".to_string()
+            "another/deep/structure/test.rs".to_string(),
         ];
 
         let result = commit_files_impl(
@@ -318,7 +361,7 @@ mod file_ops_tests {
             &files,
             "Add nested files",
             "Test User",
-            "test@example.com"
+            "test@example.com",
         );
 
         assert!(result.is_ok());
@@ -338,7 +381,9 @@ mod file_ops_tests {
 
         for i in 0..file_count {
             let filename = format!("file_{:03}.txt", i);
-            test_repo.add_file(&filename, &format!("Content for file {}", i)).unwrap();
+            test_repo
+                .add_file(&filename, &format!("Content for file {}", i))
+                .unwrap();
             files.push(filename);
         }
 
@@ -348,7 +393,7 @@ mod file_ops_tests {
             &files,
             "Add many files",
             "Test User",
-            "test@example.com"
+            "test@example.com",
         );
         let duration = start.elapsed();
 
@@ -394,7 +439,9 @@ mod file_ops_tests {
         let test_repo = TestRepo::new().unwrap();
 
         // Create and commit initial file
-        test_repo.add_and_commit("test.txt", "initial content", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("test.txt", "initial content", "Initial commit")
+            .unwrap();
 
         // Modify and stage the file
         test_repo.add_file("test.txt", "modified content").unwrap();
@@ -444,7 +491,6 @@ mod file_ops_tests {
         assert!(result.contains(&"file1.txt".to_string()));
         assert!(result.contains(&"file2.txt".to_string()));
     }
-
 
     /// Find a commit by its message.
     ///
@@ -517,6 +563,4 @@ mod file_ops_tests {
         let result = restore_file_from_commit_impl(&path, "nonexistent.txt", commit_hash);
         assert!(result.is_err());
     }
-
-    
 }

@@ -38,7 +38,7 @@ pub struct RenamedStatus {
 pub struct RepositoryConfig {
     pub description: Option<String>,
     pub default_branch: Option<String>,
-    pub line_ending: Option<String>,  // "lf", "crlf", "auto"
+    pub line_ending: Option<String>, // "lf", "crlf", "auto"
 }
 
 #[cfg_attr(feature = "napi-binding", napi(object))]
@@ -69,7 +69,6 @@ pub struct RepositoryInfo {
     pub has_uncommitted_changes: bool,
     pub remote_urls: Vec<String>,
 }
-
 
 // Add these to types.rs
 
@@ -131,7 +130,7 @@ pub struct DiffHunk {
 #[cfg_attr(feature = "napi-binding", napi(object))]
 #[derive(Debug, Clone)]
 pub struct DiffLine {
-    pub line_type: String,  // "added", "removed", "context"
+    pub line_type: String, // "added", "removed", "context"
     pub content: String,
     pub old_line_number: Option<i32>,
     pub new_line_number: Option<i32>,
@@ -142,7 +141,7 @@ pub struct DiffLine {
 pub struct FileDiff {
     pub file_path: String,
     pub old_path: Option<String>,
-    pub status: String,  // "added", "deleted", "modified", "renamed"
+    pub status: String, // "added", "deleted", "modified", "renamed"
     pub hunks: Vec<DiffHunk>,
     pub additions: i32,
     pub deletions: i32,

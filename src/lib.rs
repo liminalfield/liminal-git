@@ -5,10 +5,10 @@
 mod git_service;
 
 // Core modules always available for testing
+pub mod errors;
+pub mod feature_flags;
 pub mod types;
 pub mod utils;
-pub mod feature_flags;
-pub mod errors;
 
 // Validation is pure logic — string and filesystem checks — and returns
 // GitError, so it is NOT gated. It used to be, because it returned
@@ -16,10 +16,10 @@ pub mod errors;
 // linking napi cannot build as a standalone test binary (napi resolves its
 // symbols from the host Node process at runtime). Conversion to napi::Error
 // happens at the boundary in git_service.rs via `From`.
-pub mod validation;
-pub mod repository_ops;
 pub mod file_ops;
 pub mod history_ops;
+pub mod repository_ops;
+pub mod validation;
 
 // Branch and tag operations - core functionality always available
 pub mod branch_ops;
@@ -33,14 +33,14 @@ mod core;
 pub use git_service::GitService;
 
 // Always export types and operations for testing
-pub use types::*;
-pub use feature_flags::*;
-pub use errors::*;
-pub use file_ops::*;
-pub use repository_ops::*;
-pub use history_ops::*;
 pub use branch_ops::*;
+pub use errors::*;
+pub use feature_flags::*;
+pub use file_ops::*;
+pub use history_ops::*;
+pub use repository_ops::*;
 pub use tag_ops::*;
+pub use types::*;
 
 // Export core service for tests
 pub use core::GitServiceCore;

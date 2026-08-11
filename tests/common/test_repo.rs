@@ -1,9 +1,9 @@
 // tests/common/test_repo.rs - TestRepo utility for creating test git repositories
 
+use git2::{Oid, Repository, Signature, Time};
 use std::fs;
 use std::path::{Path, PathBuf};
-use tempfile::{TempDir, Builder};
-use git2::{Repository, Signature, Time, Oid};
+use tempfile::{Builder, TempDir};
 
 /// Test utilities for git operations
 pub struct TestRepo {
@@ -15,9 +15,7 @@ pub struct TestRepo {
 impl TestRepo {
     /// Create a new temporary git repository
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        let temp_dir = Builder::new()
-            .prefix("rust-git-test")
-            .tempdir()?;
+        let temp_dir = Builder::new().prefix("rust-git-test").tempdir()?;
 
         let path = temp_dir.path().to_path_buf();
         let repo = Repository::init(&path)?;
@@ -56,7 +54,11 @@ impl TestRepo {
     }
 
     /// Add a file with content to the repository
-    pub fn add_file<P: AsRef<Path>>(&self, path: P, content: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn add_file<P: AsRef<Path>>(
+        &self,
+        path: P,
+        content: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let file_path = self.path.join(path);
 
         // Create parent directories if needed
@@ -93,20 +95,20 @@ impl TestRepo {
             None => vec![],
         };
 
-        let commit_id = self.repo.commit(
-            Some("HEAD"),
-            &sig,
-            &sig,
-            message,
-            &tree,
-            &parents,
-        )?;
+        let commit_id = self
+            .repo
+            .commit(Some("HEAD"), &sig, &sig, message, &tree, &parents)?;
 
         Ok(commit_id)
     }
 
     /// Add and commit a file in one operation
-    pub fn add_and_commit<P: AsRef<Path>>(&self, path: P, content: &str, message: &str) -> Result<Oid, Box<dyn std::error::Error>> {
+    pub fn add_and_commit<P: AsRef<Path>>(
+        &self,
+        path: P,
+        content: &str,
+        message: &str,
+    ) -> Result<Oid, Box<dyn std::error::Error>> {
         self.add_file(&path, content)?;
         self.stage_file(&path)?;
         self.commit(message)

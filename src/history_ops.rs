@@ -1,7 +1,9 @@
-use git2::{Repository, DiffOptions, DiffFindOptions};
 use crate::errors::GitError;
-use crate::types::{CommitInfo, CommitHistory, FileAtCommit, FileDiff, CommitDiff, DeletedFileEntry};
+use crate::types::{
+    CommitDiff, CommitHistory, CommitInfo, DeletedFileEntry, FileAtCommit, FileDiff,
+};
 use crate::utils::normalize_git_path;
+use git2::{DiffFindOptions, DiffOptions, Repository};
 use log::info;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -33,20 +35,29 @@ pub fn get_file_history_impl(
     file_path: &str,
     limit: Option<usize>,
 ) -> Result<CommitHistory, GitError> {
-    info!("get_file_history: path={} limit={:?} (with --follow)", file_path, limit);
+    info!(
+        "get_file_history: path={} limit={:?} (with --follow)",
+        file_path, limit
+    );
     let start = std::time::Instant::now();
 
     let repo = Repository::open(repo_path)
         .map_err(|e| GitError::from(e).with_operation("get_file_history"))?;
 
-    let mut revwalk = repo.revwalk()
+    let mut revwalk = repo
+        .revwalk()
         .map_err(|e| GitError::from(e).with_operation("create_revwalk"))?;
-    revwalk.set_sorting(git2::Sort::TIME)
+    revwalk
+        .set_sorting(git2::Sort::TIME)
         .map_err(|e| GitError::from(e).with_operation("set_sorting"))?;
 
     // Gracefully handle unborn HEAD (new repo with no commits)
     if revwalk.push_head().is_err() {
-        return Ok(CommitHistory { commits: Vec::new(), total_count: 0, has_more: false });
+        return Ok(CommitHistory {
+            commits: Vec::new(),
+            total_count: 0,
+            has_more: false,
+        });
     }
 
     let limit = limit.unwrap_or(20);
@@ -65,7 +76,8 @@ pub fn get_file_history_impl(
         scanned += 1;
 
         let oid = oid.map_err(|e| GitError::from(e).with_operation("walk_commits"))?;
-        let commit = repo.find_commit(oid)
+        let commit = repo
+            .find_commit(oid)
             .map_err(|e| GitError::from(e).with_operation("find_commit"))?;
 
         // Check if this commit touched our file (at the current tracked path)
@@ -76,7 +88,8 @@ pub fn get_file_history_impl(
         if file_touched {
             commits.push(CommitInfo {
                 hash: commit.id().to_string(),
-                short_hash: commit.id().to_string()[..7.min(commit.id().to_string().len())].to_string(),
+                short_hash: commit.id().to_string()[..7.min(commit.id().to_string().len())]
+                    .to_string(),
                 message: commit.message().unwrap_or("").to_string(),
                 author_name: commit.author().name().unwrap_or("").to_string(),
                 author_email: commit.author().email().unwrap_or("").to_string(),
@@ -90,7 +103,10 @@ pub fn get_file_history_impl(
 
         // If the file was renamed in this commit, follow the old path for earlier commits
         if let Some(old) = old_path {
-            info!("get_file_history: detected rename {} -> {}", old, current_path);
+            info!(
+                "get_file_history: detected rename {} -> {}",
+                old, current_path
+            );
             current_path = old;
         }
     }
@@ -98,8 +114,12 @@ pub fn get_file_history_impl(
     let has_more = scanned >= max_scan && commits.len() >= limit;
     let total_count = commits.len() as i32;
 
-    info!("get_file_history: found {} commits (scanned {}) in {}ms",
-          total_count, scanned, start.elapsed().as_millis());
+    info!(
+        "get_file_history: found {} commits (scanned {}) in {}ms",
+        total_count,
+        scanned,
+        start.elapsed().as_millis()
+    );
 
     Ok(CommitHistory {
         commits,
@@ -116,14 +136,13 @@ fn check_file_in_commit_with_rename(
     file_path: &str,
 ) -> Result<(bool, Option<String>, i32, i32), GitError> {
     let file_path_obj = std::path::Path::new(file_path);
-    let tree = commit.tree()
+    let tree = commit
+        .tree()
         .map_err(|e| GitError::from(e).with_operation("get_tree"))?;
 
     // Get parent tree (or None for first commit)
     let parent_tree = if commit.parent_count() > 0 {
-        commit.parent(0)
-            .ok()
-            .and_then(|p| p.tree().ok())
+        commit.parent(0).ok().and_then(|p| p.tree().ok())
     } else {
         None
     };
@@ -131,11 +150,9 @@ fn check_file_in_commit_with_rename(
     // Create diff between parent and this commit
     let mut diff_opts = DiffOptions::new();
 
-    let mut diff = repo.diff_tree_to_tree(
-        parent_tree.as_ref(),
-        Some(&tree),
-        Some(&mut diff_opts),
-    ).map_err(|e| GitError::from(e).with_operation("create_diff"))?;
+    let mut diff = repo
+        .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut diff_opts))
+        .map_err(|e| GitError::from(e).with_operation("create_diff"))?;
 
     // Enable rename detection
     let mut find_opts = DiffFindOptions::new();
@@ -152,9 +169,13 @@ fn check_file_in_commit_with_rename(
 
     // Iterate through deltas to find our file
     for delta in diff.deltas() {
-        let new_file_path = delta.new_file().path()
+        let new_file_path = delta
+            .new_file()
+            .path()
             .map(|p| p.to_string_lossy().to_string());
-        let old_file_path = delta.old_file().path()
+        let old_file_path = delta
+            .old_file()
+            .path()
             .map(|p| p.to_string_lossy().to_string());
 
         // Check if this delta involves our file
@@ -169,12 +190,14 @@ fn check_file_in_commit_with_rename(
 
         // Check for rename: new path matches our file, old path is different
         if let (Some(new_path), Some(old_path_str)) = (&new_file_path, &old_file_path)
-            && new_path == file_path && old_path_str != file_path {
-                // This is a rename TO our current path
-                if delta.status() == git2::Delta::Renamed {
-                    old_path = Some(old_path_str.clone());
-                }
+            && new_path == file_path
+            && old_path_str != file_path
+        {
+            // This is a rename TO our current path
+            if delta.status() == git2::Delta::Renamed {
+                old_path = Some(old_path_str.clone());
             }
+        }
     }
 
     // If file was touched, get diff stats
@@ -188,25 +211,29 @@ fn check_file_in_commit_with_rename(
             stats_diff_opts.pathspec(std::path::Path::new(old));
         }
 
-        let stats_diff = repo.diff_tree_to_tree(
-            parent_tree.as_ref(),
-            Some(&tree),
-            Some(&mut stats_diff_opts),
-        ).map_err(|e| GitError::from(e).with_operation("create_stats_diff"))?;
+        let stats_diff = repo
+            .diff_tree_to_tree(
+                parent_tree.as_ref(),
+                Some(&tree),
+                Some(&mut stats_diff_opts),
+            )
+            .map_err(|e| GitError::from(e).with_operation("create_stats_diff"))?;
 
-        stats_diff.foreach(
-            &mut |_delta, _progress| true,
-            None,
-            None,
-            Some(&mut |_delta, _hunk, line| {
-                match line.origin() {
-                    '+' => insertions += 1,
-                    '-' => deletions += 1,
-                    _ => {}
-                }
-                true
-            }),
-        ).map_err(|e| GitError::from(e).with_operation("foreach_lines"))?;
+        stats_diff
+            .foreach(
+                &mut |_delta, _progress| true,
+                None,
+                None,
+                Some(&mut |_delta, _hunk, line| {
+                    match line.origin() {
+                        '+' => insertions += 1,
+                        '-' => deletions += 1,
+                        _ => {}
+                    }
+                    true
+                }),
+            )
+            .map_err(|e| GitError::from(e).with_operation("foreach_lines"))?;
     }
 
     Ok((file_touched, old_path, insertions, deletions))
@@ -223,13 +250,19 @@ pub fn get_commit_history_impl(
     let repo = Repository::open(repo_path)
         .map_err(|e| GitError::from(e).with_operation("get_commit_history"))?;
 
-    let mut revwalk = repo.revwalk()
+    let mut revwalk = repo
+        .revwalk()
         .map_err(|e| GitError::from(e).with_operation("create_revwalk"))?;
-    revwalk.set_sorting(git2::Sort::TIME)
+    revwalk
+        .set_sorting(git2::Sort::TIME)
         .map_err(|e| GitError::from(e).with_operation("set_sorting"))?;
     // Gracefully handle unborn HEAD (new repo with no commits)
     if revwalk.push_head().is_err() {
-        return Ok(CommitHistory { commits: Vec::new(), total_count: 0, has_more: false });
+        return Ok(CommitHistory {
+            commits: Vec::new(),
+            total_count: 0,
+            has_more: false,
+        });
     }
 
     let limit = limit.unwrap_or(50);
@@ -253,7 +286,8 @@ pub fn get_commit_history_impl(
             break;
         }
 
-        let commit = repo.find_commit(oid)
+        let commit = repo
+            .find_commit(oid)
             .map_err(|e| GitError::from(e).with_operation("find_commit"))?;
 
         let commit_info = CommitInfo {
@@ -280,7 +314,11 @@ pub fn get_commit_history_impl(
         has_more,
     };
 
-    info!("get_commit_history: found {} commits in {}ms", total_processed, start.elapsed().as_millis());
+    info!(
+        "get_commit_history: found {} commits in {}ms",
+        total_processed,
+        start.elapsed().as_millis()
+    );
     Ok(result)
 }
 
@@ -290,24 +328,31 @@ pub fn get_file_at_commit_impl(
     file_path: &str,
     commit_hash: &str,
 ) -> Result<FileAtCommit, GitError> {
-    info!("get_file_at_commit: path={} commit={}", file_path, commit_hash);
+    info!(
+        "get_file_at_commit: path={} commit={}",
+        file_path, commit_hash
+    );
     let start = std::time::Instant::now();
 
     let repo = Repository::open(repo_path)
         .map_err(|e| GitError::from(e).with_operation("get_file_at_commit"))?;
 
-    let oid = git2::Oid::from_str(commit_hash)
-        .map_err(|_| GitError::InvalidCommitHash { hash: commit_hash.to_string() })?;
-    let commit = repo.find_commit(oid)
+    let oid = git2::Oid::from_str(commit_hash).map_err(|_| GitError::InvalidCommitHash {
+        hash: commit_hash.to_string(),
+    })?;
+    let commit = repo
+        .find_commit(oid)
         .map_err(|e| GitError::from(e).with_operation("find_commit"))?;
-    let tree = commit.tree()
+    let tree = commit
+        .tree()
         .map_err(|e| GitError::from(e).with_operation("get_tree"))?;
 
     let relative_path = std::path::Path::new(file_path);
 
     let result = match tree.get_path(relative_path) {
         Ok(tree_entry) => {
-            let blob = repo.find_blob(tree_entry.id())
+            let blob = repo
+                .find_blob(tree_entry.id())
                 .map_err(|e| GitError::from(e).with_operation("find_blob"))?;
 
             let content = if blob.is_binary() {
@@ -323,21 +368,21 @@ pub fn get_file_at_commit_impl(
                 commit_hash: commit_hash.to_string(),
             }
         }
-        Err(_) => {
-            FileAtCommit {
-                path: file_path.to_string(),
-                content: String::new(),
-                exists: false,
-                commit_hash: commit_hash.to_string(),
-            }
-        }
+        Err(_) => FileAtCommit {
+            path: file_path.to_string(),
+            content: String::new(),
+            exists: false,
+            commit_hash: commit_hash.to_string(),
+        },
     };
 
-    info!("get_file_at_commit: exists={} in {}ms", result.exists, start.elapsed().as_millis());
+    info!(
+        "get_file_at_commit: exists={} in {}ms",
+        result.exists,
+        start.elapsed().as_millis()
+    );
     Ok(result)
 }
-
-
 
 // Get deleted files from commit history (with caching)
 pub fn get_deleted_files_impl(
@@ -358,21 +403,28 @@ pub fn get_deleted_files_impl(
 
     // Check this repo's cache entry — return if HEAD unchanged OR recent (< 30s).
     {
-        let cache = DELETED_FILES_CACHE.lock().unwrap_or_else(|p| p.into_inner());
+        let cache = DELETED_FILES_CACHE
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         if let Some(cached) = cache.get(repo_path) {
             let cache_valid = cached.head_commit == head_commit
                 || cached.cached_at.elapsed() < Duration::from_secs(30);
             if cache_valid {
-                info!("get_deleted_files: cache hit in {}ms", start.elapsed().as_millis());
+                info!(
+                    "get_deleted_files: cache hit in {}ms",
+                    start.elapsed().as_millis()
+                );
                 return Ok(cached.files.clone());
             }
         }
     }
 
     // Cache miss - compute deleted files
-    let mut revwalk = repo.revwalk()
+    let mut revwalk = repo
+        .revwalk()
         .map_err(|e| GitError::from(e).with_operation("create_revwalk"))?;
-    revwalk.set_sorting(git2::Sort::TIME)
+    revwalk
+        .set_sorting(git2::Sort::TIME)
         .map_err(|e| GitError::from(e).with_operation("set_sorting"))?;
     // Gracefully handle unborn HEAD (new repo with no commits)
     if revwalk.push_head().is_err() {
@@ -381,8 +433,8 @@ pub fn get_deleted_files_impl(
 
     let head_tree = repo.head().and_then(|head| head.peel_to_tree()).ok();
 
-    let commit_limit = limit.unwrap_or(20);  // Default for reasonable coverage
-    let max_deleted_files = 50;  // Stop early once we have enough deleted files
+    let commit_limit = limit.unwrap_or(20); // Default for reasonable coverage
+    let max_deleted_files = 50; // Stop early once we have enough deleted files
     let mut deleted_files = Vec::new();
     let mut processed = 0;
     let mut seen_deleted = std::collections::HashSet::new();
@@ -394,23 +446,36 @@ pub fn get_deleted_files_impl(
         }
 
         let oid = oid.map_err(|e| GitError::from(e).with_operation("walk_commits"))?;
-        let commit = repo.find_commit(oid)
+        let commit = repo
+            .find_commit(oid)
             .map_err(|e| GitError::from(e).with_operation("find_commit"))?;
 
         if commit.parent_count() > 0 {
-            let parent = commit.parent(0)
+            let parent = commit
+                .parent(0)
                 .map_err(|e| GitError::from(e).with_operation("get_parent"))?;
 
-            let diff = repo.diff_tree_to_tree(
-                Some(&parent.tree().map_err(|e| GitError::from(e).with_operation("get_parent_tree"))?),
-                Some(&commit.tree().map_err(|e| GitError::from(e).with_operation("get_commit_tree"))?),
-                None,
-            ).map_err(|e| GitError::from(e).with_operation("create_diff"))?;
+            let diff = repo
+                .diff_tree_to_tree(
+                    Some(
+                        &parent
+                            .tree()
+                            .map_err(|e| GitError::from(e).with_operation("get_parent_tree"))?,
+                    ),
+                    Some(
+                        &commit
+                            .tree()
+                            .map_err(|e| GitError::from(e).with_operation("get_commit_tree"))?,
+                    ),
+                    None,
+                )
+                .map_err(|e| GitError::from(e).with_operation("create_diff"))?;
 
             // First pass: collect deleted paths and added filenames in this commit
             // We need both to detect moves (delete + add of same filename = move)
             let mut commit_deleted: Vec<String> = Vec::new();
-            let mut commit_added_filenames: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut commit_added_filenames: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
 
             diff.foreach(
                 &mut |delta, _progress| {
@@ -424,7 +489,8 @@ pub fn get_deleted_files_impl(
                             if let Some(path) = delta.new_file().path() {
                                 // Extract just the filename for move detection
                                 if let Some(filename) = path.file_name() {
-                                    commit_added_filenames.insert(filename.to_string_lossy().to_string());
+                                    commit_added_filenames
+                                        .insert(filename.to_string_lossy().to_string());
                                 }
                             }
                         }
@@ -438,7 +504,8 @@ pub fn get_deleted_files_impl(
                 None,
                 None,
                 None,
-            ).map_err(|e| GitError::from(e).with_operation("foreach_diff"))?;
+            )
+            .map_err(|e| GitError::from(e).with_operation("foreach_diff"))?;
 
             // Second pass: process deletions, filtering out moves
             for path_str in commit_deleted {
@@ -491,7 +558,9 @@ pub fn get_deleted_files_impl(
 
     // Store this repo's entry (keyed by path, so other open books are untouched).
     {
-        let mut cache = DELETED_FILES_CACHE.lock().unwrap_or_else(|p| p.into_inner());
+        let mut cache = DELETED_FILES_CACHE
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         cache.insert(
             repo_path.to_string(),
             DeletedFilesCache {
@@ -506,27 +575,28 @@ pub fn get_deleted_files_impl(
 }
 
 // Get file diff
-pub fn get_file_diff_impl(
-    repo_path: &str,
-    file_path: &str,
-) -> Result<FileDiff, GitError> {
+pub fn get_file_diff_impl(repo_path: &str, file_path: &str) -> Result<FileDiff, GitError> {
     info!("get_file_diff: path={}", file_path);
     let start = std::time::Instant::now();
 
     let repo = Repository::open(repo_path)
         .map_err(|e| GitError::from(e).with_operation("get_file_diff"))?;
 
-    let head = repo.head()
+    let head = repo
+        .head()
         .map_err(|e| GitError::from(e).with_operation("get_head"))?;
-    let head_commit = head.peel_to_commit()
+    let head_commit = head
+        .peel_to_commit()
         .map_err(|e| GitError::from(e).with_operation("peel_to_commit"))?;
-    let head_tree = head_commit.tree()
+    let head_tree = head_commit
+        .tree()
         .map_err(|e| GitError::from(e).with_operation("get_tree"))?;
 
     let mut diff_opts = DiffOptions::new();
     diff_opts.pathspec(file_path);
 
-    let mut diff = repo.diff_tree_to_workdir_with_index(Some(&head_tree), Some(&mut diff_opts))
+    let mut diff = repo
+        .diff_tree_to_workdir_with_index(Some(&head_tree), Some(&mut diff_opts))
         .map_err(|e| GitError::from(e).with_operation("create_diff"))?;
 
     // Enable comprehensive rename detection
@@ -563,9 +633,10 @@ pub fn get_file_diff_impl(
             };
 
             if let Some(old_path) = delta.old_file().path()
-                && old_path != std::path::Path::new(file_path) {
-                    file_diff.old_path = Some(old_path.to_string_lossy().to_string());
-                }
+                && old_path != std::path::Path::new(file_path)
+            {
+                file_diff.old_path = Some(old_path.to_string_lossy().to_string());
+            }
 
             file_diff.is_binary = delta.new_file().is_binary();
             true
@@ -595,34 +666,39 @@ pub fn get_file_diff_impl(
 
             true
         }),
-    ).map_err(|e| GitError::from(e).with_operation("foreach_diff"))?;
+    )
+    .map_err(|e| GitError::from(e).with_operation("foreach_diff"))?;
 
-    info!("get_file_diff: status={} in {}ms", file_diff.status, start.elapsed().as_millis());
+    info!(
+        "get_file_diff: status={} in {}ms",
+        file_diff.status,
+        start.elapsed().as_millis()
+    );
     Ok(file_diff)
 }
 
 // Get unified diff string for a file
 // Returns simple unified diff output for display in UI
-pub fn get_diff_impl(
-    repo_path: &str,
-    file_path: &str,
-) -> Result<String, GitError> {
+pub fn get_diff_impl(repo_path: &str, file_path: &str) -> Result<String, GitError> {
     info!("get_diff: path={}", file_path);
     let start = std::time::Instant::now();
 
-    let repo = Repository::open(repo_path)
-        .map_err(|e| GitError::from(e).with_operation("get_diff"))?;
+    let repo =
+        Repository::open(repo_path).map_err(|e| GitError::from(e).with_operation("get_diff"))?;
 
     // Check if file exists in working directory
     let full_path = std::path::Path::new(repo_path).join(file_path);
     let file_exists = full_path.exists();
 
     // Get HEAD tree
-    let head = repo.head()
+    let head = repo
+        .head()
         .map_err(|e| GitError::from(e).with_operation("get_head"))?;
-    let head_commit = head.peel_to_commit()
+    let head_commit = head
+        .peel_to_commit()
         .map_err(|e| GitError::from(e).with_operation("peel_to_commit"))?;
-    let head_tree = head_commit.tree()
+    let head_tree = head_commit
+        .tree()
         .map_err(|e| GitError::from(e).with_operation("get_tree"))?;
 
     // Check if file exists in HEAD
@@ -631,15 +707,17 @@ pub fn get_diff_impl(
     // Handle new files (not in HEAD)
     if !file_in_head && file_exists {
         // For new files, show entire content as additions
-        let content = std::fs::read_to_string(&full_path)
-            .map_err(|e| GitError::IoError {
-                operation: "read_file".to_string(),
-                error: e.to_string(),
-            })?;
+        let content = std::fs::read_to_string(&full_path).map_err(|e| GitError::IoError {
+            operation: "read_file".to_string(),
+            error: e.to_string(),
+        })?;
 
         // Check if binary by looking for null bytes
         if content.contains('\0') {
-            info!("get_diff: binary file detected in {}ms", start.elapsed().as_millis());
+            info!(
+                "get_diff: binary file detected in {}ms",
+                start.elapsed().as_millis()
+            );
             return Ok("Binary file\n".to_string());
         }
 
@@ -659,7 +737,10 @@ pub fn get_diff_impl(
             diff_output.push_str(&format!("+{}\n", line));
         }
 
-        info!("get_diff: new file processed in {}ms", start.elapsed().as_millis());
+        info!(
+            "get_diff: new file processed in {}ms",
+            start.elapsed().as_millis()
+        );
         return Ok(diff_output);
     }
 
@@ -667,7 +748,8 @@ pub fn get_diff_impl(
     let mut diff_opts = DiffOptions::new();
     diff_opts.pathspec(file_path);
 
-    let diff = repo.diff_tree_to_workdir_with_index(Some(&head_tree), Some(&mut diff_opts))
+    let diff = repo
+        .diff_tree_to_workdir_with_index(Some(&head_tree), Some(&mut diff_opts))
         .map_err(|e| GitError::from(e).with_operation("create_diff"))?;
 
     // Check if binary
@@ -680,7 +762,8 @@ pub fn get_diff_impl(
         None,
         None,
         None,
-    ).map_err(|e| GitError::from(e).with_operation("check_binary"))?;
+    )
+    .map_err(|e| GitError::from(e).with_operation("check_binary"))?;
 
     if is_binary {
         info!("get_diff: binary file in {}ms", start.elapsed().as_millis());
@@ -704,57 +787,74 @@ pub fn get_diff_impl(
             _ => {}
         }
         true
-    }).map_err(|e| GitError::from(e).with_operation("print_diff"))?;
+    })
+    .map_err(|e| GitError::from(e).with_operation("print_diff"))?;
 
-    let result = String::from_utf8(diff_output)
-        .map_err(|e| GitError::IoError {
-            operation: "decode_utf8".to_string(),
-            error: e.to_string(),
-        })?;
+    let result = String::from_utf8(diff_output).map_err(|e| GitError::IoError {
+        operation: "decode_utf8".to_string(),
+        error: e.to_string(),
+    })?;
 
     info!("get_diff: completed in {}ms", start.elapsed().as_millis());
     Ok(result)
 }
 
 // Get commit diff
-pub fn get_commit_diff_impl(
-    repo_path: &str,
-    commit_hash: &str,
-) -> Result<CommitDiff, GitError> {
+pub fn get_commit_diff_impl(repo_path: &str, commit_hash: &str) -> Result<CommitDiff, GitError> {
     info!("get_commit_diff: commit={}", commit_hash);
     let start = std::time::Instant::now();
 
     let repo = Repository::open(repo_path)
         .map_err(|e| GitError::from(e).with_operation("get_commit_diff"))?;
 
-    let oid = git2::Oid::from_str(commit_hash)
-        .map_err(|_| GitError::InvalidCommitHash { hash: commit_hash.to_string() })?;
-    let commit = repo.find_commit(oid)
+    let oid = git2::Oid::from_str(commit_hash).map_err(|_| GitError::InvalidCommitHash {
+        hash: commit_hash.to_string(),
+    })?;
+    let commit = repo
+        .find_commit(oid)
         .map_err(|e| GitError::from(e).with_operation("find_commit"))?;
 
     let parent_hash = if commit.parent_count() > 0 {
-        Some(commit.parent_id(0)
-            .map_err(|e| GitError::from(e).with_operation("get_parent_id"))?
-            .to_string())
+        Some(
+            commit
+                .parent_id(0)
+                .map_err(|e| GitError::from(e).with_operation("get_parent_id"))?
+                .to_string(),
+        )
     } else {
         None
     };
 
     let mut diff = if let Some(parent_id) = commit.parent_ids().next() {
-        let parent_commit = repo.find_commit(parent_id)
+        let parent_commit = repo
+            .find_commit(parent_id)
             .map_err(|e| GitError::from(e).with_operation("find_parent_commit"))?;
         repo.diff_tree_to_tree(
-            Some(&parent_commit.tree().map_err(|e| GitError::from(e).with_operation("get_parent_tree"))?),
-            Some(&commit.tree().map_err(|e| GitError::from(e).with_operation("get_commit_tree"))?),
+            Some(
+                &parent_commit
+                    .tree()
+                    .map_err(|e| GitError::from(e).with_operation("get_parent_tree"))?,
+            ),
+            Some(
+                &commit
+                    .tree()
+                    .map_err(|e| GitError::from(e).with_operation("get_commit_tree"))?,
+            ),
             None,
-        ).map_err(|e| GitError::from(e).with_operation("create_diff"))?
+        )
+        .map_err(|e| GitError::from(e).with_operation("create_diff"))?
     } else {
         // First commit - diff against empty tree
         repo.diff_tree_to_tree(
             None,
-            Some(&commit.tree().map_err(|e| GitError::from(e).with_operation("get_commit_tree"))?),
+            Some(
+                &commit
+                    .tree()
+                    .map_err(|e| GitError::from(e).with_operation("get_commit_tree"))?,
+            ),
             None,
-        ).map_err(|e| GitError::from(e).with_operation("create_diff"))?
+        )
+        .map_err(|e| GitError::from(e).with_operation("create_diff"))?
     };
 
     // Enable comprehensive rename detection
@@ -780,7 +880,10 @@ pub fn get_commit_diff_impl(
             if let Some(new_path) = delta.new_file().path() {
                 let file_diff = FileDiff {
                     file_path: new_path.to_string_lossy().to_string(),
-                    old_path: delta.old_file().path().map(|p| p.to_string_lossy().to_string()),
+                    old_path: delta
+                        .old_file()
+                        .path()
+                        .map(|p| p.to_string_lossy().to_string()),
                     status: match delta.status() {
                         git2::Delta::Added => "added".to_string(),
                         git2::Delta::Deleted => "deleted".to_string(),
@@ -818,7 +921,8 @@ pub fn get_commit_diff_impl(
             }
             true
         }),
-    ).map_err(|e| GitError::from(e).with_operation("foreach_diff"))?;
+    )
+    .map_err(|e| GitError::from(e).with_operation("foreach_diff"))?;
 
     let result = CommitDiff {
         commit_hash: commit_hash.to_string(),
@@ -829,6 +933,10 @@ pub fn get_commit_diff_impl(
         files_changed,
     };
 
-    info!("get_commit_diff: {} files changed in {}ms", files_changed, start.elapsed().as_millis());
+    info!(
+        "get_commit_diff: {} files changed in {}ms",
+        files_changed,
+        start.elapsed().as_millis()
+    );
     Ok(result)
 }

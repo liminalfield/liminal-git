@@ -112,7 +112,9 @@ fn test_complete_git_workflow() {
     assert!(status.is_clean);
 
     // 3. Add some files
-    test_repo.add_file("README.md", "# Test Repository").unwrap();
+    test_repo
+        .add_file("README.md", "# Test Repository")
+        .unwrap();
     test_repo.add_file("src/main.rs", "fn main() {}").unwrap();
 
     // 4. Check status after adding files
@@ -121,8 +123,12 @@ fn test_complete_git_workflow() {
     assert!(!status.is_clean);
 
     // 5. Stage files
-    git_service.stage_file(repo_path.clone(), "README.md".to_string()).unwrap();
-    git_service.stage_file(repo_path.clone(), "src/main.rs".to_string()).unwrap();
+    git_service
+        .stage_file(repo_path.clone(), "README.md".to_string())
+        .unwrap();
+    git_service
+        .stage_file(repo_path.clone(), "src/main.rs".to_string())
+        .unwrap();
 
     // 6. Check status after staging
     let status = git_service.get_status(repo_path.clone()).unwrap();
@@ -130,13 +136,15 @@ fn test_complete_git_workflow() {
     assert_eq!(status.untracked_files.len(), 0);
 
     // 7. Commit staged files
-    let commit_hash = git_service.commit_files(
-        repo_path.clone(),
-        vec!["README.md".to_string(), "src/main.rs".to_string()],
-        "Initial commit".to_string(),
-        "Test User".to_string(),
-        "test@example.com".to_string(),
-    ).unwrap();
+    let commit_hash = git_service
+        .commit_files(
+            repo_path.clone(),
+            vec!["README.md".to_string(), "src/main.rs".to_string()],
+            "Initial commit".to_string(),
+            "Test User".to_string(),
+            "test@example.com".to_string(),
+        )
+        .unwrap();
 
     assert!(!commit_hash.is_empty());
     assert_eq!(commit_hash.len(), 40); // SHA-1 hash length
@@ -157,7 +165,9 @@ fn test_file_modification_workflow() {
     let git_service = create_git_service();
 
     // Create and commit initial file
-    test_repo.add_and_commit("test.txt", "initial content", "Initial commit").unwrap();
+    test_repo
+        .add_and_commit("test.txt", "initial content", "Initial commit")
+        .unwrap();
 
     // Modify the file
     test_repo.add_file("test.txt", "modified content").unwrap();
@@ -168,15 +178,19 @@ fn test_file_modification_workflow() {
     assert_eq!(status.modified_files[0].path, "test.txt");
 
     // Stage and commit modification
-    git_service.stage_file(repo_path.clone(), "test.txt".to_string()).unwrap();
+    git_service
+        .stage_file(repo_path.clone(), "test.txt".to_string())
+        .unwrap();
 
-    let commit_hash = git_service.commit_file(
-        repo_path.clone(),
-        "test.txt".to_string(),
-        "Update test.txt".to_string(),
-        "Test User".to_string(),
-        "test@example.com".to_string(),
-    ).unwrap();
+    let commit_hash = git_service
+        .commit_file(
+            repo_path.clone(),
+            "test.txt".to_string(),
+            "Update test.txt".to_string(),
+            "Test User".to_string(),
+            "test@example.com".to_string(),
+        )
+        .unwrap();
 
     assert!(!commit_hash.is_empty());
 
@@ -193,15 +207,23 @@ fn test_mixed_file_states() {
     let git_service = create_git_service();
 
     // Create initial commit
-    test_repo.add_and_commit("existing.txt", "content", "Initial commit").unwrap();
+    test_repo
+        .add_and_commit("existing.txt", "content", "Initial commit")
+        .unwrap();
 
     // Create files in different states
-    test_repo.add_file("existing.txt", "modified content").unwrap(); // Modified
-    test_repo.add_file("untracked.txt", "untracked content").unwrap(); // Untracked
+    test_repo
+        .add_file("existing.txt", "modified content")
+        .unwrap(); // Modified
+    test_repo
+        .add_file("untracked.txt", "untracked content")
+        .unwrap(); // Untracked
     test_repo.add_file("staged.txt", "staged content").unwrap(); // Will be staged
 
     // Stage one file
-    git_service.stage_file(repo_path.clone(), "staged.txt".to_string()).unwrap();
+    git_service
+        .stage_file(repo_path.clone(), "staged.txt".to_string())
+        .unwrap();
 
     // Check mixed status
     let status = git_service.get_status(repo_path).unwrap();
@@ -234,7 +256,7 @@ fn test_error_handling() {
     let test_repo = TestRepo::new().unwrap();
     let result = git_service.stage_file(
         test_repo.path_str().to_string(),
-        "../outside.txt".to_string()
+        "../outside.txt".to_string(),
     );
     assert!(result.is_err());
 
@@ -259,7 +281,9 @@ fn test_large_repository_performance() {
 
     // Create many files
     for i in 0..100 {
-        test_repo.add_file(format!("file_{}.txt", i), &format!("content {}", i)).unwrap();
+        test_repo
+            .add_file(format!("file_{}.txt", i), &format!("content {}", i))
+            .unwrap();
     }
 
     // Time the status operation
@@ -276,7 +300,9 @@ fn test_large_repository_performance() {
 
     let start = std::time::Instant::now();
     for file_name in &file_names {
-        git_service.stage_file(repo_path.clone(), file_name.clone()).unwrap();
+        git_service
+            .stage_file(repo_path.clone(), file_name.clone())
+            .unwrap();
     }
     let duration = start.elapsed();
 
@@ -284,13 +310,15 @@ fn test_large_repository_performance() {
 
     // Time committing all files
     let start = std::time::Instant::now();
-    let commit_hash = git_service.commit_files(
-        repo_path.clone(),
-        file_names,
-        "Add many files".to_string(),
-        "Test User".to_string(),
-        "test@example.com".to_string(),
-    ).unwrap();
+    let commit_hash = git_service
+        .commit_files(
+            repo_path.clone(),
+            file_names,
+            "Add many files".to_string(),
+            "Test User".to_string(),
+            "test@example.com".to_string(),
+        )
+        .unwrap();
     let duration = start.elapsed();
 
     assert!(duration < std::time::Duration::from_millis(1000));
@@ -324,7 +352,10 @@ fn test_concurrent_operations() {
     }
 
     for handle in handles {
-        let status = handle.join().expect("thread panicked").expect("get_status failed");
+        let status = handle
+            .join()
+            .expect("thread panicked")
+            .expect("get_status failed");
         assert_eq!(status.untracked_files.len(), 1);
     }
 
@@ -349,9 +380,15 @@ fn test_repository_with_complex_history() {
     let status = git_service.get_status(repo_path.clone()).unwrap();
 
     // Should detect the various file states created by the fixture
-    assert!(!status.modified_files.is_empty(), "Should have modified files");
+    assert!(
+        !status.modified_files.is_empty(),
+        "Should have modified files"
+    );
     assert!(!status.staged_files.is_empty(), "Should have staged files");
-    assert!(!status.untracked_files.is_empty(), "Should have untracked files");
+    assert!(
+        !status.untracked_files.is_empty(),
+        "Should have untracked files"
+    );
 
     // Repository should be detected as a valid git repo
     assert!(git_service.is_repository(repo_path).unwrap());
@@ -371,10 +408,17 @@ fn test_binary_file_handling() {
 
     // Should detect as untracked
     let status = git_service.get_status(repo_path.clone()).unwrap();
-    assert!(status.untracked_files.iter().any(|f| f.path == "binary.dat"));
+    assert!(
+        status
+            .untracked_files
+            .iter()
+            .any(|f| f.path == "binary.dat")
+    );
 
     // Should be able to stage and commit
-    git_service.stage_file(repo_path.clone(), "binary.dat".to_string()).unwrap();
+    git_service
+        .stage_file(repo_path.clone(), "binary.dat".to_string())
+        .unwrap();
 
     let result = git_service.commit_file(
         repo_path.clone(),
@@ -406,14 +450,38 @@ fn test_cleanup_and_isolation() {
     test_repo1.add_file("test1.txt", "content1").unwrap();
     test_repo2.add_file("test2.txt", "content2").unwrap();
 
-    let status1 = git_service.get_status(test_repo1.path_str().to_string()).unwrap();
-    let status2 = git_service.get_status(test_repo2.path_str().to_string()).unwrap();
+    let status1 = git_service
+        .get_status(test_repo1.path_str().to_string())
+        .unwrap();
+    let status2 = git_service
+        .get_status(test_repo2.path_str().to_string())
+        .unwrap();
 
-    assert!(status1.untracked_files.iter().any(|f| f.path == "test1.txt"));
-    assert!(!status1.untracked_files.iter().any(|f| f.path == "test2.txt"));
+    assert!(
+        status1
+            .untracked_files
+            .iter()
+            .any(|f| f.path == "test1.txt")
+    );
+    assert!(
+        !status1
+            .untracked_files
+            .iter()
+            .any(|f| f.path == "test2.txt")
+    );
 
-    assert!(status2.untracked_files.iter().any(|f| f.path == "test2.txt"));
-    assert!(!status2.untracked_files.iter().any(|f| f.path == "test1.txt"));
+    assert!(
+        status2
+            .untracked_files
+            .iter()
+            .any(|f| f.path == "test2.txt")
+    );
+    assert!(
+        !status2
+            .untracked_files
+            .iter()
+            .any(|f| f.path == "test1.txt")
+    );
 
     // Cleanup is automatic when TestRepo is dropped
 }
@@ -426,18 +494,24 @@ fn test_unstage_operations() {
     let git_service = create_git_service();
 
     // Create initial commit
-    test_repo.add_and_commit("test.txt", "initial content", "Initial commit").unwrap();
+    test_repo
+        .add_and_commit("test.txt", "initial content", "Initial commit")
+        .unwrap();
 
     // Modify and stage the file
     test_repo.add_file("test.txt", "modified content").unwrap();
-    git_service.stage_file(repo_path.clone(), "test.txt".to_string()).unwrap();
+    git_service
+        .stage_file(repo_path.clone(), "test.txt".to_string())
+        .unwrap();
 
     // Verify it's staged
     let status = git_service.get_status(repo_path.clone()).unwrap();
     assert_eq!(status.staged_files.len(), 1);
 
     // Unstage it
-    git_service.unstage_file(repo_path.clone(), "test.txt".to_string(), None).unwrap();
+    git_service
+        .unstage_file(repo_path.clone(), "test.txt".to_string(), None)
+        .unwrap();
 
     // Verify it's no longer staged but still modified
     let status = git_service.get_status(repo_path).unwrap();
@@ -459,8 +533,12 @@ fn test_get_staged_files() {
     // Add and stage multiple files
     test_repo.add_file("file1.txt", "content1").unwrap();
     test_repo.add_file("file2.txt", "content2").unwrap();
-    git_service.stage_file(repo_path.clone(), "file1.txt".to_string()).unwrap();
-    git_service.stage_file(repo_path.clone(), "file2.txt".to_string()).unwrap();
+    git_service
+        .stage_file(repo_path.clone(), "file1.txt".to_string())
+        .unwrap();
+    git_service
+        .stage_file(repo_path.clone(), "file2.txt".to_string())
+        .unwrap();
 
     // Should now return the staged files
     let staged_files = git_service.get_staged_files(repo_path).unwrap();
@@ -477,19 +555,27 @@ fn test_unicode_and_special_characters() {
     let git_service = create_git_service();
 
     // Create files with unicode names and content
-    test_repo.add_file("测试.txt", "Chinese content: 你好世界").unwrap();
-    test_repo.add_file("файл.txt", "Russian content: Привет мир").unwrap();
-    test_repo.add_file("🦀_rust.rs", "Rust with emoji: fn main() {}").unwrap();
+    test_repo
+        .add_file("测试.txt", "Chinese content: 你好世界")
+        .unwrap();
+    test_repo
+        .add_file("файл.txt", "Russian content: Привет мир")
+        .unwrap();
+    test_repo
+        .add_file("🦀_rust.rs", "Rust with emoji: fn main() {}")
+        .unwrap();
 
     let files = vec![
         "测试.txt".to_string(),
         "файл.txt".to_string(),
-        "🦀_rust.rs".to_string()
+        "🦀_rust.rs".to_string(),
     ];
 
     // Stage all files
     for file in &files {
-        git_service.stage_file(repo_path.clone(), file.clone()).unwrap();
+        git_service
+            .stage_file(repo_path.clone(), file.clone())
+            .unwrap();
     }
 
     // Commit with unicode commit message

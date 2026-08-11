@@ -1,8 +1,8 @@
 // tests/common/assertions.rs - Test assertion helpers
 
-use std::path::Path;
 use git2::Repository;
 use liminal_git::types::GitStatus;
+use std::path::Path;
 
 /// Assert that git status matches expected values
 pub fn assert_git_status_matches(
@@ -43,9 +43,10 @@ pub fn assert_commit_exists(repo: &Repository, message: &str) -> bool {
 
     for oid in revwalk {
         if let Ok(commit) = repo.find_commit(oid.unwrap())
-            && commit.message().unwrap_or("").contains(message) {
-                return true;
-            }
+            && commit.message().unwrap_or("").contains(message)
+        {
+            return true;
+        }
     }
     false
 }
@@ -84,13 +85,18 @@ pub fn assert_result_is_error<T, E>(result: &Result<T, E>) {
 
 /// Assert that result is successful
 pub fn assert_result_is_ok<T, E>(result: &Result<T, E>) {
-    assert!(result.is_ok(), "Expected Ok result but got error: {:?}",
-        result.as_ref().err().map(|_| "error"));
+    assert!(
+        result.is_ok(),
+        "Expected Ok result but got error: {:?}",
+        result.as_ref().err().map(|_| "error")
+    );
 }
 
 /// Assert commit hash is valid (40 character SHA-1)
 pub fn assert_valid_commit_hash(hash: &str) {
     assert_eq!(hash.len(), 40, "Commit hash should be 40 characters");
-    assert!(hash.chars().all(|c| c.is_ascii_hexdigit()),
-        "Commit hash should only contain hex digits");
+    assert!(
+        hash.chars().all(|c| c.is_ascii_hexdigit()),
+        "Commit hash should only contain hex digits"
+    );
 }

@@ -19,11 +19,13 @@ mod tag_ops_tests {
         let test_repo = TestRepo::new().unwrap();
 
         // Create initial commit
-        let commit_oid = test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
+        let commit_oid = test_repo
+            .add_and_commit("test.txt", "content", "Initial commit")
+            .unwrap();
 
         let options = CreateTagOptions {
             name: "v1.0.0".to_string(),
-            message: None, // Lightweight tag
+            message: None,       // Lightweight tag
             target_commit: None, // Tag HEAD
             force: false,
             user_name: None,
@@ -46,12 +48,14 @@ mod tag_ops_tests {
         let test_repo = TestRepo::new().unwrap();
 
         // Create initial commit
-        test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("test.txt", "content", "Initial commit")
+            .unwrap();
 
         let options = CreateTagOptions {
             name: "v1.0.0".to_string(),
             message: Some("Release version 1.0.0".to_string()), // Try to create annotated tag
-            target_commit: None, // Tag HEAD
+            target_commit: None,                                // Tag HEAD
             force: false,
             user_name: None,
             user_email: None,
@@ -73,10 +77,14 @@ mod tag_ops_tests {
         let test_repo = TestRepo::new().unwrap();
 
         // Create initial commit
-        let first_commit = test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
+        let first_commit = test_repo
+            .add_and_commit("test.txt", "content", "Initial commit")
+            .unwrap();
 
         // Create second commit
-        test_repo.add_and_commit("test2.txt", "content2", "Second commit").unwrap();
+        test_repo
+            .add_and_commit("test2.txt", "content2", "Second commit")
+            .unwrap();
 
         // Tag the first commit
         let options = CreateTagOptions {
@@ -99,7 +107,9 @@ mod tag_ops_tests {
     #[test]
     fn test_create_tag_impl_invalid_name() {
         let test_repo = TestRepo::new().unwrap();
-        test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("test.txt", "content", "Initial commit")
+            .unwrap();
 
         let options = CreateTagOptions {
             name: "".to_string(), // Invalid empty name
@@ -118,7 +128,9 @@ mod tag_ops_tests {
     #[test]
     fn test_create_tag_impl_already_exists() {
         let test_repo = TestRepo::new().unwrap();
-        test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("test.txt", "content", "Initial commit")
+            .unwrap();
 
         let options = CreateTagOptions {
             name: "v1.0.0".to_string(),
@@ -144,8 +156,12 @@ mod tag_ops_tests {
         let test_repo = TestRepo::new().unwrap();
 
         // Create two commits
-        let first_commit = test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
-        let second_commit = test_repo.add_and_commit("test2.txt", "content2", "Second commit").unwrap();
+        let first_commit = test_repo
+            .add_and_commit("test.txt", "content", "Initial commit")
+            .unwrap();
+        let second_commit = test_repo
+            .add_and_commit("test2.txt", "content2", "Second commit")
+            .unwrap();
 
         // Create tag on first commit
         let options1 = CreateTagOptions {
@@ -178,7 +194,9 @@ mod tag_ops_tests {
     #[test]
     fn test_list_tags_impl() {
         let test_repo = TestRepo::new().unwrap();
-        test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("test.txt", "content", "Initial commit")
+            .unwrap();
 
         // Create multiple tags
         let tag_names = vec!["v0.1.0", "v1.0.0", "v2.0.0"];
@@ -215,7 +233,9 @@ mod tag_ops_tests {
     #[test]
     fn test_get_tag_impl() {
         let test_repo = TestRepo::new().unwrap();
-        test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("test.txt", "content", "Initial commit")
+            .unwrap();
 
         let options = CreateTagOptions {
             name: "v1.0.0".to_string(),
@@ -246,7 +266,9 @@ mod tag_ops_tests {
     #[test]
     fn test_delete_tag_impl() {
         let test_repo = TestRepo::new().unwrap();
-        test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("test.txt", "content", "Initial commit")
+            .unwrap();
 
         let options = CreateTagOptions {
             name: "v1.0.0".to_string(),
@@ -275,7 +297,9 @@ mod tag_ops_tests {
     #[test]
     fn test_delete_tag_impl_nonexistent() {
         let test_repo = TestRepo::new().unwrap();
-        test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("test.txt", "content", "Initial commit")
+            .unwrap();
 
         let result = delete_tag_impl(test_repo.path_str(), "nonexistent-tag");
         assert!(result.is_err());
@@ -285,7 +309,9 @@ mod tag_ops_tests {
     #[test]
     fn test_tag_sorting_by_name() {
         let test_repo = TestRepo::new().unwrap();
-        test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("test.txt", "content", "Initial commit")
+            .unwrap();
 
         // Create tags in specific order
         let tag_names = vec!["v0.1.0", "v1.0.0", "v2.0.0"];
@@ -313,7 +339,9 @@ mod tag_ops_tests {
     #[test]
     fn test_mixed_tag_types() {
         let test_repo = TestRepo::new().unwrap();
-        test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("test.txt", "content", "Initial commit")
+            .unwrap();
 
         // Create lightweight tag
         let lightweight_options = CreateTagOptions {
@@ -341,8 +369,14 @@ mod tag_ops_tests {
         assert_eq!(tags.len(), 2);
 
         // Verify both tags exist and have valid properties
-        let lightweight_tag = tags.iter().find(|t| t.name == "v1.0.0-lightweight").unwrap();
-        let message_tag = tags.iter().find(|t| t.name == "v1.0.0-with-message").unwrap();
+        let lightweight_tag = tags
+            .iter()
+            .find(|t| t.name == "v1.0.0-lightweight")
+            .unwrap();
+        let message_tag = tags
+            .iter()
+            .find(|t| t.name == "v1.0.0-with-message")
+            .unwrap();
 
         // Both should have valid commit hashes and names
         assert!(!lightweight_tag.commit_hash.is_empty());

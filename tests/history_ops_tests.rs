@@ -1,5 +1,3 @@
-
-
 mod common;
 
 #[cfg(test)]
@@ -17,16 +15,37 @@ mod history_ops_tests {
         // Create initial file and commit
         let file1 = temp_dir.path().join("file1.txt");
         fs::write(&file1, "Initial content").unwrap();
-        commit_file_impl(&path, &file1.to_string_lossy(), "Initial commit", "Test User", "test@example.com").unwrap();
+        commit_file_impl(
+            &path,
+            &file1.to_string_lossy(),
+            "Initial commit",
+            "Test User",
+            "test@example.com",
+        )
+        .unwrap();
 
         // Modify file and commit again
         fs::write(&file1, "Modified content").unwrap();
-        commit_file_impl(&path, &file1.to_string_lossy(), "Second commit", "Test User", "test@example.com").unwrap();
+        commit_file_impl(
+            &path,
+            &file1.to_string_lossy(),
+            "Second commit",
+            "Test User",
+            "test@example.com",
+        )
+        .unwrap();
 
         // Create second file and commit
         let file2 = temp_dir.path().join("file2.txt");
         fs::write(&file2, "Second file content").unwrap();
-        commit_file_impl(&path, &file2.to_string_lossy(), "Third commit", "Test User", "test@example.com").unwrap();
+        commit_file_impl(
+            &path,
+            &file2.to_string_lossy(),
+            "Third commit",
+            "Test User",
+            "test@example.com",
+        )
+        .unwrap();
 
         (temp_dir, path)
     }
@@ -136,8 +155,6 @@ mod history_ops_tests {
         assert!(result.is_err());
     }
 
-
-
     #[test]
     fn test_get_deleted_files_impl() {
         let (temp_dir, path) = create_test_repo_with_history();
@@ -149,7 +166,9 @@ mod history_ops_tests {
         // Stage and commit the deletion
         let repo = Repository::open(&path).unwrap();
         let mut index = repo.index().unwrap();
-        index.remove_path(std::path::Path::new("file2.txt")).unwrap();
+        index
+            .remove_path(std::path::Path::new("file2.txt"))
+            .unwrap();
         index.write().unwrap();
 
         let tree_id = index.write_tree().unwrap();
@@ -164,7 +183,8 @@ mod history_ops_tests {
             "Delete file2.txt",
             &tree,
             &[&parent],
-        ).unwrap();
+        )
+        .unwrap();
 
         // Get deleted files
         let deleted_files = get_deleted_files_impl(&path, Some(10));
@@ -250,4 +270,3 @@ mod history_ops_tests {
         assert!(result.is_err());
     }
 }
-

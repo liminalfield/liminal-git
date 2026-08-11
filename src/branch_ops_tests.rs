@@ -6,8 +6,7 @@ use tempfile::TempDir;
 fn setup_test_repo() -> (TempDir, PathBuf) {
     // Create temp directory and ensure git2's internal temp files use the same filesystem
     // to avoid "Invalid cross-device link" errors when git2 renames lock files into .git/objects
-    let temp_dir = TempDir::new()
-        .expect("Failed to create temp dir");
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let repo_path = temp_dir.path().to_path_buf();
 
     // Set TMPDIR to the temp directory's parent so git2 uses the same filesystem
@@ -17,7 +16,7 @@ fn setup_test_repo() -> (TempDir, PathBuf) {
     if let Some(parent) = temp_dir.path().parent() {
         unsafe {
             std::env::set_var("TMPDIR", parent);
-            std::env::set_var("TMP", parent);  // Also set TMP for Windows compatibility
+            std::env::set_var("TMP", parent); // Also set TMP for Windows compatibility
             std::env::set_var("TEMP", parent);
         }
     }
@@ -27,8 +26,12 @@ fn setup_test_repo() -> (TempDir, PathBuf) {
 
     let repo = Repository::open(&repo_path).expect("Failed to open repository");
     let mut config = repo.config().expect("Failed to get config");
-    config.set_str("user.name", "Test User").expect("Failed to set user.name");
-    config.set_str("user.email", "test@example.com").expect("Failed to set user.email");
+    config
+        .set_str("user.name", "Test User")
+        .expect("Failed to set user.name");
+    config
+        .set_str("user.email", "test@example.com")
+        .expect("Failed to set user.email");
 
     (temp_dir, repo_path)
 }
@@ -51,10 +54,12 @@ fn commit_file(repo_path: &Path, file_path: &str, message: &str) -> String {
 
     let tree_id = index.write_tree().expect("Failed to write tree");
     let tree = repo.find_tree(tree_id).expect("Failed to find tree");
-    let signature = git2::Signature::now("Test User", "test@example.com").expect("Failed to create signature");
+    let signature =
+        git2::Signature::now("Test User", "test@example.com").expect("Failed to create signature");
 
     let parent_commit = repo.head().ok().and_then(|head| {
-        head.target().and_then(|target| repo.find_commit(target).ok())
+        head.target()
+            .and_then(|target| repo.find_commit(target).ok())
     });
 
     let commit_id = if let Some(parent) = parent_commit {
@@ -67,14 +72,7 @@ fn commit_file(repo_path: &Path, file_path: &str, message: &str) -> String {
             &[&parent],
         )
     } else {
-        repo.commit(
-            Some("HEAD"),
-            &signature,
-            &signature,
-            message,
-            &tree,
-            &[],
-        )
+        repo.commit(Some("HEAD"), &signature, &signature, message, &tree, &[])
     };
 
     commit_id.expect("Failed to create commit").to_string()
@@ -84,7 +82,8 @@ fn create_branch(repo_path: &Path, branch_name: &str) {
     let repo = Repository::open(repo_path).expect("Failed to open repository");
     let head = repo.head().expect("Failed to get HEAD");
     let commit = head.peel_to_commit().expect("Failed to get commit");
-    repo.branch(branch_name, &commit, false).expect("Failed to create branch");
+    repo.branch(branch_name, &commit, false)
+        .expect("Failed to create branch");
 }
 
 #[test]
@@ -134,7 +133,11 @@ fn test_checkout_branch_with_non_conflicting_changes() {
 
     // Checkout feature branch should succeed - file3.txt doesn't conflict
     let result = checkout_branch_impl(repo_path.to_str().unwrap(), "feature");
-    assert!(result.is_ok(), "Checkout with non-conflicting changes should succeed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Checkout with non-conflicting changes should succeed: {:?}",
+        result
+    );
 
     // Verify file3.txt still exists (uncommitted changes preserved)
     let file3_path = repo_path.join("file3.txt");
@@ -166,7 +169,10 @@ fn test_checkout_branch_with_conflicting_changes() {
 
     // Checkout feature should fail with UnstagedChangesWouldBeLost
     let result = checkout_branch_impl(repo_path.to_str().unwrap(), "feature");
-    assert!(result.is_err(), "Checkout with conflicting changes should fail");
+    assert!(
+        result.is_err(),
+        "Checkout with conflicting changes should fail"
+    );
 
     match result {
         Err(GitError::UnstagedChangesWouldBeLost { files }) => {
@@ -177,7 +183,10 @@ fn test_checkout_branch_with_conflicting_changes() {
                 files
             );
         }
-        _ => panic!("Expected UnstagedChangesWouldBeLost error, got: {:?}", result),
+        _ => panic!(
+            "Expected UnstagedChangesWouldBeLost error, got: {:?}",
+            result
+        ),
     }
 }
 
@@ -189,7 +198,9 @@ fn test_checkout_branch_force_strategy_from_config() {
     // Set liminal.checkoutStrategy to "force"
     let repo = Repository::open(&repo_path).expect("Failed to open repository");
     let mut config = repo.config().expect("Failed to get config");
-    config.set_str("liminal.checkoutStrategy", "force").expect("Failed to set config");
+    config
+        .set_str("liminal.checkoutStrategy", "force")
+        .expect("Failed to set config");
     drop(config);
     drop(repo);
 
@@ -213,12 +224,19 @@ fn test_checkout_branch_force_strategy_from_config() {
 
     // Checkout feature should succeed with force strategy (overwrites local changes)
     let result = checkout_branch_impl(repo_path.to_str().unwrap(), "feature");
-    assert!(result.is_ok(), "Checkout with force strategy should succeed even with conflicts: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Checkout with force strategy should succeed even with conflicts: {:?}",
+        result
+    );
 
     // Verify the file was overwritten with feature branch content
-    let content = std::fs::read_to_string(repo_path.join("shared.txt"))
-        .expect("Failed to read file");
-    assert_eq!(content, "feature content", "File should be overwritten to feature branch content");
+    let content =
+        std::fs::read_to_string(repo_path.join("shared.txt")).expect("Failed to read file");
+    assert_eq!(
+        content, "feature content",
+        "File should be overwritten to feature branch content"
+    );
 }
 
 #[test]
@@ -247,13 +265,19 @@ fn test_checkout_branch_safe_strategy_default() {
 
     // Checkout should fail (safe is the default)
     let result = checkout_branch_impl(repo_path.to_str().unwrap(), "feature");
-    assert!(result.is_err(), "Checkout should fail with default safe strategy");
+    assert!(
+        result.is_err(),
+        "Checkout should fail with default safe strategy"
+    );
 
     match result {
         Err(GitError::UnstagedChangesWouldBeLost { .. }) => {
             // Expected
         }
-        _ => panic!("Expected UnstagedChangesWouldBeLost error, got: {:?}", result),
+        _ => panic!(
+            "Expected UnstagedChangesWouldBeLost error, got: {:?}",
+            result
+        ),
     }
 }
 
@@ -286,7 +310,9 @@ fn test_commits_ahead_of_head_counts_real_commits() {
     checkout_default(&repo_path);
 
     let repo = Repository::open(&repo_path).unwrap();
-    let branch = repo.find_branch("feature", git2::BranchType::Local).unwrap();
+    let branch = repo
+        .find_branch("feature", git2::BranchType::Local)
+        .unwrap();
     // Two commits on feature are not reachable from HEAD — not the old stub of 1.
     assert_eq!(commits_ahead_of_head_impl(&repo, &branch).unwrap(), 2);
 }
@@ -304,7 +330,10 @@ fn test_delete_unmerged_branch_reports_real_commits_ahead() {
 
     match delete_branch_impl(repo_path.to_str().unwrap(), "feature", false) {
         Err(GitError::BranchNotMerged { commits_ahead, .. }) => {
-            assert_eq!(commits_ahead, 2, "reports the real ahead count, not the stub of 1");
+            assert_eq!(
+                commits_ahead, 2,
+                "reports the real ahead count, not the stub of 1"
+            );
         }
         other => panic!("expected BranchNotMerged, got {:?}", other),
     }
@@ -321,7 +350,9 @@ fn test_calculate_ahead_behind_against_default() {
     write_and_commit(&repo_path, "d.txt", "D");
     {
         let repo = Repository::open(&repo_path).unwrap();
-        let branch = repo.find_branch("feature", git2::BranchType::Local).unwrap();
+        let branch = repo
+            .find_branch("feature", git2::BranchType::Local)
+            .unwrap();
         let ab = calculate_ahead_behind_impl(&repo, &branch).unwrap();
         assert_eq!((ab.ahead, ab.behind), (0, 1));
     }
@@ -332,7 +363,9 @@ fn test_calculate_ahead_behind_against_default() {
     write_and_commit(&repo_path, "f.txt", "F");
     {
         let repo = Repository::open(&repo_path).unwrap();
-        let branch = repo.find_branch("feature", git2::BranchType::Local).unwrap();
+        let branch = repo
+            .find_branch("feature", git2::BranchType::Local)
+            .unwrap();
         let ab = calculate_ahead_behind_impl(&repo, &branch).unwrap();
         assert_eq!((ab.ahead, ab.behind), (2, 1));
     }
@@ -357,8 +390,11 @@ fn test_repo_lock_serializes_concurrent_commits() {
         let path = path.clone();
         handles.push(thread::spawn(move || {
             let file = format!("f{}.txt", i);
-            std::fs::write(std::path::Path::new(&path).join(&file), format!("content {}", i))
-                .expect("write file");
+            std::fs::write(
+                std::path::Path::new(&path).join(&file),
+                format!("content {}", i),
+            )
+            .expect("write file");
 
             let lock = crate::utils::repo_lock(&path);
             let _guard = lock.lock().unwrap_or_else(|p| p.into_inner());
@@ -374,5 +410,9 @@ fn test_repo_lock_serializes_concurrent_commits() {
     let repo = Repository::open(&repo_path).unwrap();
     let mut walk = repo.revwalk().unwrap();
     walk.push_head().unwrap();
-    assert_eq!(walk.count(), 9, "all 8 concurrent commits serialized onto HEAD");
+    assert_eq!(
+        walk.count(),
+        9,
+        "all 8 concurrent commits serialized onto HEAD"
+    );
 }

@@ -1,16 +1,16 @@
 // native/src/tag_ops.rs
 
-use git2::{Repository, ObjectType};
-use crate::{TagInfo, CreateTagOptions};
-use crate::utils;
 use crate::errors::GitError;
+use crate::utils;
+use crate::{CreateTagOptions, TagInfo};
+use git2::{ObjectType, Repository};
 use log::info;
 
 // NAPI imports only when feature is enabled
 #[cfg(feature = "napi-binding")]
-use napi::bindgen_prelude::*;
-#[cfg(feature = "napi-binding")]
 use crate::GitService;
+#[cfg(feature = "napi-binding")]
+use napi::bindgen_prelude::*;
 
 // ===== PURE GIT IMPLEMENTATIONS (always available) =====
 
@@ -19,18 +19,20 @@ pub fn list_tags_impl(repo_path: &str) -> std::result::Result<Vec<TagInfo>, GitE
     info!("list_tags");
     let start = std::time::Instant::now();
 
-    let repo = Repository::open(repo_path)
-        .map_err(|e| GitError::from(e).with_operation("list_tags"))?;
+    let repo =
+        Repository::open(repo_path).map_err(|e| GitError::from(e).with_operation("list_tags"))?;
 
-    let tag_names = repo.tag_names(None)
+    let tag_names = repo
+        .tag_names(None)
         .map_err(|e| GitError::from(e).with_operation("get_tag_names"))?;
     let mut tags = Vec::new();
 
     for tag_name in tag_names.iter() {
         if let Some(name) = tag_name
-            && let Some(tag_info) = extract_tag_info_impl(&repo, name)? {
-                tags.push(tag_info);
-            }
+            && let Some(tag_info) = extract_tag_info_impl(&repo, name)?
+        {
+            tags.push(tag_info);
+        }
     }
 
     // Sort tags by creation date (newest first) - note: for testing we reverse to ensure predictable order
@@ -41,17 +43,24 @@ pub fn list_tags_impl(repo_path: &str) -> std::result::Result<Vec<TagInfo>, GitE
         b.name.cmp(&a.name)
     });
 
-    info!("list_tags: found {} tags in {}ms", tags.len(), start.elapsed().as_millis());
+    info!(
+        "list_tags: found {} tags in {}ms",
+        tags.len(),
+        start.elapsed().as_millis()
+    );
     Ok(tags)
 }
 
 /// Create a new tag
-pub fn create_tag_impl(repo_path: &str, options: &CreateTagOptions) -> std::result::Result<TagInfo, GitError> {
+pub fn create_tag_impl(
+    repo_path: &str,
+    options: &CreateTagOptions,
+) -> std::result::Result<TagInfo, GitError> {
     info!("create_tag: name={}", options.name);
     let start = std::time::Instant::now();
 
-    let repo = Repository::open(repo_path)
-        .map_err(|e| GitError::from(e).with_operation("create_tag"))?;
+    let repo =
+        Repository::open(repo_path).map_err(|e| GitError::from(e).with_operation("create_tag"))?;
 
     // Validate tag name
     if !utils::is_valid_tag_name(&options.name) {
@@ -61,7 +70,11 @@ pub fn create_tag_impl(repo_path: &str, options: &CreateTagOptions) -> std::resu
     }
 
     // Check if tag already exists
-    if !options.force && repo.find_reference(&format!("refs/tags/{}", options.name)).is_ok() {
+    if !options.force
+        && repo
+            .find_reference(&format!("refs/tags/{}", options.name))
+            .is_ok()
+    {
         return Err(GitError::TagAlreadyExists {
             name: options.name.clone(),
         });
@@ -69,13 +82,15 @@ pub fn create_tag_impl(repo_path: &str, options: &CreateTagOptions) -> std::resu
 
     // Get target commit
     let target_commit = if let Some(ref commit_hash) = options.target_commit {
-        let oid = git2::Oid::from_str(commit_hash)
-            .map_err(|_| GitError::InvalidCommitHash { hash: commit_hash.clone() })?;
+        let oid = git2::Oid::from_str(commit_hash).map_err(|_| GitError::InvalidCommitHash {
+            hash: commit_hash.clone(),
+        })?;
         repo.find_commit(oid)
             .map_err(|e| GitError::from(e).with_operation("find_commit"))?
     } else {
         // Tag current HEAD
-        let head = repo.head()
+        let head = repo
+            .head()
             .map_err(|e| GitError::from(e).with_operation("get_head"))?;
         head.peel_to_commit()
             .map_err(|e| GitError::from(e).with_operation("peel_to_commit"))?
@@ -90,8 +105,14 @@ pub fn create_tag_impl(repo_path: &str, options: &CreateTagOptions) -> std::resu
             options.user_email.as_deref(),
         )?;
 
-        repo.tag(&options.name, target_commit.as_object(), &signature, message, options.force)
-            .map_err(|e| GitError::from(e).with_operation("create_annotated_tag"))?
+        repo.tag(
+            &options.name,
+            target_commit.as_object(),
+            &signature,
+            message,
+            options.force,
+        )
+        .map_err(|e| GitError::from(e).with_operation("create_annotated_tag"))?
     } else {
         // Create lightweight tag
         repo.tag_lightweight(&options.name, target_commit.as_object(), options.force)
@@ -100,8 +121,8 @@ pub fn create_tag_impl(repo_path: &str, options: &CreateTagOptions) -> std::resu
     };
 
     // Return tag info
-    let result = extract_tag_info_impl(&repo, &options.name)?
-        .ok_or_else(|| GitError::TagNotFound {
+    let result =
+        extract_tag_info_impl(&repo, &options.name)?.ok_or_else(|| GitError::TagNotFound {
             name: options.name.clone(),
         })?;
 
@@ -114,12 +135,14 @@ pub fn delete_tag_impl(repo_path: &str, tag_name: &str) -> std::result::Result<b
     info!("delete_tag: name={}", tag_name);
     let start = std::time::Instant::now();
 
-    let repo = Repository::open(repo_path)
-        .map_err(|e| GitError::from(e).with_operation("delete_tag"))?;
+    let repo =
+        Repository::open(repo_path).map_err(|e| GitError::from(e).with_operation("delete_tag"))?;
 
     // Check if tag exists
     repo.find_reference(&format!("refs/tags/{}", tag_name))
-        .map_err(|_| GitError::TagNotFound { name: tag_name.to_string() })?;
+        .map_err(|_| GitError::TagNotFound {
+            name: tag_name.to_string(),
+        })?;
 
     repo.tag_delete(tag_name)
         .map_err(|e| GitError::from(e).with_operation("delete_tag"))?;
@@ -129,24 +152,36 @@ pub fn delete_tag_impl(repo_path: &str, tag_name: &str) -> std::result::Result<b
 }
 
 /// Get tag information by name
-pub fn get_tag_impl(repo_path: &str, tag_name: &str) -> std::result::Result<Option<TagInfo>, GitError> {
+pub fn get_tag_impl(
+    repo_path: &str,
+    tag_name: &str,
+) -> std::result::Result<Option<TagInfo>, GitError> {
     info!("get_tag: name={}", tag_name);
     let start = std::time::Instant::now();
 
-    let repo = Repository::open(repo_path)
-        .map_err(|e| GitError::from(e).with_operation("get_tag"))?;
+    let repo =
+        Repository::open(repo_path).map_err(|e| GitError::from(e).with_operation("get_tag"))?;
 
     let result = extract_tag_info_impl(&repo, tag_name)?;
-    info!("get_tag: found={} in {}ms", result.is_some(), start.elapsed().as_millis());
+    info!(
+        "get_tag: found={} in {}ms",
+        result.is_some(),
+        start.elapsed().as_millis()
+    );
     Ok(result)
 }
 
 // ===== HELPER FUNCTIONS =====
 
-fn extract_tag_info_impl(repo: &Repository, tag_name: &str) -> std::result::Result<Option<TagInfo>, GitError> {
-    let tag_ref = repo.find_reference(&format!("refs/tags/{}", tag_name))
+fn extract_tag_info_impl(
+    repo: &Repository,
+    tag_name: &str,
+) -> std::result::Result<Option<TagInfo>, GitError> {
+    let tag_ref = repo
+        .find_reference(&format!("refs/tags/{}", tag_name))
         .map_err(|e| GitError::from(e).with_operation("find_tag_reference"))?;
-    let tag_object = tag_ref.peel(ObjectType::Any)
+    let tag_object = tag_ref
+        .peel(ObjectType::Any)
         .map_err(|e| GitError::from(e).with_operation("peel_tag_object"))?;
 
     // Check if it's an annotated tag
@@ -173,13 +208,14 @@ fn extract_tag_info_impl(repo: &Repository, tag_name: &str) -> std::result::Resu
             created: utils::format_timestamp(
                 tag.tagger()
                     .map(|s| s.when())
-                    .unwrap_or_else(|| target_commit.time())
+                    .unwrap_or_else(|| target_commit.time()),
             ),
             is_annotated: true,
         }))
     } else {
         // Lightweight tag - points directly to commit
-        let commit = tag_object.peel_to_commit()
+        let commit = tag_object
+            .peel_to_commit()
             .map_err(|e| GitError::from(e).with_operation("peel_to_commit"))?;
 
         Ok(Some(TagInfo {
@@ -203,7 +239,11 @@ pub async fn list_tags(service: &GitService, repo_path: String) -> Result<Vec<Ta
 }
 
 #[cfg(feature = "napi-binding")]
-pub async fn create_tag(service: &GitService, repo_path: String, options: CreateTagOptions) -> Result<TagInfo> {
+pub async fn create_tag(
+    service: &GitService,
+    repo_path: String,
+    options: CreateTagOptions,
+) -> Result<TagInfo> {
     let structured = service.feature_flags().structured_errors;
     crate::utils::run_blocking(structured, move || {
         let _lock = crate::utils::repo_lock(&repo_path);
@@ -225,7 +265,11 @@ pub async fn delete_tag(service: &GitService, repo_path: String, tag_name: Strin
 }
 
 #[cfg(feature = "napi-binding")]
-pub async fn get_tag(service: &GitService, repo_path: String, tag_name: String) -> Result<Option<TagInfo>> {
+pub async fn get_tag(
+    service: &GitService,
+    repo_path: String,
+    tag_name: String,
+) -> Result<Option<TagInfo>> {
     let structured = service.feature_flags().structured_errors;
     crate::utils::run_blocking(structured, move || get_tag_impl(&repo_path, &tag_name)).await
 }

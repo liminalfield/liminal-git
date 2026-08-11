@@ -1,13 +1,12 @@
 // native/src/file_ops.rs
 
-use git2::{Repository, Status, StatusOptions, Signature, IndexEntry, IndexTime};
 use crate::errors::GitError;
+use git2::{IndexEntry, IndexTime, Repository, Signature, Status, StatusOptions};
+use log::{error, info};
 use std::fs;
-use log::{info, error};
 
-use std::path::Path;
 use crate::utils::normalize_git_path;
-
+use std::path::Path;
 
 pub fn move_file_impl(
     repo_path: &str,
@@ -20,25 +19,23 @@ pub fn move_file_impl(
     info!("move_file: source={} dest={}", source_file, dest_file);
     let start = std::time::Instant::now();
 
-    let repo = Repository::open(repo_path)
-        .map_err(|e| GitError::from(e).with_operation("move_file"))?;
+    let repo =
+        Repository::open(repo_path).map_err(|e| GitError::from(e).with_operation("move_file"))?;
 
     // 1. Physically move the file
     let source_abs = Path::new(repo_path).join(source_file);
     let dest_abs = Path::new(repo_path).join(dest_file);
 
     if let Some(parent) = dest_abs.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| GitError::IoError {
-                operation: "create_dir_all".to_string(),
-                error: e.to_string(),
-            })?;
-    }
-    fs::rename(&source_abs, &dest_abs)
-        .map_err(|e| GitError::IoError {
-            operation: "rename".to_string(),
+        fs::create_dir_all(parent).map_err(|e| GitError::IoError {
+            operation: "create_dir_all".to_string(),
             error: e.to_string(),
         })?;
+    }
+    fs::rename(&source_abs, &dest_abs).map_err(|e| GitError::IoError {
+        operation: "rename".to_string(),
+        error: e.to_string(),
+    })?;
 
     // 2. Stage the rename using our improved staging function
     stage_rename_impl(repo_path, source_file, dest_file)?;
@@ -63,7 +60,8 @@ pub fn move_directory_impl(
 
     let repo = Repository::open(repo_path)
         .map_err(|e| GitError::from(e).with_operation("move_directory"))?;
-    let mut index = repo.index()
+    let mut index = repo
+        .index()
         .map_err(|e| GitError::from(e).with_operation("move_directory"))?;
 
     let source_abs = Path::new(repo_path).join(source_dir);
@@ -77,19 +75,19 @@ pub fn move_directory_impl(
 
     // Recursively move files and update index
     for entry in walkdir::WalkDir::new(&source_abs) {
-        let entry = entry
-            .map_err(|e| GitError::IoError {
-                operation: "walkdir".to_string(),
-                error: e.to_string(),
-            })?;
+        let entry = entry.map_err(|e| GitError::IoError {
+            operation: "walkdir".to_string(),
+            error: e.to_string(),
+        })?;
         let path = entry.path();
 
         if path.is_file() {
-            let relative_path_from_source = path.strip_prefix(&source_abs)
-                .map_err(|e| GitError::InvalidPath {
-                    path: path.display().to_string(),
-                    reason: format!("strip_prefix failed: {}", e),
-                })?;
+            let relative_path_from_source =
+                path.strip_prefix(&source_abs)
+                    .map_err(|e| GitError::InvalidPath {
+                        path: path.display().to_string(),
+                        reason: format!("strip_prefix failed: {}", e),
+                    })?;
             let new_abs_path = dest_abs.join(relative_path_from_source);
             let new_repo_relative_path = Path::new(dest_dir).join(relative_path_from_source);
             let old_repo_relative_path = Path::new(source_dir).join(relative_path_from_source);
@@ -101,9 +99,11 @@ pub fn move_directory_impl(
             fs::rename(path, &new_abs_path)
                 .map_err(|e| GitError::from(e).with_io_operation("rename"))?;
 
-            index.remove_path(&old_repo_relative_path)
+            index
+                .remove_path(&old_repo_relative_path)
                 .map_err(|e| GitError::from(e).with_operation("remove_path"))?;
-            index.add_path(&new_repo_relative_path)
+            index
+                .add_path(&new_repo_relative_path)
                 .map_err(|e| GitError::from(e).with_operation("add_path"))?;
         }
     }
@@ -118,13 +118,16 @@ pub fn move_directory_impl(
     // If the directory itself was explicitly added (e.g., as a submodule or via .gitkeep),
     // we'd need more sophisticated logic. For now, assuming only files within are tracked.
 
-
-    index.write()
+    index
+        .write()
         .map_err(|e| GitError::from(e).with_operation("write_index"))?;
 
     let result = commit_impl(&repo, message, user_name, user_email)?;
 
-    info!("move_directory: success in {}ms", start.elapsed().as_millis());
+    info!(
+        "move_directory: success in {}ms",
+        start.elapsed().as_millis()
+    );
     Ok(result)
 }
 
@@ -138,15 +141,18 @@ pub fn commit_file_impl(
     info!("commit_file: path={}", file_path);
     let start = std::time::Instant::now();
 
-    let repo = Repository::open(repo_path)
-        .map_err(|e| GitError::from(e).with_operation("commit_file"))?;
+    let repo =
+        Repository::open(repo_path).map_err(|e| GitError::from(e).with_operation("commit_file"))?;
     let relative_path = crate::utils::validate_and_normalize_path_git(repo_path, file_path)?;
 
-    let mut index = repo.index()
+    let mut index = repo
+        .index()
         .map_err(|e| GitError::from(e).with_operation("commit_file"))?;
-    index.add_path(&relative_path)
+    index
+        .add_path(&relative_path)
         .map_err(|e| GitError::from(e).with_operation("add_path"))?;
-    index.write()
+    index
+        .write()
         .map_err(|e| GitError::from(e).with_operation("write_index"))?;
 
     let result = commit_impl(&repo, message, user_name, user_email)?;
@@ -154,7 +160,6 @@ pub fn commit_file_impl(
     info!("commit_file: success in {}ms", start.elapsed().as_millis());
     Ok(result)
 }
-
 
 pub fn commit_files_impl(
     repo_path: &str,
@@ -168,16 +173,19 @@ pub fn commit_files_impl(
 
     let repo = Repository::open(repo_path)
         .map_err(|e| GitError::from(e).with_operation("commit_files"))?;
-    let mut index = repo.index()
+    let mut index = repo
+        .index()
         .map_err(|e| GitError::from(e).with_operation("commit_files"))?;
 
     for file_path in file_paths {
         let relative_path = crate::utils::validate_and_normalize_path_git(repo_path, file_path)?;
-        index.add_path(&relative_path)
+        index
+            .add_path(&relative_path)
             .map_err(|e| GitError::from(e).with_operation("add_path"))?;
     }
 
-    index.write()
+    index
+        .write()
         .map_err(|e| GitError::from(e).with_operation("write_index"))?;
 
     let result = commit_impl(&repo, message, user_name, user_email)?;
@@ -192,20 +200,24 @@ fn commit_impl(
     user_name: &str,
     user_email: &str,
 ) -> Result<String, GitError> {
-    let mut index = repo.index()
+    let mut index = repo
+        .index()
         .map_err(|e| GitError::from(e).with_operation("commit_impl"))?;
-    let tree_id = index.write_tree()
+    let tree_id = index
+        .write_tree()
         .map_err(|e| GitError::from(e).with_operation("write_tree"))?;
 
     // Check if there are actually changes to commit
     if let Ok(head) = repo.head()
         && let Ok(head_commit) = head.peel_to_commit()
-            && head_commit.tree_id() == tree_id {
-                return Err(GitError::NothingToCommit);
-            }
+        && head_commit.tree_id() == tree_id
+    {
+        return Err(GitError::NothingToCommit);
+    }
 
     // Get the tree object from the tree_id
-    let tree = repo.find_tree(tree_id)
+    let tree = repo
+        .find_tree(tree_id)
         .map_err(|e| GitError::from(e).with_operation("find_tree"))?;
 
     let signature = Signature::now(user_name, user_email)
@@ -214,33 +226,28 @@ fn commit_impl(
     let parent_commit = match repo.head() {
         Ok(head) => {
             let target = head.target().ok_or(GitError::DetachedHead)?;
-            Some(repo.find_commit(target)
-                .map_err(|e| GitError::from(e).with_operation("find_commit"))?)
+            Some(
+                repo.find_commit(target)
+                    .map_err(|e| GitError::from(e).with_operation("find_commit"))?,
+            )
         }
         Err(_) => None,
     };
 
     let commit_id = match parent_commit {
-        Some(parent) => {
-            repo.commit(
+        Some(parent) => repo
+            .commit(
                 Some("HEAD"),
                 &signature,
                 &signature,
                 message,
                 &tree,
                 &[&parent],
-            ).map_err(|e| GitError::from(e).with_operation("create_commit"))?
-        }
-        None => {
-            repo.commit(
-                Some("HEAD"),
-                &signature,
-                &signature,
-                message,
-                &tree,
-                &[],
-            ).map_err(|e| GitError::from(e).with_operation("create_commit"))?
-        }
+            )
+            .map_err(|e| GitError::from(e).with_operation("create_commit"))?,
+        None => repo
+            .commit(Some("HEAD"), &signature, &signature, message, &tree, &[])
+            .map_err(|e| GitError::from(e).with_operation("create_commit"))?,
     };
 
     Ok(commit_id.to_string())
@@ -250,11 +257,12 @@ pub fn stage_file_impl(repo_path: &str, file_path: &str) -> Result<bool, GitErro
     info!("stage_file: path={}", file_path);
     let start = std::time::Instant::now();
 
-    let repo = Repository::open(repo_path)
-        .map_err(|e| GitError::from(e).with_operation("stage_file"))?;
+    let repo =
+        Repository::open(repo_path).map_err(|e| GitError::from(e).with_operation("stage_file"))?;
     let relative_path = crate::utils::validate_and_normalize_path_git(repo_path, file_path)?;
 
-    let mut index = repo.index()
+    let mut index = repo
+        .index()
         .map_err(|e| GitError::from(e).with_operation("stage_file"))?;
 
     // Check if path is a directory by checking if it exists on disk
@@ -263,15 +271,18 @@ pub fn stage_file_impl(repo_path: &str, file_path: &str) -> Result<bool, GitErro
         // Use add_all for directories (recursive staging like `git add .nocturne`)
         let pathspec = relative_path.to_string_lossy().to_string();
         let pathspecs = [pathspec.as_str()];
-        index.add_all(pathspecs.iter(), git2::IndexAddOption::DEFAULT, None)
+        index
+            .add_all(pathspecs.iter(), git2::IndexAddOption::DEFAULT, None)
             .map_err(|e| GitError::from(e).with_operation("add_all"))?;
     } else {
         // Use add_path for individual files
-        index.add_path(&relative_path)
+        index
+            .add_path(&relative_path)
             .map_err(|e| GitError::from(e).with_operation("add_path"))?;
     }
 
-    index.write()
+    index
+        .write()
         .map_err(|e| GitError::from(e).with_operation("write_index"))?;
 
     info!("stage_file: success in {}ms", start.elapsed().as_millis());
@@ -287,19 +298,29 @@ pub fn stage_deletion_impl(repo_path: &str, file_path: &str) -> Result<bool, Git
         .map_err(|e| GitError::from(e).with_operation("stage_deletion"))?;
     let relative_path = crate::utils::validate_and_normalize_path_git(repo_path, file_path)?;
 
-    let mut index = repo.index()
+    let mut index = repo
+        .index()
         .map_err(|e| GitError::from(e).with_operation("stage_deletion"))?;
-    index.remove_path(&relative_path)
+    index
+        .remove_path(&relative_path)
         .map_err(|e| GitError::from(e).with_operation("remove_path"))?;
-    index.write()
+    index
+        .write()
         .map_err(|e| GitError::from(e).with_operation("write_index"))?;
 
-    info!("stage_deletion: success in {}ms", start.elapsed().as_millis());
+    info!(
+        "stage_deletion: success in {}ms",
+        start.elapsed().as_millis()
+    );
     Ok(true)
 }
 
 /// Stage a file rename (combination of deletion and addition)
-pub fn stage_rename_impl(repo_path: &str, old_path: &str, new_path: &str) -> Result<bool, GitError> {
+pub fn stage_rename_impl(
+    repo_path: &str,
+    old_path: &str,
+    new_path: &str,
+) -> Result<bool, GitError> {
     info!("stage_rename: old={} new={}", old_path, new_path);
     let start = std::time::Instant::now();
 
@@ -316,15 +337,18 @@ pub fn stage_rename_impl(repo_path: &str, old_path: &str, new_path: &str) -> Res
         });
     }
 
-    let mut index = repo.index()
+    let mut index = repo
+        .index()
         .map_err(|e| GitError::from(e).with_operation("stage_rename"))?;
 
     // Remove the old path from index
-    index.remove_path(&old_relative_path)
+    index
+        .remove_path(&old_relative_path)
         .map_err(|e| GitError::from(e).with_operation("remove_path"))?;
 
     // Add the new path from working directory
-    index.add_path(&new_relative_path)
+    index
+        .add_path(&new_relative_path)
         .map_err(|e| GitError::from(e).with_operation("add_path"))?;
 
     // Verify the new path was actually added to the index
@@ -337,7 +361,8 @@ pub fn stage_rename_impl(repo_path: &str, old_path: &str, new_path: &str) -> Res
         });
     }
 
-    index.write()
+    index
+        .write()
         .map_err(|e| GitError::from(e).with_operation("write_index"))?;
 
     info!("stage_rename: success in {}ms", start.elapsed().as_millis());
@@ -359,7 +384,10 @@ pub fn commit_staged_changes_impl(
 
     let result = commit_impl(&repo, message, user_name, user_email)?;
 
-    info!("commit_staged_changes: success in {}ms", start.elapsed().as_millis());
+    info!(
+        "commit_staged_changes: success in {}ms",
+        start.elapsed().as_millis()
+    );
     Ok(result)
 }
 
@@ -406,7 +434,8 @@ pub fn unstage_file_impl(repo_path: &str, file_path: &str, _force: bool) -> Resu
 
     let relative_path = crate::utils::validate_and_normalize_path_git(repo_path, file_path)?;
 
-    let mut index = repo.index()
+    let mut index = repo
+        .index()
         .map_err(|e| GitError::from(e).with_operation("unstage_file"))?;
 
     // Check if file is actually staged
@@ -417,18 +446,19 @@ pub fn unstage_file_impl(repo_path: &str, file_path: &str, _force: bool) -> Resu
     }
 
     // Get HEAD commit (error if no HEAD)
-    let head = repo.head()
-        .map_err(|_| GitError::GitOperationFailure {
-            operation: "get_head".to_string(),
-            class: 0,
-            code: 0,
-            message: "Cannot unstage in empty repository (no HEAD)".to_string(),
-        })?;
+    let head = repo.head().map_err(|_| GitError::GitOperationFailure {
+        operation: "get_head".to_string(),
+        class: 0,
+        code: 0,
+        message: "Cannot unstage in empty repository (no HEAD)".to_string(),
+    })?;
 
     let target = head.target().ok_or(GitError::DetachedHead)?;
-    let commit = repo.find_commit(target)
+    let commit = repo
+        .find_commit(target)
         .map_err(|e| GitError::from(e).with_operation("find_commit"))?;
-    let tree = commit.tree()
+    let tree = commit
+        .tree()
         .map_err(|e| GitError::from(e).with_operation("get_tree"))?;
 
     // Note: Unstaging is generally safe because it preserves the working tree.
@@ -440,35 +470,37 @@ pub fn unstage_file_impl(repo_path: &str, file_path: &str, _force: bool) -> Resu
     // Perform the unstage operation
     if let Ok(tree_entry) = tree.get_path(&relative_path) {
         // File exists in HEAD - reset index entry to HEAD version
-        index.add(&IndexEntry {
-            ctime: IndexTime::new(0, 0),
-            mtime: IndexTime::new(0, 0),
-            dev: 0,
-            ino: 0,
-            mode: tree_entry.filemode() as u32,
-            uid: 0,
-            gid: 0,
-            file_size: 0,
-            id: tree_entry.id(),
-            flags: 0,
-            flags_extended: 0,
-            path: relative_path.to_string_lossy().as_bytes().to_vec(),
-        }).map_err(|e| GitError::from(e).with_operation("add_index_entry"))?;
+        index
+            .add(&IndexEntry {
+                ctime: IndexTime::new(0, 0),
+                mtime: IndexTime::new(0, 0),
+                dev: 0,
+                ino: 0,
+                mode: tree_entry.filemode() as u32,
+                uid: 0,
+                gid: 0,
+                file_size: 0,
+                id: tree_entry.id(),
+                flags: 0,
+                flags_extended: 0,
+                path: relative_path.to_string_lossy().as_bytes().to_vec(),
+            })
+            .map_err(|e| GitError::from(e).with_operation("add_index_entry"))?;
     } else {
         // File not in HEAD - remove from index entirely
         // This is for newly added files that were staged
-        index.remove_path(&relative_path)
+        index
+            .remove_path(&relative_path)
             .map_err(|e| GitError::from(e).with_operation("remove_path"))?;
     }
 
-    index.write()
+    index
+        .write()
         .map_err(|e| GitError::from(e).with_operation("write_index"))?;
 
     info!("unstage_file: success in {}ms", start.elapsed().as_millis());
     Ok(true)
 }
-
-
 
 pub fn get_staged_files_impl(repo_path: &str) -> Result<Vec<String>, GitError> {
     info!("get_staged_files");
@@ -481,24 +513,29 @@ pub fn get_staged_files_impl(repo_path: &str) -> Result<Vec<String>, GitError> {
     opts.include_untracked(true);
     opts.include_ignored(false);
 
-    let statuses = repo.statuses(Some(&mut opts))
+    let statuses = repo
+        .statuses(Some(&mut opts))
         .map_err(|e| GitError::from(e).with_operation("get_status"))?;
     let mut staged_files = Vec::new();
 
     for entry in statuses.iter() {
         let status_flags = entry.status();
 
-        if status_flags.contains(Status::INDEX_MODIFIED) ||
-            status_flags.contains(Status::INDEX_NEW) ||
-            status_flags.contains(Status::INDEX_DELETED) {
+        if status_flags.contains(Status::INDEX_MODIFIED)
+            || status_flags.contains(Status::INDEX_NEW)
+            || status_flags.contains(Status::INDEX_DELETED)
+        {
             staged_files.push(normalize_git_path(entry.path().unwrap_or("invalid_path")));
         }
     }
 
-    info!("get_staged_files: found {} files in {}ms", staged_files.len(), start.elapsed().as_millis());
+    info!(
+        "get_staged_files: found {} files in {}ms",
+        staged_files.len(),
+        start.elapsed().as_millis()
+    );
     Ok(staged_files)
 }
-
 
 // Restore file from commit
 pub fn restore_file_from_commit_impl(
@@ -506,19 +543,23 @@ pub fn restore_file_from_commit_impl(
     file_path: &str,
     commit_hash: &str,
 ) -> Result<bool, GitError> {
-    info!("restore_file_from_commit: path={} commit={}", file_path, commit_hash);
+    info!(
+        "restore_file_from_commit: path={} commit={}",
+        file_path, commit_hash
+    );
     let start = std::time::Instant::now();
 
     let repo = Repository::open(repo_path)
         .map_err(|e| GitError::from(e).with_operation("restore_file_from_commit"))?;
 
-    let oid = git2::Oid::from_str(commit_hash)
-        .map_err(|_e| GitError::InvalidCommitHash {
-            hash: commit_hash.to_string(),
-        })?;
-    let commit = repo.find_commit(oid)
+    let oid = git2::Oid::from_str(commit_hash).map_err(|_e| GitError::InvalidCommitHash {
+        hash: commit_hash.to_string(),
+    })?;
+    let commit = repo
+        .find_commit(oid)
         .map_err(|e| GitError::from(e).with_operation("find_commit"))?;
-    let tree = commit.tree()
+    let tree = commit
+        .tree()
         .map_err(|e| GitError::from(e).with_operation("get_tree"))?;
 
     let relative_path = std::path::Path::new(file_path);
@@ -526,27 +567,32 @@ pub fn restore_file_from_commit_impl(
 
     match tree.get_path(relative_path) {
         Ok(tree_entry) => {
-            let blob = repo.find_blob(tree_entry.id())
+            let blob = repo
+                .find_blob(tree_entry.id())
                 .map_err(|e| GitError::from(e).with_operation("find_blob"))?;
 
             // Check for conflict: file exists with uncommitted changes
             if absolute_path.exists() {
                 // Check if file has uncommitted changes by comparing with HEAD
-                let head = repo.head()
+                let head = repo
+                    .head()
                     .map_err(|e| GitError::from(e).with_operation("get_head"))?;
-                let head_commit = head.peel_to_commit()
+                let head_commit = head
+                    .peel_to_commit()
                     .map_err(|e| GitError::from(e).with_operation("peel_to_commit"))?;
-                let head_tree = head_commit.tree()
+                let head_tree = head_commit
+                    .tree()
                     .map_err(|e| GitError::from(e).with_operation("get_head_tree"))?;
 
                 // Check if file exists in HEAD and compare content
                 if let Ok(head_entry) = head_tree.get_path(relative_path) {
-                    let head_blob = repo.find_blob(head_entry.id())
+                    let head_blob = repo
+                        .find_blob(head_entry.id())
                         .map_err(|e| GitError::from(e).with_operation("find_head_blob"))?;
 
                     // Read current working directory content
-                    let working_content = fs::read(&absolute_path)
-                        .map_err(|e| GitError::IoError {
+                    let working_content =
+                        fs::read(&absolute_path).map_err(|e| GitError::IoError {
                             operation: "read_working_file".to_string(),
                             error: e.to_string(),
                         })?;
@@ -567,21 +613,22 @@ pub fn restore_file_from_commit_impl(
 
             // Create parent directories if needed
             if let Some(parent) = absolute_path.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|e| GitError::IoError {
-                        operation: "create_dir_all".to_string(),
-                        error: e.to_string(),
-                    })?;
+                fs::create_dir_all(parent).map_err(|e| GitError::IoError {
+                    operation: "create_dir_all".to_string(),
+                    error: e.to_string(),
+                })?;
             }
 
             // Write file content
-            fs::write(&absolute_path, blob.content())
-                .map_err(|e| GitError::IoError {
-                    operation: "write_file".to_string(),
-                    error: e.to_string(),
-                })?;
+            fs::write(&absolute_path, blob.content()).map_err(|e| GitError::IoError {
+                operation: "write_file".to_string(),
+                error: e.to_string(),
+            })?;
 
-            info!("restore_file_from_commit: success in {}ms", start.elapsed().as_millis());
+            info!(
+                "restore_file_from_commit: success in {}ms",
+                start.elapsed().as_millis()
+            );
             Ok(true)
         }
         Err(_) => {
@@ -626,12 +673,15 @@ pub fn discard_changes_impl(repo_path: &str, file_path: &str) -> Result<bool, Gi
     let relative_path = crate::utils::validate_and_normalize_path_git(repo_path, file_path)?;
 
     // Get HEAD commit
-    let head = repo.head()
+    let head = repo
+        .head()
         .map_err(|e| GitError::from(e).with_operation("get_head"))?;
     let target = head.target().ok_or(GitError::DetachedHead)?;
-    let commit = repo.find_commit(target)
+    let commit = repo
+        .find_commit(target)
         .map_err(|e| GitError::from(e).with_operation("find_commit"))?;
-    let tree = commit.tree()
+    let tree = commit
+        .tree()
         .map_err(|e| GitError::from(e).with_operation("get_tree"))?;
 
     // Verify the file exists in the tree
@@ -644,14 +694,17 @@ pub fn discard_changes_impl(repo_path: &str, file_path: &str) -> Result<bool, Gi
     let mut checkout_builder = git2::build::CheckoutBuilder::new();
     checkout_builder
         .path(&relative_path)
-        .force()  // Overwrite working tree changes
-        .update_index(true)  // Update index to match HEAD
-        .disable_filters(false);  // Ensure CRLF filters are applied
+        .force() // Overwrite working tree changes
+        .update_index(true) // Update index to match HEAD
+        .disable_filters(false); // Ensure CRLF filters are applied
 
     repo.checkout_tree(tree.as_object(), Some(&mut checkout_builder))
         .map_err(|e| GitError::from(e).with_operation("checkout_tree"))?;
 
-    info!("discard_changes: success in {}ms", start.elapsed().as_millis());
+    info!(
+        "discard_changes: success in {}ms",
+        start.elapsed().as_millis()
+    );
     Ok(true)
 }
 
@@ -697,18 +750,23 @@ pub fn commit_amend_impl(
         .map_err(|e| GitError::from(e).with_operation("commit_amend"))?;
 
     // Get HEAD commit
-    let head = repo.head()
+    let head = repo
+        .head()
         .map_err(|e| GitError::from(e).with_operation("get_head"))?;
     let target = head.target().ok_or(GitError::DetachedHead)?;
-    let head_commit = repo.find_commit(target)
+    let head_commit = repo
+        .find_commit(target)
         .map_err(|e| GitError::from(e).with_operation("find_commit"))?;
 
     // Get the new tree from the index
-    let mut index = repo.index()
+    let mut index = repo
+        .index()
         .map_err(|e| GitError::from(e).with_operation("get_index"))?;
-    let tree_id = index.write_tree()
+    let tree_id = index
+        .write_tree()
         .map_err(|e| GitError::from(e).with_operation("write_tree"))?;
-    let tree = repo.find_tree(tree_id)
+    let tree = repo
+        .find_tree(tree_id)
         .map_err(|e| GitError::from(e).with_operation("find_tree"))?;
 
     // Determine the commit message (empty = reuse original)
@@ -727,14 +785,16 @@ pub fn commit_amend_impl(
     let parent_refs: Vec<&git2::Commit> = parents.iter().collect();
 
     // Create the amended commit without updating any reference
-    let new_commit_id = repo.commit(
-        None,  // Don't update any reference yet
-        &signature,
-        &signature,
-        commit_message,
-        &tree,
-        &parent_refs,
-    ).map_err(|e| GitError::from(e).with_operation("create_commit"))?;
+    let new_commit_id = repo
+        .commit(
+            None, // Don't update any reference yet
+            &signature,
+            &signature,
+            commit_message,
+            &tree,
+            &parent_refs,
+        )
+        .map_err(|e| GitError::from(e).with_operation("create_commit"))?;
 
     // Update the branch reference (not HEAD directly to avoid detaching)
     // If HEAD is symbolic (points to a branch), update that branch
@@ -753,17 +813,19 @@ pub fn commit_amend_impl(
         repo.reference(
             branch_name,
             new_commit_id,
-            true,  // Force update
+            true, // Force update
             &reflog_message,
-        ).map_err(|e| GitError::from(e).with_operation("update_branch"))?;
+        )
+        .map_err(|e| GitError::from(e).with_operation("update_branch"))?;
     } else {
         // HEAD is detached - update HEAD directly
         repo.reference(
             "HEAD",
             new_commit_id,
-            true,  // Force update
+            true, // Force update
             &reflog_message,
-        ).map_err(|e| GitError::from(e).with_operation("update_head"))?;
+        )
+        .map_err(|e| GitError::from(e).with_operation("update_head"))?;
     }
 
     info!("commit_amend: success in {}ms", start.elapsed().as_millis());
@@ -777,8 +839,8 @@ mod tests {
 
     fn setup_test_repo() -> (tempfile::TempDir, PathBuf) {
         // Use consistent temp dir location to avoid cross-device link issues
-        let temp_dir = tempfile::TempDir::new_in(std::env::temp_dir())
-            .expect("Failed to create temp dir");
+        let temp_dir =
+            tempfile::TempDir::new_in(std::env::temp_dir()).expect("Failed to create temp dir");
         let repo_path = temp_dir.path().to_path_buf();
 
         // Initialize a git repository
@@ -787,8 +849,12 @@ mod tests {
         // Set user config
         let repo = Repository::open(&repo_path).expect("Failed to open repository");
         let mut config = repo.config().expect("Failed to get config");
-        config.set_str("user.name", "Test User").expect("Failed to set user.name");
-        config.set_str("user.email", "test@example.com").expect("Failed to set user.email");
+        config
+            .set_str("user.name", "Test User")
+            .expect("Failed to set user.name");
+        config
+            .set_str("user.email", "test@example.com")
+            .expect("Failed to set user.email");
 
         (temp_dir, repo_path)
     }
@@ -811,21 +877,28 @@ mod tests {
 
         let tree_id = index.write_tree().expect("Failed to write tree");
         let tree = repo.find_tree(tree_id).expect("Failed to find tree");
-        let signature = Signature::now("Test User", "test@example.com").expect("Failed to create signature");
+        let signature =
+            Signature::now("Test User", "test@example.com").expect("Failed to create signature");
 
         let parent_commit = repo.head().ok().and_then(|head| {
-            head.target().and_then(|target| repo.find_commit(target).ok())
+            head.target()
+                .and_then(|target| repo.find_commit(target).ok())
         });
 
         let commit_id = match parent_commit {
-            Some(parent) => {
-                repo.commit(Some("HEAD"), &signature, &signature, message, &tree, &[&parent])
-                    .expect("Failed to commit")
-            }
-            None => {
-                repo.commit(Some("HEAD"), &signature, &signature, message, &tree, &[])
-                    .expect("Failed to commit")
-            }
+            Some(parent) => repo
+                .commit(
+                    Some("HEAD"),
+                    &signature,
+                    &signature,
+                    message,
+                    &tree,
+                    &[&parent],
+                )
+                .expect("Failed to commit"),
+            None => repo
+                .commit(Some("HEAD"), &signature, &signature, message, &tree, &[])
+                .expect("Failed to commit"),
         };
 
         commit_id.to_string()
@@ -845,10 +918,7 @@ mod tests {
         create_test_file(&repo_path, "test.txt", "modified content");
 
         // Discard changes
-        let result = discard_changes_impl(
-            repo_path.to_str().unwrap(),
-            "test.txt",
-        );
+        let result = discard_changes_impl(repo_path.to_str().unwrap(), "test.txt");
 
         assert!(result.is_ok());
 
@@ -1003,12 +1073,7 @@ mod tests {
         let _ = stage_file_impl(repo_path.to_str().unwrap(), "test.txt");
 
         // Amend with None signature (should read from config)
-        let result = commit_amend_impl(
-            repo_path.to_str().unwrap(),
-            "Amended",
-            None,
-            None,
-        );
+        let result = commit_amend_impl(repo_path.to_str().unwrap(), "Amended", None, None);
 
         assert!(result.is_ok());
 
@@ -1046,7 +1111,10 @@ mod tests {
         // Verify HEAD is still detached (not moved to a branch)
         let repo = Repository::open(&repo_path).expect("Failed to open repository");
         let head = repo.head().expect("Failed to get HEAD");
-        assert!(!head.is_branch(), "HEAD should still be detached after amend");
+        assert!(
+            !head.is_branch(),
+            "HEAD should still be detached after amend"
+        );
     }
 
     #[test]
@@ -1077,15 +1145,17 @@ mod tests {
 
         // Set up completely isolated config environment
         let base_temp = std::env::temp_dir();
-        let config_dir = tempfile::TempDir::new_in(&base_temp).expect("Failed to create temp config dir");
+        let config_dir =
+            tempfile::TempDir::new_in(&base_temp).expect("Failed to create temp config dir");
         let config_file = config_dir.path().join("gitconfig");
-        let home_dir = tempfile::TempDir::new_in(&base_temp).expect("Failed to create temp home dir");
+        let home_dir =
+            tempfile::TempDir::new_in(&base_temp).expect("Failed to create temp home dir");
 
         unsafe {
             env::set_var("GIT_CONFIG_GLOBAL", config_file.as_os_str());
             env::set_var("HOME", home_dir.path().as_os_str());
             env::set_var("XDG_CONFIG_HOME", home_dir.path().as_os_str());
-            env::set_var("GIT_CONFIG_NOSYSTEM", "1");  // Don't read system config
+            env::set_var("GIT_CONFIG_NOSYSTEM", "1"); // Don't read system config
         }
 
         // Create repo WITHOUT setting user config
@@ -1102,12 +1172,7 @@ mod tests {
         let _ = stage_file_impl(repo_path.to_str().unwrap(), "test.txt");
 
         // Try to amend without config and without explicit params
-        let result = commit_amend_impl(
-            repo_path.to_str().unwrap(),
-            "Amended",
-            None,
-            None,
-        );
+        let result = commit_amend_impl(repo_path.to_str().unwrap(), "Amended", None, None);
 
         // Restore original env vars
         unsafe {
@@ -1167,28 +1232,29 @@ mod tests {
         assert!(head.is_branch(), "HEAD should still point to a branch");
 
         // Verify the branch ref was updated
-        let branch = repo.find_branch("master", git2::BranchType::Local)
+        let branch = repo
+            .find_branch("master", git2::BranchType::Local)
             .or_else(|_| repo.find_branch("main", git2::BranchType::Local))
             .expect("Failed to find main/master branch");
         let branch_target = branch.get().target().expect("Branch has no target");
         let head_target = head.target().expect("HEAD has no target");
-        assert_eq!(branch_target, head_target, "Branch should point to same commit as HEAD");
+        assert_eq!(
+            branch_target, head_target,
+            "Branch should point to same commit as HEAD"
+        );
     }
 
     #[test]
     fn test_discard_changes_bare_repository() {
-        let temp_dir = tempfile::TempDir::new_in(std::env::temp_dir())
-            .expect("Failed to create temp dir");
+        let temp_dir =
+            tempfile::TempDir::new_in(std::env::temp_dir()).expect("Failed to create temp dir");
         let repo_path = temp_dir.path().to_path_buf();
 
         // Initialize a bare repository
         Repository::init_bare(&repo_path).expect("Failed to initialize bare repository");
 
         // Try to discard changes in bare repo
-        let result = discard_changes_impl(
-            repo_path.to_str().unwrap(),
-            "test.txt",
-        );
+        let result = discard_changes_impl(repo_path.to_str().unwrap(), "test.txt");
 
         // Should fail - bare repos have no working tree
         assert!(result.is_err());
@@ -1225,20 +1291,29 @@ mod tests {
         let head = repo.head().expect("Failed to get HEAD");
         let commit = head.peel_to_commit().expect("Failed to get commit");
         let tree = commit.tree().expect("Failed to get tree");
-        let tree_entry = tree.get_path(std::path::Path::new("test.txt"))
+        let tree_entry = tree
+            .get_path(std::path::Path::new("test.txt"))
             .expect("File should exist in HEAD");
 
         let index = repo.index().expect("Failed to get index");
-        let index_entry = index.get_path(std::path::Path::new("test.txt"), 0)
+        let index_entry = index
+            .get_path(std::path::Path::new("test.txt"), 0)
             .expect("File should still be in index");
 
-        assert_eq!(index_entry.id, tree_entry.id(), "Index should match HEAD after unstaging");
+        assert_eq!(
+            index_entry.id,
+            tree_entry.id(),
+            "Index should match HEAD after unstaging"
+        );
 
         // Verify working tree is preserved
         let full_path = repo_path.join("test.txt");
-        let workdir_content = std::fs::read_to_string(&full_path)
-            .expect("Failed to read working tree file");
-        assert_eq!(workdir_content, "modified", "Working tree should be preserved");
+        let workdir_content =
+            std::fs::read_to_string(&full_path).expect("Failed to read working tree file");
+        assert_eq!(
+            workdir_content, "modified",
+            "Working tree should be preserved"
+        );
     }
 
     #[test]
@@ -1251,13 +1326,16 @@ mod tests {
 
         // Try to unstage a file that is not staged (idempotent operation)
         let result = unstage_file_impl(repo_path.to_str().unwrap(), "test.txt", false);
-        assert!(result.is_ok(), "Unstaging non-staged file should succeed (idempotent)");
+        assert!(
+            result.is_ok(),
+            "Unstaging non-staged file should succeed (idempotent)"
+        );
     }
 
     #[test]
     fn test_unstage_file_empty_repository() {
-        let temp_dir = tempfile::TempDir::new_in(std::env::temp_dir())
-            .expect("Failed to create temp dir");
+        let temp_dir =
+            tempfile::TempDir::new_in(std::env::temp_dir()).expect("Failed to create temp dir");
         let repo_path = temp_dir.path().to_path_buf();
 
         // Initialize repository without any commits
@@ -1286,8 +1364,8 @@ mod tests {
 
     #[test]
     fn test_unstage_file_bare_repository() {
-        let temp_dir = tempfile::TempDir::new_in(std::env::temp_dir())
-            .expect("Failed to create temp dir");
+        let temp_dir =
+            tempfile::TempDir::new_in(std::env::temp_dir()).expect("Failed to create temp dir");
         let repo_path = temp_dir.path().to_path_buf();
 
         // Initialize a bare repository
@@ -1325,7 +1403,10 @@ mod tests {
         // Verify file is staged
         let repo = Repository::open(&repo_path).expect("Failed to open repository");
         let index = repo.index().expect("Failed to get index");
-        assert!(index.get_path(std::path::Path::new("new.txt"), 0).is_some(), "New file should be staged");
+        assert!(
+            index.get_path(std::path::Path::new("new.txt"), 0).is_some(),
+            "New file should be staged"
+        );
         drop(index);
         drop(repo);
 
@@ -1336,13 +1417,18 @@ mod tests {
         // Verify file is removed from index
         let repo = Repository::open(&repo_path).expect("Failed to open repository");
         let index = repo.index().expect("Failed to get index");
-        assert!(index.get_path(std::path::Path::new("new.txt"), 0).is_none(), "New file should be removed from index");
+        assert!(
+            index.get_path(std::path::Path::new("new.txt"), 0).is_none(),
+            "New file should be removed from index"
+        );
 
         // Verify working tree file still exists
         let full_path = repo_path.join("new.txt");
         assert!(full_path.exists(), "Working tree file should still exist");
         let content = std::fs::read_to_string(&full_path).expect("Failed to read file");
-        assert_eq!(content, "new content", "Working tree content should be preserved");
+        assert_eq!(
+            content, "new content",
+            "Working tree content should be preserved"
+        );
     }
 }
-

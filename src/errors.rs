@@ -1,6 +1,6 @@
-use std::fmt;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
 
 /// Serializable error payload for transport across N-API boundary
 ///
@@ -126,8 +126,8 @@ pub enum GitError {
     // Git operation failures (renamed from GitError to avoid confusion with enum name)
     GitOperationFailure {
         operation: String,
-        class: i32,    // git2::ErrorClass as i32
-        code: i32,     // git2::ErrorCode as i32
+        class: i32, // git2::ErrorClass as i32
+        code: i32,  // git2::ErrorCode as i32
         message: String,
     },
 }
@@ -135,65 +135,83 @@ pub enum GitError {
 impl fmt::Display for GitError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            GitError::RepositoryNotFound { path } =>
-                write!(f, "Repository not found: {}", path),
-            GitError::RepositoryCorrupted { path, details } =>
-                write!(f, "Repository corrupted at {}: {}", path, details),
-            GitError::InvalidRepository { path } =>
-                write!(f, "Invalid repository: {}", path),
+            GitError::RepositoryNotFound { path } => write!(f, "Repository not found: {}", path),
+            GitError::RepositoryCorrupted { path, details } => {
+                write!(f, "Repository corrupted at {}: {}", path, details)
+            }
+            GitError::InvalidRepository { path } => write!(f, "Invalid repository: {}", path),
 
-            GitError::FileNotFound { path } =>
-                write!(f, "File not found: {}", path),
-            GitError::FileNotInRepository { path } =>
-                write!(f, "File not in repository: {}", path),
-            GitError::PathTraversal { attempted_path } =>
-                write!(f, "Path traversal attempt: {}", attempted_path),
+            GitError::FileNotFound { path } => write!(f, "File not found: {}", path),
+            GitError::FileNotInRepository { path } => write!(f, "File not in repository: {}", path),
+            GitError::PathTraversal { attempted_path } => {
+                write!(f, "Path traversal attempt: {}", attempted_path)
+            }
 
-            GitError::NothingToCommit =>
-                write!(f, "Nothing to commit"),
-            GitError::MergeConflict { files } =>
-                write!(f, "Merge conflict in {} file(s): {:?}", files.len(), files),
-            GitError::UncommittedChanges { count } =>
-                write!(f, "Uncommitted changes: {} file(s)", count),
-            GitError::UnstagedChangesWouldBeLost { files } =>
-                write!(f, "Operation would lose uncommitted changes in {} file(s)", files.len()),
-            GitError::DetachedHead =>
-                write!(f, "Detached HEAD state"),
+            GitError::NothingToCommit => write!(f, "Nothing to commit"),
+            GitError::MergeConflict { files } => {
+                write!(f, "Merge conflict in {} file(s): {:?}", files.len(), files)
+            }
+            GitError::UncommittedChanges { count } => {
+                write!(f, "Uncommitted changes: {} file(s)", count)
+            }
+            GitError::UnstagedChangesWouldBeLost { files } => write!(
+                f,
+                "Operation would lose uncommitted changes in {} file(s)",
+                files.len()
+            ),
+            GitError::DetachedHead => write!(f, "Detached HEAD state"),
 
-            GitError::ConfigMissing { key, tried_locations } =>
-                write!(f, "Required config key '{}' not found in: {}", key, tried_locations.join(", ")),
+            GitError::ConfigMissing {
+                key,
+                tried_locations,
+            } => write!(
+                f,
+                "Required config key '{}' not found in: {}",
+                key,
+                tried_locations.join(", ")
+            ),
 
-            GitError::BranchNotFound { name } =>
-                write!(f, "Branch not found: {}", name),
-            GitError::BranchAlreadyExists { name } =>
-                write!(f, "Branch already exists: {}", name),
-            GitError::CannotDeleteCurrentBranch { name } =>
-                write!(f, "Cannot delete current branch: {}", name),
-            GitError::BranchNotMerged { name, commits_ahead } =>
-                write!(f, "Branch '{}' not merged ({} commits ahead)", name, commits_ahead),
+            GitError::BranchNotFound { name } => write!(f, "Branch not found: {}", name),
+            GitError::BranchAlreadyExists { name } => write!(f, "Branch already exists: {}", name),
+            GitError::CannotDeleteCurrentBranch { name } => {
+                write!(f, "Cannot delete current branch: {}", name)
+            }
+            GitError::BranchNotMerged {
+                name,
+                commits_ahead,
+            } => write!(
+                f,
+                "Branch '{}' not merged ({} commits ahead)",
+                name, commits_ahead
+            ),
 
-            GitError::TagNotFound { name } =>
-                write!(f, "Tag not found: {}", name),
-            GitError::TagAlreadyExists { name } =>
-                write!(f, "Tag already exists: {}", name),
+            GitError::TagNotFound { name } => write!(f, "Tag not found: {}", name),
+            GitError::TagAlreadyExists { name } => write!(f, "Tag already exists: {}", name),
 
-            GitError::InvalidPath { path, reason } =>
-                write!(f, "Invalid path '{}': {}", path, reason),
-            GitError::InvalidArgument { argument, reason } =>
-                write!(f, "Invalid argument '{}': {}", argument, reason),
-            GitError::InvalidCommitHash { hash } =>
-                write!(f, "Invalid commit hash: {}", hash),
-            GitError::InvalidBranchName { name } =>
-                write!(f, "Invalid branch name: {}", name),
-            GitError::InvalidTagName { name } =>
-                write!(f, "Invalid tag name: {}", name),
+            GitError::InvalidPath { path, reason } => {
+                write!(f, "Invalid path '{}': {}", path, reason)
+            }
+            GitError::InvalidArgument { argument, reason } => {
+                write!(f, "Invalid argument '{}': {}", argument, reason)
+            }
+            GitError::InvalidCommitHash { hash } => write!(f, "Invalid commit hash: {}", hash),
+            GitError::InvalidBranchName { name } => write!(f, "Invalid branch name: {}", name),
+            GitError::InvalidTagName { name } => write!(f, "Invalid tag name: {}", name),
 
-            GitError::IoError { operation, error } =>
-                write!(f, "I/O error during '{}': {}", operation, error),
+            GitError::IoError { operation, error } => {
+                write!(f, "I/O error during '{}': {}", operation, error)
+            }
 
-            GitError::GitOperationFailure { operation, class, code, message } =>
-                write!(f, "Git operation '{}' failed (class={}, code={}): {}",
-                       operation, class, code, message),
+            GitError::GitOperationFailure {
+                operation,
+                class,
+                code,
+                message,
+            } => write!(
+                f,
+                "Git operation '{}' failed (class={}, code={}): {}",
+                operation, class, code, message
+            ),
         }
     }
 }
@@ -261,13 +279,17 @@ impl GitError {
     /// ```
     pub fn with_operation(self, operation: impl Into<String>) -> Self {
         match self {
-            GitError::GitOperationFailure { class, code, message, .. } =>
-                GitError::GitOperationFailure {
-                    operation: operation.into(),
-                    class,
-                    code,
-                    message,
-                },
+            GitError::GitOperationFailure {
+                class,
+                code,
+                message,
+                ..
+            } => GitError::GitOperationFailure {
+                operation: operation.into(),
+                class,
+                code,
+                message,
+            },
             other => other,
         }
     }
@@ -275,20 +297,19 @@ impl GitError {
     /// Add I/O operation context
     pub fn with_io_operation(self, operation: impl Into<String>) -> Self {
         match self {
-            GitError::IoError { error, .. } =>
-                GitError::IoError {
-                    operation: operation.into(),
-                    error,
-                },
+            GitError::IoError { error, .. } => GitError::IoError {
+                operation: operation.into(),
+                error,
+            },
             other => other,
         }
     }
 
     /// Check if error is retryable
     pub fn is_retryable(&self) -> bool {
-        matches!(self,
-            GitError::IoError { .. } |
-            GitError::RepositoryCorrupted { .. }
+        matches!(
+            self,
+            GitError::IoError { .. } | GitError::RepositoryCorrupted { .. }
         )
     }
 
@@ -337,8 +358,11 @@ impl GitError {
     /// without updating this method. Every variant must populate at least one property.
     #[cfg(feature = "napi-binding")]
     #[allow(dead_code)]
-    pub fn build_details_object(&self, env: &napi::Env) -> napi::Result<napi::bindgen_prelude::Object<'_>> {
-        use napi::bindgen_prelude::{Object, Array};
+    pub fn build_details_object(
+        &self,
+        env: &napi::Env,
+    ) -> napi::Result<napi::bindgen_prelude::Object<'_>> {
+        use napi::bindgen_prelude::{Array, Object};
 
         let mut details = Object::new(env)?;
 
@@ -346,7 +370,10 @@ impl GitError {
             GitError::RepositoryNotFound { path } => {
                 details.set("path", path.as_str())?;
             }
-            GitError::RepositoryCorrupted { path, details: error_details } => {
+            GitError::RepositoryCorrupted {
+                path,
+                details: error_details,
+            } => {
                 details.set("path", path.as_str())?;
                 details.set("errorDetails", error_details.as_str())?;
             }
@@ -382,9 +409,13 @@ impl GitError {
             GitError::DetachedHead => {
                 // No additional details for this variant
             }
-            GitError::ConfigMissing { key, tried_locations } => {
+            GitError::ConfigMissing {
+                key,
+                tried_locations,
+            } => {
                 details.set("key", key.as_str())?;
-                let locations_strs: Vec<&str> = tried_locations.iter().map(|s| s.as_str()).collect();
+                let locations_strs: Vec<&str> =
+                    tried_locations.iter().map(|s| s.as_str()).collect();
                 let locations_array = Array::from_vec(env, locations_strs)?;
                 details.set("triedLocations", locations_array)?;
             }
@@ -397,7 +428,10 @@ impl GitError {
             GitError::CannotDeleteCurrentBranch { name } => {
                 details.set("name", name.as_str())?;
             }
-            GitError::BranchNotMerged { name, commits_ahead } => {
+            GitError::BranchNotMerged {
+                name,
+                commits_ahead,
+            } => {
                 details.set("name", name.as_str())?;
                 details.set("commitsAhead", *commits_ahead)?;
             }
@@ -428,13 +462,17 @@ impl GitError {
                 details.set("operation", operation.as_str())?;
                 details.set("error", error.as_str())?;
             }
-            GitError::GitOperationFailure { operation, class, code, message } => {
+            GitError::GitOperationFailure {
+                operation,
+                class,
+                code,
+                message,
+            } => {
                 details.set("operation", operation.as_str())?;
                 details.set("class", *class)?;
                 details.set("code", *code)?;
                 details.set("gitMessage", message.as_str())?;
-            }
-            // No default case - compiler enforces exhaustiveness
+            } // No default case - compiler enforces exhaustiveness
         }
 
         Ok(details)
@@ -462,9 +500,15 @@ impl GitError {
             GitError::RepositoryNotFound { path } => {
                 details.insert("path".to_string(), serde_json::Value::String(path.clone()));
             }
-            GitError::RepositoryCorrupted { path, details: error_details } => {
+            GitError::RepositoryCorrupted {
+                path,
+                details: error_details,
+            } => {
                 details.insert("path".to_string(), serde_json::Value::String(path.clone()));
-                details.insert("errorDetails".to_string(), serde_json::Value::String(error_details.clone()));
+                details.insert(
+                    "errorDetails".to_string(),
+                    serde_json::Value::String(error_details.clone()),
+                );
             }
             GitError::InvalidRepository { path } => {
                 details.insert("path".to_string(), serde_json::Value::String(path.clone()));
@@ -476,7 +520,10 @@ impl GitError {
                 details.insert("path".to_string(), serde_json::Value::String(path.clone()));
             }
             GitError::PathTraversal { attempted_path } => {
-                details.insert("attemptedPath".to_string(), serde_json::Value::String(attempted_path.clone()));
+                details.insert(
+                    "attemptedPath".to_string(),
+                    serde_json::Value::String(attempted_path.clone()),
+                );
             }
             GitError::NothingToCommit => {
                 // No additional details
@@ -489,26 +536,41 @@ impl GitError {
                 details.insert("files".to_string(), serde_json::Value::Array(files_array));
             }
             GitError::UncommittedChanges { count } => {
-                details.insert("count".to_string(), serde_json::Value::Number((*count as u64).into()));
+                details.insert(
+                    "count".to_string(),
+                    serde_json::Value::Number((*count as u64).into()),
+                );
             }
             GitError::UnstagedChangesWouldBeLost { files } => {
                 let files_array: Vec<serde_json::Value> = files
                     .iter()
                     .map(|f| serde_json::Value::String(f.clone()))
                     .collect();
-                details.insert("files".to_string(), serde_json::Value::Array(files_array.clone()));
-                details.insert("count".to_string(), serde_json::Value::Number((files.len() as u64).into()));
+                details.insert(
+                    "files".to_string(),
+                    serde_json::Value::Array(files_array.clone()),
+                );
+                details.insert(
+                    "count".to_string(),
+                    serde_json::Value::Number((files.len() as u64).into()),
+                );
             }
             GitError::DetachedHead => {
                 // No additional details
             }
-            GitError::ConfigMissing { key, tried_locations } => {
+            GitError::ConfigMissing {
+                key,
+                tried_locations,
+            } => {
                 details.insert("key".to_string(), serde_json::Value::String(key.clone()));
                 let locations_array: Vec<serde_json::Value> = tried_locations
                     .iter()
                     .map(|l| serde_json::Value::String(l.clone()))
                     .collect();
-                details.insert("triedLocations".to_string(), serde_json::Value::Array(locations_array));
+                details.insert(
+                    "triedLocations".to_string(),
+                    serde_json::Value::Array(locations_array),
+                );
             }
             GitError::BranchNotFound { name } => {
                 details.insert("name".to_string(), serde_json::Value::String(name.clone()));
@@ -519,9 +581,15 @@ impl GitError {
             GitError::CannotDeleteCurrentBranch { name } => {
                 details.insert("name".to_string(), serde_json::Value::String(name.clone()));
             }
-            GitError::BranchNotMerged { name, commits_ahead } => {
+            GitError::BranchNotMerged {
+                name,
+                commits_ahead,
+            } => {
                 details.insert("name".to_string(), serde_json::Value::String(name.clone()));
-                details.insert("commitsAhead".to_string(), serde_json::Value::Number((*commits_ahead as u64).into()));
+                details.insert(
+                    "commitsAhead".to_string(),
+                    serde_json::Value::Number((*commits_ahead as u64).into()),
+                );
             }
             GitError::TagNotFound { name } => {
                 details.insert("name".to_string(), serde_json::Value::String(name.clone()));
@@ -531,11 +599,20 @@ impl GitError {
             }
             GitError::InvalidPath { path, reason } => {
                 details.insert("path".to_string(), serde_json::Value::String(path.clone()));
-                details.insert("reason".to_string(), serde_json::Value::String(reason.clone()));
+                details.insert(
+                    "reason".to_string(),
+                    serde_json::Value::String(reason.clone()),
+                );
             }
             GitError::InvalidArgument { argument, reason } => {
-                details.insert("argument".to_string(), serde_json::Value::String(argument.clone()));
-                details.insert("reason".to_string(), serde_json::Value::String(reason.clone()));
+                details.insert(
+                    "argument".to_string(),
+                    serde_json::Value::String(argument.clone()),
+                );
+                details.insert(
+                    "reason".to_string(),
+                    serde_json::Value::String(reason.clone()),
+                );
             }
             GitError::InvalidCommitHash { hash } => {
                 details.insert("hash".to_string(), serde_json::Value::String(hash.clone()));
@@ -547,16 +624,38 @@ impl GitError {
                 details.insert("name".to_string(), serde_json::Value::String(name.clone()));
             }
             GitError::IoError { operation, error } => {
-                details.insert("operation".to_string(), serde_json::Value::String(operation.clone()));
-                details.insert("error".to_string(), serde_json::Value::String(error.clone()));
+                details.insert(
+                    "operation".to_string(),
+                    serde_json::Value::String(operation.clone()),
+                );
+                details.insert(
+                    "error".to_string(),
+                    serde_json::Value::String(error.clone()),
+                );
             }
-            GitError::GitOperationFailure { operation, class, code, message } => {
-                details.insert("operation".to_string(), serde_json::Value::String(operation.clone()));
-                details.insert("class".to_string(), serde_json::Value::Number((*class as i64).into()));
-                details.insert("code".to_string(), serde_json::Value::Number((*code as i64).into()));
-                details.insert("gitMessage".to_string(), serde_json::Value::String(message.clone()));
-            }
-            // No default case - compiler enforces exhaustiveness
+            GitError::GitOperationFailure {
+                operation,
+                class,
+                code,
+                message,
+            } => {
+                details.insert(
+                    "operation".to_string(),
+                    serde_json::Value::String(operation.clone()),
+                );
+                details.insert(
+                    "class".to_string(),
+                    serde_json::Value::Number((*class as i64).into()),
+                );
+                details.insert(
+                    "code".to_string(),
+                    serde_json::Value::Number((*code as i64).into()),
+                );
+                details.insert(
+                    "gitMessage".to_string(),
+                    serde_json::Value::String(message.clone()),
+                );
+            } // No default case - compiler enforces exhaustiveness
         }
 
         SerializedGitError {
@@ -767,8 +866,14 @@ mod tests {
         match locations {
             serde_json::Value::Array(arr) => {
                 assert_eq!(arr.len(), 2);
-                assert_eq!(arr[0], serde_json::Value::String("repository config".to_string()));
-                assert_eq!(arr[1], serde_json::Value::String("global config".to_string()));
+                assert_eq!(
+                    arr[0],
+                    serde_json::Value::String("repository config".to_string())
+                );
+                assert_eq!(
+                    arr[1],
+                    serde_json::Value::String("global config".to_string())
+                );
             }
             _ => panic!("Expected array for triedLocations"),
         }

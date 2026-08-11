@@ -1,16 +1,16 @@
 // native/src/branch_ops.rs
 
-use git2::{Branch, BranchType, Repository};
-use crate::{BranchInfo, CreateBranchOptions, AheadBehind};
-use crate::utils;
 use crate::errors::GitError;
+use crate::utils;
+use crate::{AheadBehind, BranchInfo, CreateBranchOptions};
+use git2::{Branch, BranchType, Repository};
 use log::info;
 
 // NAPI imports only when feature is enabled
 #[cfg(feature = "napi-binding")]
-use napi::bindgen_prelude::*;
-#[cfg(feature = "napi-binding")]
 use crate::GitService;
+#[cfg(feature = "napi-binding")]
+use napi::bindgen_prelude::*;
 
 // ===== PURE GIT IMPLEMENTATIONS (always available) =====
 
@@ -27,12 +27,13 @@ pub fn list_branches_impl(
     let mut branches = Vec::new();
 
     // Get local branches
-    let local_branches = repo.branches(Some(BranchType::Local))
+    let local_branches = repo
+        .branches(Some(BranchType::Local))
         .map_err(|e| GitError::from(e).with_operation("list_local_branches"))?;
 
     for branch_result in local_branches {
-        let (branch, branch_type) = branch_result
-            .map_err(|e| GitError::from(e).with_operation("iterate_branches"))?;
+        let (branch, branch_type) =
+            branch_result.map_err(|e| GitError::from(e).with_operation("iterate_branches"))?;
 
         if let Some(branch_info) = extract_branch_info_impl(&repo, branch, branch_type)? {
             branches.push(branch_info);
@@ -41,7 +42,8 @@ pub fn list_branches_impl(
 
     // Get remote branches if requested
     if include_remote {
-        let remote_branches = repo.branches(Some(BranchType::Remote))
+        let remote_branches = repo
+            .branches(Some(BranchType::Remote))
             .map_err(|e| GitError::from(e).with_operation("list_remote_branches"))?;
 
         for branch_result in remote_branches {
@@ -65,31 +67,46 @@ pub fn list_branches_impl(
         }
     });
 
-    info!("list_branches: found {} branches in {}ms", branches.len(), start.elapsed().as_millis());
+    info!(
+        "list_branches: found {} branches in {}ms",
+        branches.len(),
+        start.elapsed().as_millis()
+    );
     Ok(branches)
 }
 
 /// Get information about the current branch
-pub fn get_current_branch_impl(repo_path: &str) -> std::result::Result<Option<BranchInfo>, GitError> {
+pub fn get_current_branch_impl(
+    repo_path: &str,
+) -> std::result::Result<Option<BranchInfo>, GitError> {
     info!("get_current_branch");
     let start = std::time::Instant::now();
 
     let repo = Repository::open(repo_path)
         .map_err(|e| GitError::from(e).with_operation("get_current_branch"))?;
 
-    let head = repo.head()
+    let head = repo
+        .head()
         .map_err(|e| GitError::from(e).with_operation("get_head"))?;
 
     if !head.is_branch() {
-        info!("get_current_branch: detached HEAD in {}ms", start.elapsed().as_millis());
+        info!(
+            "get_current_branch: detached HEAD in {}ms",
+            start.elapsed().as_millis()
+        );
         return Ok(None); // Detached HEAD state
     }
 
-    let branch = repo.find_branch(head.shorthand().unwrap_or(""), BranchType::Local)
+    let branch = repo
+        .find_branch(head.shorthand().unwrap_or(""), BranchType::Local)
         .map_err(|e| GitError::from(e).with_operation("find_current_branch"))?;
 
     let result = extract_branch_info_impl(&repo, branch, BranchType::Local)?;
-    info!("get_current_branch: found {:?} in {}ms", result.as_ref().map(|b| &b.name), start.elapsed().as_millis());
+    info!(
+        "get_current_branch: found {:?} in {}ms",
+        result.as_ref().map(|b| &b.name),
+        start.elapsed().as_millis()
+    );
     Ok(result)
 }
 
@@ -120,20 +137,23 @@ pub fn create_branch_impl(
 
     // Determine the commit to branch from
     let target_commit = if let Some(ref commit_hash) = options.from_commit {
-        let oid = git2::Oid::from_str(commit_hash)
-            .map_err(|_| GitError::InvalidCommitHash { hash: commit_hash.clone() })?;
+        let oid = git2::Oid::from_str(commit_hash).map_err(|_| GitError::InvalidCommitHash {
+            hash: commit_hash.clone(),
+        })?;
         repo.find_commit(oid)
             .map_err(|e| GitError::from(e).with_operation("find_commit"))?
     } else {
         // Use current HEAD
-        let head = repo.head()
+        let head = repo
+            .head()
             .map_err(|e| GitError::from(e).with_operation("get_head"))?;
         head.peel_to_commit()
             .map_err(|e| GitError::from(e).with_operation("peel_to_commit"))?
     };
 
     // Create the branch
-    let branch = repo.branch(&options.name, &target_commit, false)
+    let branch = repo
+        .branch(&options.name, &target_commit, false)
         .map_err(|e| GitError::from(e).with_operation("create_branch"))?;
 
     // Checkout the new branch if requested
@@ -143,12 +163,16 @@ pub fn create_branch_impl(
     }
 
     // Return branch info
-    let result = extract_branch_info_impl(&repo, branch, BranchType::Local)?
-        .ok_or_else(|| GitError::BranchNotFound {
+    let result = extract_branch_info_impl(&repo, branch, BranchType::Local)?.ok_or_else(|| {
+        GitError::BranchNotFound {
             name: options.name.clone(),
-        })?;
+        }
+    })?;
 
-    info!("create_branch: success in {}ms", start.elapsed().as_millis());
+    info!(
+        "create_branch: success in {}ms",
+        start.elapsed().as_millis()
+    );
     Ok(result)
 }
 
@@ -162,7 +186,10 @@ pub fn create_branch_impl(
 /// - "force": Overwrites local changes unconditionally (dangerous, use with caution)
 ///
 /// If config is not set, defaults to "safe" behavior.
-pub fn checkout_branch_impl(repo_path: &str, branch_name: &str) -> std::result::Result<BranchInfo, GitError> {
+pub fn checkout_branch_impl(
+    repo_path: &str,
+    branch_name: &str,
+) -> std::result::Result<BranchInfo, GitError> {
     info!("checkout_branch: name={}", branch_name);
     let start = std::time::Instant::now();
 
@@ -194,13 +221,22 @@ pub fn checkout_branch_impl(repo_path: &str, branch_name: &str) -> std::result::
     checkout_branch_internal_impl(&repo, branch_name, force)?;
 
     // Return updated branch info
-    let branch = repo.find_branch(branch_name, BranchType::Local)
-        .map_err(|_e| GitError::BranchNotFound { name: branch_name.to_string() })?;
+    let branch = repo
+        .find_branch(branch_name, BranchType::Local)
+        .map_err(|_e| GitError::BranchNotFound {
+            name: branch_name.to_string(),
+        })?;
 
-    let result = extract_branch_info_impl(&repo, branch, BranchType::Local)?
-        .ok_or_else(|| GitError::BranchNotFound { name: branch_name.to_string() })?;
+    let result = extract_branch_info_impl(&repo, branch, BranchType::Local)?.ok_or_else(|| {
+        GitError::BranchNotFound {
+            name: branch_name.to_string(),
+        }
+    })?;
 
-    info!("checkout_branch: success in {}ms", start.elapsed().as_millis());
+    info!(
+        "checkout_branch: success in {}ms",
+        start.elapsed().as_millis()
+    );
     Ok(result)
 }
 
@@ -217,18 +253,23 @@ pub fn delete_branch_impl(
         .map_err(|e| GitError::from(e).with_operation("delete_branch"))?;
 
     // Cannot delete current branch
-    let head = repo.head()
+    let head = repo
+        .head()
         .map_err(|e| GitError::from(e).with_operation("get_head"))?;
 
     if let Some(current_branch) = head.shorthand()
-        && current_branch == branch_name {
-            return Err(GitError::CannotDeleteCurrentBranch {
-                name: branch_name.to_string(),
-            });
-        }
+        && current_branch == branch_name
+    {
+        return Err(GitError::CannotDeleteCurrentBranch {
+            name: branch_name.to_string(),
+        });
+    }
 
-    let mut branch = repo.find_branch(branch_name, BranchType::Local)
-        .map_err(|_| GitError::BranchNotFound { name: branch_name.to_string() })?;
+    let mut branch = repo
+        .find_branch(branch_name, BranchType::Local)
+        .map_err(|_| GitError::BranchNotFound {
+            name: branch_name.to_string(),
+        })?;
 
     // Check if branch is merged (unless force)
     if !force && !is_branch_merged_impl(&repo, &branch)? {
@@ -241,10 +282,14 @@ pub fn delete_branch_impl(
         });
     }
 
-    branch.delete()
+    branch
+        .delete()
         .map_err(|e| GitError::from(e).with_operation("delete_branch"))?;
 
-    info!("delete_branch: success in {}ms", start.elapsed().as_millis());
+    info!(
+        "delete_branch: success in {}ms",
+        start.elapsed().as_millis()
+    );
     Ok(true)
 }
 
@@ -255,7 +300,8 @@ fn extract_branch_info_impl(
     branch: Branch,
     branch_type: BranchType,
 ) -> std::result::Result<Option<BranchInfo>, GitError> {
-    let name = branch.name()
+    let name = branch
+        .name()
         .map_err(|e| GitError::from(e).with_operation("get_branch_name"))?
         .unwrap_or("unknown")
         .to_string();
@@ -263,7 +309,9 @@ fn extract_branch_info_impl(
     let is_current = branch.is_head();
     let is_remote = branch_type == BranchType::Remote;
 
-    let commit = branch.get().peel_to_commit()
+    let commit = branch
+        .get()
+        .peel_to_commit()
         .map_err(|e| GitError::from(e).with_operation("peel_to_commit"))?;
 
     let commit_hash = commit.id().to_string();
@@ -288,12 +336,20 @@ fn extract_branch_info_impl(
     }))
 }
 
-fn checkout_branch_internal_impl(repo: &Repository, branch_name: &str, force: bool) -> std::result::Result<(), GitError> {
-    let branch = repo.find_branch(branch_name, BranchType::Local)
-        .map_err(|_| GitError::BranchNotFound { name: branch_name.to_string() })?;
+fn checkout_branch_internal_impl(
+    repo: &Repository,
+    branch_name: &str,
+    force: bool,
+) -> std::result::Result<(), GitError> {
+    let branch = repo
+        .find_branch(branch_name, BranchType::Local)
+        .map_err(|_| GitError::BranchNotFound {
+            name: branch_name.to_string(),
+        })?;
 
     let branch_ref = branch.get();
-    let target_tree = branch_ref.peel_to_tree()
+    let target_tree = branch_ref
+        .peel_to_tree()
         .map_err(|e| GitError::from(e).with_operation("peel_to_tree"))?;
 
     // In safe mode, attempt checkout to target tree first to detect actual conflicts
@@ -307,11 +363,13 @@ fn checkout_branch_internal_impl(repo: &Repository, branch_name: &str, force: bo
             Ok(_) => {
                 // Checkout succeeded - now update HEAD
                 repo.set_head(
-                    branch_ref.name().ok_or_else(|| GitError::InvalidBranchName {
-                        name: "<non-UTF-8 branch ref>".to_string(),
-                    })?,
+                    branch_ref
+                        .name()
+                        .ok_or_else(|| GitError::InvalidBranchName {
+                            name: "<non-UTF-8 branch ref>".to_string(),
+                        })?,
                 )
-                    .map_err(|e| GitError::from(e).with_operation("set_head"))?;
+                .map_err(|e| GitError::from(e).with_operation("set_head"))?;
 
                 // Refresh working tree to match new HEAD
                 // The checkout_tree above was essentially a dry-run; now we need to
@@ -336,7 +394,10 @@ fn checkout_branch_internal_impl(repo: &Repository, branch_name: &str, force: bo
                     let conflicting_files = collect_actual_conflicts(repo, &target_tree)?;
 
                     if !conflicting_files.is_empty() {
-                        info!("checkout_branch: safe mode blocked - {} actual conflicting files", conflicting_files.len());
+                        info!(
+                            "checkout_branch: safe mode blocked - {} actual conflicting files",
+                            conflicting_files.len()
+                        );
                         Err(GitError::UnstagedChangesWouldBeLost {
                             files: conflicting_files,
                         })
@@ -358,11 +419,13 @@ fn checkout_branch_internal_impl(repo: &Repository, branch_name: &str, force: bo
             .map_err(|e| GitError::from(e).with_operation("checkout_tree"))?;
 
         repo.set_head(
-                    branch_ref.name().ok_or_else(|| GitError::InvalidBranchName {
-                        name: "<non-UTF-8 branch ref>".to_string(),
-                    })?,
-                )
-            .map_err(|e| GitError::from(e).with_operation("set_head"))?;
+            branch_ref
+                .name()
+                .ok_or_else(|| GitError::InvalidBranchName {
+                    name: "<non-UTF-8 branch ref>".to_string(),
+                })?,
+        )
+        .map_err(|e| GitError::from(e).with_operation("set_head"))?;
 
         Ok(())
     }
@@ -372,12 +435,16 @@ fn checkout_branch_internal_impl(repo: &Repository, branch_name: &str, force: bo
 /// Only reports files where:
 /// - The file has local modifications (staged or unstaged)
 /// - AND the target tree has a different version of that file
-fn collect_actual_conflicts(repo: &Repository, target_tree: &git2::Tree) -> std::result::Result<Vec<String>, GitError> {
+fn collect_actual_conflicts(
+    repo: &Repository,
+    target_tree: &git2::Tree,
+) -> std::result::Result<Vec<String>, GitError> {
     let mut opts = git2::StatusOptions::new();
     opts.include_untracked(false); // Only care about tracked files
     opts.include_ignored(false);
 
-    let statuses = repo.statuses(Some(&mut opts))
+    let statuses = repo
+        .statuses(Some(&mut opts))
         .map_err(|e| GitError::from(e).with_operation("get_status"))?;
 
     let mut files = Vec::new();
@@ -392,7 +459,7 @@ fn collect_actual_conflicts(repo: &Repository, target_tree: &git2::Tree) -> std:
                 | git2::Status::INDEX_RENAMED
                 | git2::Status::WT_MODIFIED
                 | git2::Status::WT_DELETED
-                | git2::Status::WT_RENAMED
+                | git2::Status::WT_RENAMED,
         ) {
             continue;
         }
@@ -436,47 +503,69 @@ fn collect_actual_conflicts(repo: &Repository, target_tree: &git2::Tree) -> std:
     Ok(files)
 }
 
-fn is_branch_merged_impl(repo: &Repository, branch: &Branch) -> std::result::Result<bool, GitError> {
-    let branch_commit = branch.get().peel_to_commit()
+fn is_branch_merged_impl(
+    repo: &Repository,
+    branch: &Branch,
+) -> std::result::Result<bool, GitError> {
+    let branch_commit = branch
+        .get()
+        .peel_to_commit()
         .map_err(|e| GitError::from(e).with_operation("peel_to_commit"))?;
-    let head_commit = repo.head().and_then(|head| head.peel_to_commit())
+    let head_commit = repo
+        .head()
+        .and_then(|head| head.peel_to_commit())
         .map_err(|e| GitError::from(e).with_operation("get_head_commit"))?;
 
     // Check if branch commit is an ancestor of HEAD
-    let is_ancestor = repo.graph_descendant_of(head_commit.id(), branch_commit.id())
+    let is_ancestor = repo
+        .graph_descendant_of(head_commit.id(), branch_commit.id())
         .map_err(|e| GitError::from(e).with_operation("graph_descendant_of"))?;
 
     Ok(is_ancestor)
 }
 
 /// Number of commits on `branch` that are not reachable from HEAD.
-fn commits_ahead_of_head_impl(repo: &Repository, branch: &Branch) -> std::result::Result<u32, GitError> {
-    let branch_commit = branch.get().peel_to_commit()
+fn commits_ahead_of_head_impl(
+    repo: &Repository,
+    branch: &Branch,
+) -> std::result::Result<u32, GitError> {
+    let branch_commit = branch
+        .get()
+        .peel_to_commit()
         .map_err(|e| GitError::from(e).with_operation("peel_to_commit"))?;
-    let head_commit = repo.head().and_then(|head| head.peel_to_commit())
+    let head_commit = repo
+        .head()
+        .and_then(|head| head.peel_to_commit())
         .map_err(|e| GitError::from(e).with_operation("get_head_commit"))?;
 
-    let (ahead, _behind) = repo.graph_ahead_behind(branch_commit.id(), head_commit.id())
+    let (ahead, _behind) = repo
+        .graph_ahead_behind(branch_commit.id(), head_commit.id())
         .map_err(|e| GitError::from(e).with_operation("graph_ahead_behind"))?;
     Ok(ahead as u32)
 }
 
-fn calculate_ahead_behind_impl(repo: &Repository, branch: &Branch) -> std::result::Result<AheadBehind, GitError> {
-    let branch_commit = branch.get().peel_to_commit()
+fn calculate_ahead_behind_impl(
+    repo: &Repository,
+    branch: &Branch,
+) -> std::result::Result<AheadBehind, GitError> {
+    let branch_commit = branch
+        .get()
+        .peel_to_commit()
         .map_err(|e| GitError::from(e).with_operation("peel_to_commit"))?;
 
     // Prefer the branch's configured upstream (tracking) branch — that's the
     // ahead/behind a user actually cares about when one is set.
     if let Ok(upstream) = branch.upstream()
-        && let Ok(upstream_commit) = upstream.get().peel_to_commit() {
-            let (ahead, behind) = repo
-                .graph_ahead_behind(branch_commit.id(), upstream_commit.id())
-                .map_err(|e| GitError::from(e).with_operation("graph_ahead_behind"))?;
-            return Ok(AheadBehind {
-                ahead: ahead as u32,
-                behind: behind as u32,
-            });
-        }
+        && let Ok(upstream_commit) = upstream.get().peel_to_commit()
+    {
+        let (ahead, behind) = repo
+            .graph_ahead_behind(branch_commit.id(), upstream_commit.id())
+            .map_err(|e| GitError::from(e).with_operation("graph_ahead_behind"))?;
+        return Ok(AheadBehind {
+            ahead: ahead as u32,
+            behind: behind as u32,
+        });
+    }
 
     // Fall back to the local default branch (main/master), skipping self so a
     // main branch isn't compared against itself.
@@ -486,7 +575,9 @@ fn calculate_ahead_behind_impl(repo: &Repository, branch: &Branch) -> std::resul
             continue;
         }
         if let Ok(default_ref) = repo.find_branch(default_branch, BranchType::Local) {
-            let default_commit = default_ref.get().peel_to_commit()
+            let default_commit = default_ref
+                .get()
+                .peel_to_commit()
                 .map_err(|e| GitError::from(e).with_operation("peel_to_commit"))?;
 
             let (ahead, behind) = repo
@@ -500,7 +591,10 @@ fn calculate_ahead_behind_impl(repo: &Repository, branch: &Branch) -> std::resul
     }
 
     // No upstream and no default branch to compare against.
-    Ok(AheadBehind { ahead: 0, behind: 0 })
+    Ok(AheadBehind {
+        ahead: 0,
+        behind: 0,
+    })
 }
 
 // ===== NAPI WRAPPERS (only compiled with napi-binding feature) =====
@@ -513,12 +607,17 @@ pub async fn list_branches(
 ) -> Result<Vec<BranchInfo>> {
     let include_remote = include_remote.unwrap_or(false);
     let structured = service.feature_flags().structured_errors;
-    crate::utils::run_blocking(structured, move || list_branches_impl(&repo_path, include_remote))
-        .await
+    crate::utils::run_blocking(structured, move || {
+        list_branches_impl(&repo_path, include_remote)
+    })
+    .await
 }
 
 #[cfg(feature = "napi-binding")]
-pub async fn get_current_branch(service: &GitService, repo_path: String) -> Result<Option<BranchInfo>> {
+pub async fn get_current_branch(
+    service: &GitService,
+    repo_path: String,
+) -> Result<Option<BranchInfo>> {
     let structured = service.feature_flags().structured_errors;
     crate::utils::run_blocking(structured, move || get_current_branch_impl(&repo_path)).await
 }
@@ -539,7 +638,11 @@ pub async fn create_branch(
 }
 
 #[cfg(feature = "napi-binding")]
-pub async fn checkout_branch(service: &GitService, repo_path: String, branch_name: String) -> Result<BranchInfo> {
+pub async fn checkout_branch(
+    service: &GitService,
+    repo_path: String,
+    branch_name: String,
+) -> Result<BranchInfo> {
     let structured = service.feature_flags().structured_errors;
     crate::utils::run_blocking(structured, move || {
         let _lock = crate::utils::repo_lock(&repo_path);

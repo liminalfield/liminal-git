@@ -5,14 +5,14 @@
 // nothing about the code and drown the ones that do.
 #![allow(dead_code, unused_imports)]
 
-pub mod test_repo;
 pub mod assertions;
 pub mod fixtures;
+pub mod test_repo;
 
 // Re-export commonly used types and functions
-pub use test_repo::TestRepo;
 pub use assertions::*;
 pub use fixtures::*;
+pub use test_repo::TestRepo;
 
 // Common imports that every test needs
 pub use std::fs;
@@ -26,12 +26,6 @@ pub use tempfile::TempDir;
 // from the only profile these tests can run under — a test binary cannot link
 // napi, which resolves its symbols from the host Node process at runtime.
 pub use liminal_git::{
-    file_ops::*,
-    repository_ops::*,
-    history_ops::*,
-    branch_ops::*,
-    tag_ops::*,
+    branch_ops::*, errors::*, file_ops::*, history_ops::*, repository_ops::*, tag_ops::*, types::*,
     validation::*,
-    types::*,
-    errors::*,
 };

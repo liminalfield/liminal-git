@@ -20,7 +20,9 @@ mod branch_ops_tests {
         let test_repo = TestRepo::new().unwrap();
 
         // Create initial commit to establish main branch
-        test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("test.txt", "content", "Initial commit")
+            .unwrap();
 
         let result = list_branches_impl(test_repo.path_str(), false);
         assert!(result.is_ok());
@@ -44,7 +46,9 @@ mod branch_ops_tests {
         assert!(result.is_err()); // No HEAD in new repo
 
         // After first commit, should have main branch
-        test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("test.txt", "content", "Initial commit")
+            .unwrap();
 
         let result = get_current_branch_impl(test_repo.path_str());
         assert!(result.is_ok());
@@ -61,7 +65,9 @@ mod branch_ops_tests {
         let test_repo = TestRepo::new().unwrap();
 
         // Create initial commit
-        test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("test.txt", "content", "Initial commit")
+            .unwrap();
 
         let options = CreateBranchOptions {
             name: "feature-branch".to_string(),
@@ -87,7 +93,9 @@ mod branch_ops_tests {
         let test_repo = TestRepo::new().unwrap();
 
         // Create initial commit
-        test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("test.txt", "content", "Initial commit")
+            .unwrap();
 
         let options = CreateBranchOptions {
             name: "feature-branch".to_string(),
@@ -103,14 +111,18 @@ mod branch_ops_tests {
         assert!(branch_info.is_current); // We checked it out
 
         // Verify current branch changed
-        let current = get_current_branch_impl(test_repo.path_str()).unwrap().unwrap();
+        let current = get_current_branch_impl(test_repo.path_str())
+            .unwrap()
+            .unwrap();
         assert_eq!(current.name, "feature-branch");
     }
 
     #[test]
     fn test_create_branch_impl_invalid_name() {
         let test_repo = TestRepo::new().unwrap();
-        test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("test.txt", "content", "Initial commit")
+            .unwrap();
 
         let options = CreateBranchOptions {
             name: "".to_string(), // Invalid empty name
@@ -120,13 +132,20 @@ mod branch_ops_tests {
 
         let result = create_branch_impl(test_repo.path_str(), &options);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Invalid branch name"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid branch name")
+        );
     }
 
     #[test]
     fn test_create_branch_impl_already_exists() {
         let test_repo = TestRepo::new().unwrap();
-        test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("test.txt", "content", "Initial commit")
+            .unwrap();
 
         let options = CreateBranchOptions {
             name: "feature-branch".to_string(),
@@ -147,7 +166,9 @@ mod branch_ops_tests {
     #[test]
     fn test_checkout_branch_impl() {
         let test_repo = TestRepo::new().unwrap();
-        test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("test.txt", "content", "Initial commit")
+            .unwrap();
 
         // Create a new branch
         let options = CreateBranchOptions {
@@ -166,14 +187,18 @@ mod branch_ops_tests {
         assert!(branch_info.is_current);
 
         // Verify current branch changed
-        let current = get_current_branch_impl(test_repo.path_str()).unwrap().unwrap();
+        let current = get_current_branch_impl(test_repo.path_str())
+            .unwrap()
+            .unwrap();
         assert_eq!(current.name, "feature-branch");
     }
 
     #[test]
     fn test_checkout_branch_impl_nonexistent() {
         let test_repo = TestRepo::new().unwrap();
-        test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("test.txt", "content", "Initial commit")
+            .unwrap();
 
         let result = checkout_branch_impl(test_repo.path_str(), "nonexistent-branch");
         assert!(result.is_err());
@@ -192,7 +217,9 @@ mod branch_ops_tests {
     #[test]
     fn test_checkout_branch_impl_carries_non_conflicting_changes_across() {
         let test_repo = TestRepo::new().unwrap();
-        test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("test.txt", "content", "Initial commit")
+            .unwrap();
 
         let options = CreateBranchOptions {
             name: "feature-branch".to_string(),
@@ -201,7 +228,9 @@ mod branch_ops_tests {
         };
         create_branch_impl(test_repo.path_str(), &options).unwrap();
 
-        test_repo.add_file("uncommitted.txt", "uncommitted content").unwrap();
+        test_repo
+            .add_file("uncommitted.txt", "uncommitted content")
+            .unwrap();
         test_repo.stage_file("uncommitted.txt").unwrap();
 
         let branch = checkout_branch_impl(test_repo.path_str(), "feature-branch")
@@ -218,7 +247,9 @@ mod branch_ops_tests {
     #[test]
     fn test_checkout_branch_impl_refuses_when_changes_would_be_lost() {
         let test_repo = TestRepo::new().unwrap();
-        test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("test.txt", "content", "Initial commit")
+            .unwrap();
 
         // A branch where test.txt has diverged.
         let options = CreateBranchOptions {
@@ -227,7 +258,9 @@ mod branch_ops_tests {
             checkout: true,
         };
         create_branch_impl(test_repo.path_str(), &options).unwrap();
-        test_repo.add_and_commit("test.txt", "feature content", "Diverge").unwrap();
+        test_repo
+            .add_and_commit("test.txt", "feature content", "Diverge")
+            .unwrap();
 
         let default_branch = get_current_branch_impl(test_repo.path_str())
             .unwrap()
@@ -252,10 +285,15 @@ mod branch_ops_tests {
     #[test]
     fn test_delete_branch_impl() {
         let test_repo = TestRepo::new().unwrap();
-        test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("test.txt", "content", "Initial commit")
+            .unwrap();
 
         // Get the default branch name (could be main or master)
-        let default_branch = get_current_branch_impl(test_repo.path_str()).unwrap().unwrap().name;
+        let default_branch = get_current_branch_impl(test_repo.path_str())
+            .unwrap()
+            .unwrap()
+            .name;
 
         // Create and switch to a feature branch
         let options = CreateBranchOptions {
@@ -266,7 +304,9 @@ mod branch_ops_tests {
         create_branch_impl(test_repo.path_str(), &options).unwrap();
 
         // Add a commit to the feature branch
-        test_repo.add_and_commit("feature.txt", "feature content", "Feature commit").unwrap();
+        test_repo
+            .add_and_commit("feature.txt", "feature content", "Feature commit")
+            .unwrap();
 
         // Switch back to default branch
         checkout_branch_impl(test_repo.path_str(), &default_branch).unwrap();
@@ -285,10 +325,15 @@ mod branch_ops_tests {
     #[test]
     fn test_delete_branch_impl_current_branch() {
         let test_repo = TestRepo::new().unwrap();
-        test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("test.txt", "content", "Initial commit")
+            .unwrap();
 
         // Get the current branch name and try to delete it - should fail
-        let current_branch = get_current_branch_impl(test_repo.path_str()).unwrap().unwrap().name;
+        let current_branch = get_current_branch_impl(test_repo.path_str())
+            .unwrap()
+            .unwrap()
+            .name;
         // Assert the variant, not the prose. This matched "currently checked
         // out", which stopped being the wording when the duplicate error
         // modules were unified.
@@ -302,7 +347,9 @@ mod branch_ops_tests {
     #[test]
     fn test_delete_branch_impl_nonexistent() {
         let test_repo = TestRepo::new().unwrap();
-        test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("test.txt", "content", "Initial commit")
+            .unwrap();
 
         let result = delete_branch_impl(test_repo.path_str(), "nonexistent-branch", false);
         assert!(result.is_err());
@@ -312,10 +359,15 @@ mod branch_ops_tests {
     #[test]
     fn test_delete_branch_impl_not_merged() {
         let test_repo = TestRepo::new().unwrap();
-        test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("test.txt", "content", "Initial commit")
+            .unwrap();
 
         // Get the default branch name
-        let default_branch = get_current_branch_impl(test_repo.path_str()).unwrap().unwrap().name;
+        let default_branch = get_current_branch_impl(test_repo.path_str())
+            .unwrap()
+            .unwrap()
+            .name;
 
         // Create and switch to a feature branch
         let options = CreateBranchOptions {
@@ -326,7 +378,9 @@ mod branch_ops_tests {
         create_branch_impl(test_repo.path_str(), &options).unwrap();
 
         // Add a commit to the feature branch
-        test_repo.add_and_commit("feature.txt", "feature content", "Feature commit").unwrap();
+        test_repo
+            .add_and_commit("feature.txt", "feature content", "Feature commit")
+            .unwrap();
 
         // Switch back to default branch
         checkout_branch_impl(test_repo.path_str(), &default_branch).unwrap();
@@ -344,7 +398,9 @@ mod branch_ops_tests {
     #[test]
     fn test_branch_sorting() {
         let test_repo = TestRepo::new().unwrap();
-        test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("test.txt", "content", "Initial commit")
+            .unwrap();
 
         // Create several branches
         let branch_names = vec!["zebra-branch", "alpha-branch", "beta-branch"];

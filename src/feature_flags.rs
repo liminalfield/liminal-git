@@ -35,8 +35,7 @@ impl FeatureFlags {
     /// assert!(!flags.enhanced_diff);
     /// ```
     pub fn from_env() -> Self {
-        let flags_str = std::env::var("LIMINAL_FEATURE_FLAGS")
-            .unwrap_or_default();
+        let flags_str = std::env::var("LIMINAL_FEATURE_FLAGS").unwrap_or_default();
 
         // Parse comma-separated tokens into HashSet for exact matching
         // Normalize to lowercase to avoid case sensitivity issues
@@ -120,7 +119,10 @@ mod tests {
     #[serial]
     fn test_flags_no_partial_match() {
         unsafe {
-            std::env::set_var("LIMINAL_FEATURE_FLAGS", "structured_errors_off,enhanced_status_disabled");
+            std::env::set_var(
+                "LIMINAL_FEATURE_FLAGS",
+                "structured_errors_off,enhanced_status_disabled",
+            );
         }
         let flags = FeatureFlags::from_env();
         // Should NOT match - requires exact tokens
@@ -132,7 +134,10 @@ mod tests {
     #[serial]
     fn test_flags_whitespace_handling() {
         unsafe {
-            std::env::set_var("LIMINAL_FEATURE_FLAGS", " structured_errors , enhanced_status ");
+            std::env::set_var(
+                "LIMINAL_FEATURE_FLAGS",
+                " structured_errors , enhanced_status ",
+            );
         }
         let flags = FeatureFlags::from_env();
         assert!(flags.structured_errors);

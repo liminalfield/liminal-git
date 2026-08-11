@@ -102,14 +102,11 @@ pub fn get_large_file_content(size_kb: usize) -> String {
 pub fn get_binary_file_content() -> Vec<u8> {
     vec![
         0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG header
-        0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
-        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-        0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
-        0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41,
-        0x54, 0x08, 0x1D, 0x01, 0x01, 0x00, 0x00, 0xFF,
-        0xFF, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01, 0x48,
-        0xAF, 0xA4, 0x71, 0x00, 0x00, 0x00, 0x00, 0x49,
-        0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49,
+        0x44, 0x41, 0x54, 0x08, 0x1D, 0x01, 0x01, 0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x02,
+        0x00, 0x01, 0x48, 0xAF, 0xA4, 0x71, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+        0x42, 0x60, 0x82,
     ]
 }
 
@@ -133,8 +130,8 @@ pub const COMMON_DIRECTORIES: &[&str] = &[
     "scripts",
     "config",
     "assets",
-    "target", // Should be ignored
-    ".git",   // Should be ignored
+    "target",       // Should be ignored
+    ".git",         // Should be ignored
     "node_modules", // Should be ignored
 ];
 
@@ -156,7 +153,10 @@ pub const COMMON_EXTENSIONS: &[&str] = &[
 pub fn generate_project_structure() -> Vec<(String, String)> {
     let files: Vec<(&str, &str)> = vec![
         // Root files
-        ("README.md", "# Test Project\n\nA test project for git operations."),
+        (
+            "README.md",
+            "# Test Project\n\nA test project for git operations.",
+        ),
         (
             "Cargo.toml",
             "[package]\nname = \"test-project\"\nversion = \"0.1.0\"\nedition = \"2021\"",
@@ -164,7 +164,10 @@ pub fn generate_project_structure() -> Vec<(String, String)> {
         ("LICENSE", "MIT License\n\nCopyright (c) 2024"),
         (".gitignore", "target/\n*.log\n.env"),
         // Source files
-        ("src/main.rs", "fn main() {\n    println!(\"Hello, world!\");\n}"),
+        (
+            "src/main.rs",
+            "fn main() {\n    println!(\"Hello, world!\");\n}",
+        ),
         ("src/lib.rs", "pub mod utils;\npub mod models;"),
         (
             "src/utils.rs",
@@ -179,13 +182,19 @@ pub fn generate_project_structure() -> Vec<(String, String)> {
             "tests/integration_test.rs",
             "#[test]\nfn integration_test() {\n    assert!(true);\n}",
         ),
-        ("tests/common/mod.rs", "pub fn setup() {\n    // Test setup code\n}"),
+        (
+            "tests/common/mod.rs",
+            "pub fn setup() {\n    // Test setup code\n}",
+        ),
         // Documentation
         (
             "docs/API.md",
             "# API Documentation\n\n## Overview\n\nThis is the API documentation.",
         ),
-        ("docs/CHANGELOG.md", "# Changelog\n\n## v0.1.0\n\n- Initial release"),
+        (
+            "docs/CHANGELOG.md",
+            "# Changelog\n\n## v0.1.0\n\n- Initial release",
+        ),
     ];
 
     files

@@ -1,19 +1,18 @@
-use git2::{Repository, Status, StatusOptions, DiffDelta, DiffOptions, DiffFindOptions, Diff};
-use crate::types::{GitStatus, FileStatus, RenamedStatus};
+use crate::errors::GitError;
+use crate::types::{FileStatus, GitStatus, RenamedStatus};
+use crate::types::{GitConfig, RepositoryConfig, RepositoryHealth, RepositoryInfo};
+use crate::utils::normalize_git_path;
+use git2::{Diff, DiffDelta, DiffFindOptions, DiffOptions, Repository, Status, StatusOptions};
+use log::info;
 use std::fs;
 use std::path::PathBuf;
-use crate::types::{RepositoryConfig, RepositoryHealth, GitConfig, RepositoryInfo};
-use crate::utils::normalize_git_path;
-use crate::errors::GitError;
-use log::info;
-
 
 pub fn get_status_impl(repo_path: &str) -> Result<GitStatus, GitError> {
     info!("get_status: repo_path={}", repo_path);
     let start = std::time::Instant::now();
 
-    let repo = Repository::open(repo_path)
-        .map_err(|e| GitError::from(e).with_operation("get_status"))?;
+    let repo =
+        Repository::open(repo_path).map_err(|e| GitError::from(e).with_operation("get_status"))?;
 
     let mut opts = StatusOptions::new();
     opts.include_untracked(true);
@@ -41,25 +40,27 @@ pub fn get_status_impl(repo_path: &str) -> Result<GitStatus, GitError> {
 
         if status_flags.contains(Status::INDEX_RENAMED)
             && let Some(delta) = entry.head_to_index()
-                && let Some((old_path, new_path)) = extract_paths(delta) {
-                    renamed_files.push(RenamedStatus {
-                        old_path,
-                        new_path,
-                        staged: true,
-                    });
-                    continue;
-                }
+            && let Some((old_path, new_path)) = extract_paths(delta)
+        {
+            renamed_files.push(RenamedStatus {
+                old_path,
+                new_path,
+                staged: true,
+            });
+            continue;
+        }
 
         if status_flags.contains(Status::WT_RENAMED)
             && let Some(delta) = entry.index_to_workdir()
-                && let Some((old_path, new_path)) = extract_paths(delta) {
-                    renamed_files.push(RenamedStatus {
-                        old_path,
-                        new_path,
-                        staged: false,
-                    });
-                    continue;
-                }
+            && let Some((old_path, new_path)) = extract_paths(delta)
+        {
+            renamed_files.push(RenamedStatus {
+                old_path,
+                new_path,
+                staged: false,
+            });
+            continue;
+        }
 
         if status_flags.contains(Status::INDEX_MODIFIED) {
             staged_files.push(FileStatus {
@@ -127,13 +128,14 @@ pub fn get_status_impl(repo_path: &str) -> Result<GitStatus, GitError> {
     let mut track_diff_renames = |diff: Diff, staged: bool| {
         for delta in diff.deltas() {
             if delta.status() == git2::Delta::Renamed
-                && let Some((old_path, new_path)) = extract_paths(delta) {
-                    renamed_files.push(RenamedStatus {
-                        old_path: old_path.clone(),
-                        new_path: new_path.clone(),
-                        staged,
-                    });
-                }
+                && let Some((old_path, new_path)) = extract_paths(delta)
+            {
+                renamed_files.push(RenamedStatus {
+                    old_path: old_path.clone(),
+                    new_path: new_path.clone(),
+                    staged,
+                });
+            }
         }
     };
 
@@ -141,50 +143,67 @@ pub fn get_status_impl(repo_path: &str) -> Result<GitStatus, GitError> {
     diff_opts.include_untracked(true);
 
     if let Ok(head_tree) = repo.head().and_then(|h| h.peel_to_tree())
-        && let Ok(mut diff_index) = repo.diff_tree_to_index(Some(&head_tree), None, Some(&mut diff_opts)) {
-            let mut find_opts = DiffFindOptions::new();
-            find_opts.renames(true).rename_threshold(40).copy_threshold(40);
-            let _ = diff_index.find_similar(Some(&mut find_opts));
-            track_diff_renames(diff_index, true);
-        }
+        && let Ok(mut diff_index) =
+            repo.diff_tree_to_index(Some(&head_tree), None, Some(&mut diff_opts))
+    {
+        let mut find_opts = DiffFindOptions::new();
+        find_opts
+            .renames(true)
+            .rename_threshold(40)
+            .copy_threshold(40);
+        let _ = diff_index.find_similar(Some(&mut find_opts));
+        track_diff_renames(diff_index, true);
+    }
 
     if let Ok(mut diff_wt) = repo.diff_index_to_workdir(None, Some(&mut diff_opts)) {
         let mut find_opts = DiffFindOptions::new();
-        find_opts.renames(true).rename_threshold(40).copy_threshold(40);
+        find_opts
+            .renames(true)
+            .rename_threshold(40)
+            .copy_threshold(40);
         let _ = diff_wt.find_similar(Some(&mut find_opts));
         track_diff_renames(diff_wt, false);
     }
 
     // Additional rename detection: HEAD to working directory (covers full moves)
     if let Ok(head_tree) = repo.head().and_then(|h| h.peel_to_tree())
-        && let Ok(mut diff_full) = repo.diff_tree_to_workdir_with_index(Some(&head_tree), Some(&mut diff_opts)) {
-            let mut find_opts = DiffFindOptions::new();
-            find_opts.renames(true).rename_threshold(40).copy_threshold(40);
-            let _ = diff_full.find_similar(Some(&mut find_opts));
+        && let Ok(mut diff_full) =
+            repo.diff_tree_to_workdir_with_index(Some(&head_tree), Some(&mut diff_opts))
+    {
+        let mut find_opts = DiffFindOptions::new();
+        find_opts
+            .renames(true)
+            .rename_threshold(40)
+            .copy_threshold(40);
+        let _ = diff_full.find_similar(Some(&mut find_opts));
 
-            for delta in diff_full.deltas() {
-                if delta.status() == git2::Delta::Renamed
-                    && let Some((old_path, new_path)) = extract_paths(delta) {
-                        // Check if this rename isn't already recorded
-                        let already_exists = renamed_files.iter().any(|r|
-                            r.old_path == old_path && r.new_path == new_path
-                        );
-                        if !already_exists {
-                            renamed_files.push(RenamedStatus {
-                                old_path: old_path.clone(),
-                                new_path: new_path.clone(),
-                                staged: false, // This is an unstaged rename
-                            });
-                        }
-                    }
+        for delta in diff_full.deltas() {
+            if delta.status() == git2::Delta::Renamed
+                && let Some((old_path, new_path)) = extract_paths(delta)
+            {
+                // Check if this rename isn't already recorded
+                let already_exists = renamed_files
+                    .iter()
+                    .any(|r| r.old_path == old_path && r.new_path == new_path);
+                if !already_exists {
+                    renamed_files.push(RenamedStatus {
+                        old_path: old_path.clone(),
+                        new_path: new_path.clone(),
+                        staged: false, // This is an unstaged rename
+                    });
+                }
             }
         }
+    }
 
     // Remove renamed paths from deleted/untracked sets and surface new path as modified
     for rename in &renamed_files {
         deleted_files.retain(|entry| entry.path != rename.old_path);
         untracked_files.retain(|entry| entry.path != rename.new_path);
-        if !modified_files.iter().any(|entry| entry.path == rename.new_path) {
+        if !modified_files
+            .iter()
+            .any(|entry| entry.path == rename.new_path)
+        {
             modified_files.push(FileStatus {
                 path: rename.new_path.clone(),
                 status: "renamed".to_string(),
@@ -193,12 +212,12 @@ pub fn get_status_impl(repo_path: &str) -> Result<GitStatus, GitError> {
         }
     }
 
-    let is_clean = modified_files.is_empty() &&
-        deleted_files.is_empty() &&
-        added_files.is_empty() &&
-        untracked_files.is_empty() &&
-        staged_files.is_empty() &&
-        renamed_files.is_empty();
+    let is_clean = modified_files.is_empty()
+        && deleted_files.is_empty()
+        && added_files.is_empty()
+        && untracked_files.is_empty()
+        && staged_files.is_empty()
+        && renamed_files.is_empty();
 
     // Get current branch
     let current_branch = match repo.head() {
@@ -217,21 +236,25 @@ pub fn get_status_impl(repo_path: &str) -> Result<GitStatus, GitError> {
         current_branch,
     };
 
-    info!("get_status: is_clean={} in {}ms", result.is_clean, start.elapsed().as_millis());
+    info!(
+        "get_status: is_clean={} in {}ms",
+        result.is_clean,
+        start.elapsed().as_millis()
+    );
     Ok(result)
 }
-
-
-
-
 
 pub fn is_repository_impl(path: &str) -> bool {
     let start = std::time::Instant::now();
     let is_repo = Repository::open(path).is_ok();
-    info!("is_repository: path={} result={} in {}ms", path, is_repo, start.elapsed().as_millis());
+    info!(
+        "is_repository: path={} result={} in {}ms",
+        path,
+        is_repo,
+        start.elapsed().as_millis()
+    );
     is_repo
 }
-
 
 // Repository initialization
 pub fn init_repository_impl(path: &str) -> Result<bool, GitError> {
@@ -240,21 +263,28 @@ pub fn init_repository_impl(path: &str) -> Result<bool, GitError> {
 
     // Validate path first
     let repo_path = std::path::Path::new(path);
-    if repo_path.exists() && repo_path.read_dir()
-        .map_err(|e| GitError::IoError {
-            operation: "read_directory".to_string(),
-            error: e.to_string(),
-        })?.next().is_some() {
+    if repo_path.exists()
+        && repo_path
+            .read_dir()
+            .map_err(|e| GitError::IoError {
+                operation: "read_directory".to_string(),
+                error: e.to_string(),
+            })?
+            .next()
+            .is_some()
+    {
         return Err(GitError::InvalidPath {
             path: path.to_string(),
             reason: "Directory is not empty".to_string(),
         });
     }
 
-    Repository::init(path)
-        .map_err(|e| GitError::from(e).with_operation("init_repository"))?;
+    Repository::init(path).map_err(|e| GitError::from(e).with_operation("init_repository"))?;
 
-    info!("init_repository: success in {}ms", start.elapsed().as_millis());
+    info!(
+        "init_repository: success in {}ms",
+        start.elapsed().as_millis()
+    );
     Ok(true)
 }
 
@@ -268,7 +298,10 @@ pub fn init_repository_in_existing_dir_impl(path: &str) -> Result<bool, GitError
     Repository::init(path)
         .map_err(|e| GitError::from(e).with_operation("init_repository_in_existing_dir"))?;
 
-    info!("init_repository_in_existing_dir: success in {}ms", start.elapsed().as_millis());
+    info!(
+        "init_repository_in_existing_dir: success in {}ms",
+        start.elapsed().as_millis()
+    );
     Ok(true)
 }
 
@@ -281,7 +314,8 @@ pub fn remove_all_remotes_impl(repo_path: &str) -> Result<Vec<String>, GitError>
     let repo = Repository::open(repo_path)
         .map_err(|e| GitError::from(e).with_operation("remove_all_remotes"))?;
 
-    let remotes = repo.remotes()
+    let remotes = repo
+        .remotes()
         .map_err(|e| GitError::from(e).with_operation("list_remotes"))?;
 
     let mut removed = Vec::new();
@@ -291,30 +325,38 @@ pub fn remove_all_remotes_impl(repo_path: &str) -> Result<Vec<String>, GitError>
         removed.push(remote_name.to_string());
     }
 
-    info!("remove_all_remotes: removed {} remotes in {}ms", removed.len(), start.elapsed().as_millis());
+    info!(
+        "remove_all_remotes: removed {} remotes in {}ms",
+        removed.len(),
+        start.elapsed().as_millis()
+    );
     Ok(removed)
 }
 
 pub fn init_repository_with_config_impl(
     path: &str,
-    config: &RepositoryConfig
+    config: &RepositoryConfig,
 ) -> Result<bool, GitError> {
     info!("init_repository_with_config: path={}", path);
     let start = std::time::Instant::now();
 
-    let repo = Repository::init(path)
-        .map_err(|e| GitError::from(e).with_operation("init_repository"))?;
+    let repo =
+        Repository::init(path).map_err(|e| GitError::from(e).with_operation("init_repository"))?;
 
     // Configure the repository
-    let mut repo_config = repo.config()
+    let mut repo_config = repo
+        .config()
         .map_err(|e| GitError::from(e).with_operation("get_config"))?;
 
     if let Some(ref description) = config.description {
-        fs::write(PathBuf::from(path).join(".git").join("description"), description)
-            .map_err(|e| GitError::IoError {
-                operation: "write_description".to_string(),
-                error: e.to_string(),
-            })?;
+        fs::write(
+            PathBuf::from(path).join(".git").join("description"),
+            description,
+        )
+        .map_err(|e| GitError::IoError {
+            operation: "write_description".to_string(),
+            error: e.to_string(),
+        })?;
     }
 
     if let Some(ref line_ending) = config.line_ending {
@@ -322,21 +364,28 @@ pub fn init_repository_with_config_impl(
             "lf" => "false",
             "crlf" => "true",
             "auto" => "input",
-            _ => return Err(GitError::InvalidPath {
-                path: line_ending.clone(),
-                reason: "Invalid line ending option".to_string(),
-            }),
+            _ => {
+                return Err(GitError::InvalidPath {
+                    path: line_ending.clone(),
+                    reason: "Invalid line ending option".to_string(),
+                });
+            }
         };
-        repo_config.set_str("core.autocrlf", autocrlf_value)
+        repo_config
+            .set_str("core.autocrlf", autocrlf_value)
             .map_err(|e| GitError::from(e).with_operation("set_autocrlf"))?;
     }
 
     if let Some(ref branch) = config.default_branch {
-        repo_config.set_str("init.defaultBranch", branch)
+        repo_config
+            .set_str("init.defaultBranch", branch)
             .map_err(|e| GitError::from(e).with_operation("set_default_branch"))?;
     }
 
-    info!("init_repository_with_config: success in {}ms", start.elapsed().as_millis());
+    info!(
+        "init_repository_with_config: success in {}ms",
+        start.elapsed().as_millis()
+    );
     Ok(true)
 }
 
@@ -353,7 +402,7 @@ pub fn is_repository_healthy_impl(repo_path: &str) -> Result<RepositoryHealth, G
 
     // Check for basic repository integrity
     match repo.odb() {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(_) => issues.push("Object database is corrupted".to_string()),
     }
 
@@ -363,13 +412,13 @@ pub fn is_repository_healthy_impl(repo_path: &str) -> Result<RepositoryHealth, G
             if head.target().is_none() {
                 warnings.push("HEAD has no target (empty repository)".to_string());
             }
-        },
+        }
         Err(_) => issues.push("HEAD reference is missing or corrupted".to_string()),
     }
 
     // Check for index corruption
     match repo.index() {
-        Ok(_) => {},
+        Ok(_) => {}
         Err(_) => issues.push("Index file is corrupted".to_string()),
     }
 
@@ -384,8 +433,13 @@ pub fn is_repository_healthy_impl(repo_path: &str) -> Result<RepositoryHealth, G
 
     let is_healthy = issues.is_empty();
 
-    info!("is_repository_healthy: healthy={} issues={} warnings={} in {}ms",
-        is_healthy, issues.len(), warnings.len(), start.elapsed().as_millis());
+    info!(
+        "is_repository_healthy: healthy={} issues={} warnings={} in {}ms",
+        is_healthy,
+        issues.len(),
+        warnings.len(),
+        start.elapsed().as_millis()
+    );
 
     Ok(RepositoryHealth {
         is_healthy,
@@ -413,21 +467,22 @@ pub fn repair_repository_impl(repo_path: &str) -> Result<bool, GitError> {
 
     for lock_file in &lock_files {
         if lock_file.exists() {
-            fs::remove_file(lock_file)
-                .map_err(|e| GitError::IoError {
-                    operation: "remove_lock_file".to_string(),
-                    error: e.to_string(),
-                })?;
+            fs::remove_file(lock_file).map_err(|e| GitError::IoError {
+                operation: "remove_lock_file".to_string(),
+                error: e.to_string(),
+            })?;
             repairs_made = true;
         }
     }
 
     // Attempt to rebuild index if corrupted
     if repo.index().is_err() {
-        let head = repo.head()
+        let head = repo
+            .head()
             .map_err(|e| GitError::from(e).with_operation("get_head"))?;
         if let Ok(commit) = head.peel_to_commit() {
-            let _tree = commit.tree()
+            let _tree = commit
+                .tree()
                 .map_err(|e| GitError::from(e).with_operation("get_tree"))?;
             repo.reset(commit.as_object(), git2::ResetType::Hard, None)
                 .map_err(|e| GitError::from(e).with_operation("reset"))?;
@@ -435,7 +490,11 @@ pub fn repair_repository_impl(repo_path: &str) -> Result<bool, GitError> {
         }
     }
 
-    info!("repair_repository: repairs_made={} in {}ms", repairs_made, start.elapsed().as_millis());
+    info!(
+        "repair_repository: repairs_made={} in {}ms",
+        repairs_made,
+        start.elapsed().as_millis()
+    );
     Ok(repairs_made)
 }
 
@@ -446,30 +505,38 @@ pub fn configure_repository_impl(repo_path: &str, config: &GitConfig) -> Result<
 
     let repo = Repository::open(repo_path)
         .map_err(|e| GitError::from(e).with_operation("configure_repository"))?;
-    let mut repo_config = repo.config()
+    let mut repo_config = repo
+        .config()
         .map_err(|e| GitError::from(e).with_operation("get_config"))?;
 
     if let Some(ref user_name) = config.user_name {
-        repo_config.set_str("user.name", user_name)
+        repo_config
+            .set_str("user.name", user_name)
             .map_err(|e| GitError::from(e).with_operation("set_user_name"))?;
     }
 
     if let Some(ref user_email) = config.user_email {
-        repo_config.set_str("user.email", user_email)
+        repo_config
+            .set_str("user.email", user_email)
             .map_err(|e| GitError::from(e).with_operation("set_user_email"))?;
     }
 
     if let Some(ref autocrlf) = config.core_autocrlf {
-        repo_config.set_str("core.autocrlf", autocrlf)
+        repo_config
+            .set_str("core.autocrlf", autocrlf)
             .map_err(|e| GitError::from(e).with_operation("set_autocrlf"))?;
     }
 
     if let Some(ref safecrlf) = config.core_safecrlf {
-        repo_config.set_str("core.safecrlf", safecrlf)
+        repo_config
+            .set_str("core.safecrlf", safecrlf)
             .map_err(|e| GitError::from(e).with_operation("set_safecrlf"))?;
     }
 
-    info!("configure_repository: success in {}ms", start.elapsed().as_millis());
+    info!(
+        "configure_repository: success in {}ms",
+        start.elapsed().as_millis()
+    );
     Ok(true)
 }
 
@@ -493,12 +560,13 @@ pub fn get_config_impl(
     key: &str,
     fallback_global: bool,
 ) -> Result<Option<String>, GitError> {
-    let repo = Repository::open(repo_path)
-        .map_err(|e| GitError::from(e).with_operation("get_config"))?;
+    let repo =
+        Repository::open(repo_path).map_err(|e| GitError::from(e).with_operation("get_config"))?;
 
     // Try repository-local config first (only .git/config, not global)
     // We need to open the config and then get the local level explicitly
-    let config = repo.config()
+    let config = repo
+        .config()
         .map_err(|e| GitError::from(e).with_operation("get_config"))?;
 
     // Open the local-only config (just .git/config)
@@ -521,8 +589,7 @@ pub fn get_config_impl(
                 .and_then(|config| config.get_string(key))
         } else {
             // Use default global config search
-            git2::Config::open_default()
-                .and_then(|config| config.get_string(key))
+            git2::Config::open_default().and_then(|config| config.get_string(key))
         };
 
         match global_result {
@@ -547,19 +614,17 @@ pub fn get_config_impl(
 /// # Returns
 /// * `Ok(())` - Config value set successfully
 /// * `Err(GitError)` - Error opening repository or setting config
-pub fn set_config_impl(
-    repo_path: &str,
-    key: &str,
-    value: &str,
-) -> Result<(), GitError> {
+pub fn set_config_impl(repo_path: &str, key: &str, value: &str) -> Result<(), GitError> {
     info!("set_config: key={}, value={}", key, value);
-    let repo = Repository::open(repo_path)
+    let repo =
+        Repository::open(repo_path).map_err(|e| GitError::from(e).with_operation("set_config"))?;
+
+    let mut config = repo
+        .config()
         .map_err(|e| GitError::from(e).with_operation("set_config"))?;
 
-    let mut config = repo.config()
-        .map_err(|e| GitError::from(e).with_operation("set_config"))?;
-
-    config.set_str(key, value)
+    config
+        .set_str(key, value)
         .map_err(|e| GitError::from(e).with_operation("set_config"))?;
 
     Ok(())
@@ -577,15 +642,13 @@ pub fn set_config_impl(
 /// # Returns
 /// * `Ok(())` - Config value removed successfully (or didn't exist)
 /// * `Err(GitError)` - Error opening repository or removing config
-pub fn unset_config_impl(
-    repo_path: &str,
-    key: &str,
-) -> Result<(), GitError> {
+pub fn unset_config_impl(repo_path: &str, key: &str) -> Result<(), GitError> {
     info!("unset_config: key={}", key);
     let repo = Repository::open(repo_path)
         .map_err(|e| GitError::from(e).with_operation("unset_config"))?;
 
-    let mut config = repo.config()
+    let mut config = repo
+        .config()
         .map_err(|e| GitError::from(e).with_operation("unset_config"))?;
 
     // remove_multivar with None removes all values for the key
@@ -605,13 +668,15 @@ pub fn create_gitignore_impl(repo_path: &str, patterns: &[String]) -> Result<boo
     let gitignore_path = PathBuf::from(repo_path).join(".gitignore");
 
     let content = patterns.join("\n");
-    fs::write(&gitignore_path, content)
-        .map_err(|e| GitError::IoError {
-            operation: "write_gitignore".to_string(),
-            error: e.to_string(),
-        })?;
+    fs::write(&gitignore_path, content).map_err(|e| GitError::IoError {
+        operation: "write_gitignore".to_string(),
+        error: e.to_string(),
+    })?;
 
-    info!("create_gitignore: success in {}ms", start.elapsed().as_millis());
+    info!(
+        "create_gitignore: success in {}ms",
+        start.elapsed().as_millis()
+    );
     Ok(true)
 }
 
@@ -622,13 +687,15 @@ pub fn create_gitattributes_impl(repo_path: &str, rules: &[String]) -> Result<bo
     let gitattributes_path = PathBuf::from(repo_path).join(".gitattributes");
 
     let content = rules.join("\n");
-    fs::write(&gitattributes_path, content)
-        .map_err(|e| GitError::IoError {
-            operation: "write_gitattributes".to_string(),
-            error: e.to_string(),
-        })?;
+    fs::write(&gitattributes_path, content).map_err(|e| GitError::IoError {
+        operation: "write_gitattributes".to_string(),
+        error: e.to_string(),
+    })?;
 
-    info!("create_gitattributes: success in {}ms", start.elapsed().as_millis());
+    info!(
+        "create_gitattributes: success in {}ms",
+        start.elapsed().as_millis()
+    );
     Ok(true)
 }
 
@@ -648,7 +715,8 @@ pub fn get_repository_info_impl(repo_path: &str) -> Result<RepositoryInfo, GitEr
     };
 
     // Count branches
-    let branch_count = repo.branches(None)
+    let branch_count = repo
+        .branches(None)
         .map_err(|e| GitError::from(e).with_operation("get_branches"))?
         .count() as i32;
 
@@ -656,21 +724,24 @@ pub fn get_repository_info_impl(repo_path: &str) -> Result<RepositoryInfo, GitEr
     let commit_count = match repo.head() {
         Ok(head) => {
             if let Ok(commit) = head.peel_to_commit() {
-                let mut revwalk = repo.revwalk()
+                let mut revwalk = repo
+                    .revwalk()
                     .map_err(|e| GitError::from(e).with_operation("create_revwalk"))?;
-                revwalk.push(commit.id())
+                revwalk
+                    .push(commit.id())
                     .map_err(|e| GitError::from(e).with_operation("push_commit"))?;
                 revwalk.count() as i32
             } else {
                 0
             }
-        },
+        }
         Err(_) => 0,
     };
 
     // Check for uncommitted changes
     let has_uncommitted_changes = if !is_bare {
-        let statuses = repo.statuses(None)
+        let statuses = repo
+            .statuses(None)
             .map_err(|e| GitError::from(e).with_operation("get_status"))?;
         !statuses.is_empty()
     } else {
@@ -683,9 +754,10 @@ pub fn get_repository_info_impl(repo_path: &str) -> Result<RepositoryInfo, GitEr
         for remote_name in remotes.iter() {
             if let Some(name) = remote_name
                 && let Ok(remote) = repo.find_remote(name)
-                    && let Some(url) = remote.url() {
-                        remote_urls.push(url.to_string());
-                    }
+                && let Some(url) = remote.url()
+            {
+                remote_urls.push(url.to_string());
+            }
         }
     }
 
@@ -699,19 +771,22 @@ pub fn get_repository_info_impl(repo_path: &str) -> Result<RepositoryInfo, GitEr
         remote_urls,
     };
 
-    info!("get_repository_info: success in {}ms", start.elapsed().as_millis());
+    info!(
+        "get_repository_info: success in {}ms",
+        start.elapsed().as_millis()
+    );
     Ok(result)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
     use std::env;
+    use std::path::PathBuf;
 
     fn setup_test_repo() -> (tempfile::TempDir, PathBuf) {
-        let temp_dir = tempfile::TempDir::new_in(std::env::temp_dir())
-            .expect("Failed to create temp dir");
+        let temp_dir =
+            tempfile::TempDir::new_in(std::env::temp_dir()).expect("Failed to create temp dir");
         let repo_path = temp_dir.path().to_path_buf();
 
         // Initialize a git repository
@@ -759,11 +834,7 @@ mod tests {
             .expect("Failed to set config");
 
         // Test reading the config value
-        let result = get_config_impl(
-            repo_path.to_str().unwrap(),
-            "test.key",
-            false,
-        );
+        let result = get_config_impl(repo_path.to_str().unwrap(), "test.key", false);
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Some("test_value".to_string()));
@@ -774,11 +845,7 @@ mod tests {
         let (_temp_dir, repo_path) = setup_test_repo();
 
         // Test reading a non-existent config value without fallback
-        let result = get_config_impl(
-            repo_path.to_str().unwrap(),
-            "nonexistent.key",
-            false,
-        );
+        let result = get_config_impl(repo_path.to_str().unwrap(), "nonexistent.key", false);
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), None);
@@ -793,18 +860,14 @@ mod tests {
 
         // Get the config file path and open it explicitly
         let config_file = config_dir.path().join("gitconfig");
-        let mut global_config = git2::Config::open(&config_file)
-            .expect("Failed to open global config");
+        let mut global_config =
+            git2::Config::open(&config_file).expect("Failed to open global config");
         global_config
             .set_str("test.globalkey", "global_value")
             .expect("Failed to set global config");
 
         // Test reading from global config when not in repo config
-        let result = get_config_impl(
-            repo_path.to_str().unwrap(),
-            "test.globalkey",
-            true,
-        );
+        let result = get_config_impl(repo_path.to_str().unwrap(), "test.globalkey", true);
 
         // Clean up
         cleanup_global_config();
@@ -823,8 +886,8 @@ mod tests {
 
         // Get the config file path and open it explicitly
         let config_file = config_dir.path().join("gitconfig");
-        let mut global_config = git2::Config::open(&config_file)
-            .expect("Failed to open global config");
+        let mut global_config =
+            git2::Config::open(&config_file).expect("Failed to open global config");
         global_config
             .set_str("test.priority", "global_value")
             .expect("Failed to set global config");
@@ -835,11 +898,7 @@ mod tests {
             .expect("Failed to set config");
 
         // Test that repo config takes priority
-        let result = get_config_impl(
-            repo_path.to_str().unwrap(),
-            "test.priority",
-            true,
-        );
+        let result = get_config_impl(repo_path.to_str().unwrap(), "test.priority", true);
 
         // Clean up
         cleanup_global_config();
@@ -850,11 +909,7 @@ mod tests {
 
     #[test]
     fn test_get_config_invalid_repo_path() {
-        let result = get_config_impl(
-            "/nonexistent/path/to/repo",
-            "test.key",
-            false,
-        );
+        let result = get_config_impl("/nonexistent/path/to/repo", "test.key", false);
 
         assert!(result.is_err());
         // Should return GitError (type doesn't matter as long as it fails)

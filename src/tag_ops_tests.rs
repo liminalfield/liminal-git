@@ -4,16 +4,19 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 fn setup_test_repo() -> (TempDir, PathBuf) {
-    let temp_dir = TempDir::new_in(std::env::temp_dir())
-        .expect("Failed to create temp dir");
+    let temp_dir = TempDir::new_in(std::env::temp_dir()).expect("Failed to create temp dir");
     let repo_path = temp_dir.path().to_path_buf();
 
     Repository::init(&repo_path).expect("Failed to initialize test repository");
 
     let repo = Repository::open(&repo_path).expect("Failed to open repository");
     let mut config = repo.config().expect("Failed to get config");
-    config.set_str("user.name", "Test User").expect("Failed to set user.name");
-    config.set_str("user.email", "test@example.com").expect("Failed to set user.email");
+    config
+        .set_str("user.name", "Test User")
+        .expect("Failed to set user.name");
+    config
+        .set_str("user.email", "test@example.com")
+        .expect("Failed to set user.email");
 
     (temp_dir, repo_path)
 }
@@ -36,10 +39,12 @@ fn commit_file(repo_path: &Path, file_path: &str, message: &str) -> String {
 
     let tree_id = index.write_tree().expect("Failed to write tree");
     let tree = repo.find_tree(tree_id).expect("Failed to find tree");
-    let signature = git2::Signature::now("Test User", "test@example.com").expect("Failed to create signature");
+    let signature =
+        git2::Signature::now("Test User", "test@example.com").expect("Failed to create signature");
 
     let parent_commit = repo.head().ok().and_then(|head| {
-        head.target().and_then(|target| repo.find_commit(target).ok())
+        head.target()
+            .and_then(|target| repo.find_commit(target).ok())
     });
 
     let commit_id = if let Some(parent) = parent_commit {
@@ -52,14 +57,7 @@ fn commit_file(repo_path: &Path, file_path: &str, message: &str) -> String {
             &[&parent],
         )
     } else {
-        repo.commit(
-            Some("HEAD"),
-            &signature,
-            &signature,
-            message,
-            &tree,
-            &[],
-        )
+        repo.commit(Some("HEAD"), &signature, &signature, message, &tree, &[])
     };
 
     commit_id.expect("Failed to create commit").to_string()
@@ -88,7 +86,9 @@ fn test_create_annotated_tag_with_explicit_signature() {
 
     // Verify tag was created with correct signature
     let repo = Repository::open(&repo_path).expect("Failed to open repository");
-    let tag_ref = repo.find_reference("refs/tags/v1.0.0").expect("Tag should exist");
+    let tag_ref = repo
+        .find_reference("refs/tags/v1.0.0")
+        .expect("Tag should exist");
     let tag = tag_ref.peel_to_tag().expect("Should be an annotated tag");
 
     assert_eq!(tag.tagger().unwrap().name().unwrap(), "Custom User");
@@ -119,7 +119,9 @@ fn test_create_annotated_tag_with_config_fallback() {
 
     // Verify tag was created with config signature
     let repo = Repository::open(&repo_path).expect("Failed to open repository");
-    let tag_ref = repo.find_reference("refs/tags/v2.0.0").expect("Tag should exist");
+    let tag_ref = repo
+        .find_reference("refs/tags/v2.0.0")
+        .expect("Tag should exist");
     let tag = tag_ref.peel_to_tag().expect("Should be an annotated tag");
 
     assert_eq!(tag.tagger().unwrap().name().unwrap(), "Test User");
@@ -212,7 +214,7 @@ fn test_create_lightweight_tag() {
     let options = CreateTagOptions {
         name: "v4.0.0".to_string(),
         target_commit: None,
-        message: None,  // Lightweight tag
+        message: None, // Lightweight tag
         force: false,
         user_name: None,
         user_email: None,
@@ -223,9 +225,14 @@ fn test_create_lightweight_tag() {
 
     // Verify tag was created
     let repo = Repository::open(&repo_path).expect("Failed to open repository");
-    let tag_ref = repo.find_reference("refs/tags/v4.0.0").expect("Tag should exist");
+    let tag_ref = repo
+        .find_reference("refs/tags/v4.0.0")
+        .expect("Tag should exist");
 
     // Lightweight tags don't have tag objects, they point directly to commits
-    assert!(tag_ref.peel_to_tag().is_err(), "Should not be an annotated tag");
+    assert!(
+        tag_ref.peel_to_tag().is_err(),
+        "Should not be an annotated tag"
+    );
     assert!(tag_ref.peel_to_commit().is_ok(), "Should point to a commit");
 }

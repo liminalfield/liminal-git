@@ -1,8 +1,8 @@
 // utils.rs
+use crate::errors::GitError;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use crate::errors::GitError;
 
 #[cfg(feature = "napi-binding")]
 use napi::Error as NapiError;
@@ -39,15 +39,24 @@ where
 }
 
 #[cfg(feature = "napi-binding")]
-pub fn validate_and_normalize_path(repo_path: &str, file_path: &str) -> Result<std::path::PathBuf, NapiError> {
+pub fn validate_and_normalize_path(
+    repo_path: &str,
+    file_path: &str,
+) -> Result<std::path::PathBuf, NapiError> {
     // Validate repository path exists and is a directory
     let repo_path_buf = Path::new(repo_path);
     if !repo_path_buf.exists() {
-        return Err(NapiError::new(Status::InvalidArg, "Repository path does not exist"));
+        return Err(NapiError::new(
+            Status::InvalidArg,
+            "Repository path does not exist",
+        ));
     }
 
     if !repo_path_buf.is_dir() {
-        return Err(NapiError::new(Status::InvalidArg, "Repository path is not a directory"));
+        return Err(NapiError::new(
+            Status::InvalidArg,
+            "Repository path is not a directory",
+        ));
     }
 
     // Convert file path to relative path from repository root
@@ -55,15 +64,22 @@ pub fn validate_and_normalize_path(repo_path: &str, file_path: &str) -> Result<s
 
     let relative_path = if abs_file_path.is_absolute() {
         // Check for path traversal attempts
-        abs_file_path.strip_prefix(repo_path_buf)
+        abs_file_path
+            .strip_prefix(repo_path_buf)
             .map_err(|_| NapiError::new(Status::InvalidArg, "File path is not within repository"))?
     } else {
         abs_file_path
     };
 
     // Additional security check - ensure no ".." components
-    if relative_path.components().any(|component| matches!(component, std::path::Component::ParentDir)) {
-        return Err(NapiError::new(Status::InvalidArg, "Path traversal not allowed"));
+    if relative_path
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(NapiError::new(
+            Status::InvalidArg,
+            "Path traversal not allowed",
+        ));
     }
 
     Ok(relative_path.to_path_buf())
@@ -71,7 +87,10 @@ pub fn validate_and_normalize_path(repo_path: &str, file_path: &str) -> Result<s
 
 #[cfg(feature = "napi-binding")]
 pub fn git_error_to_napi(error: git2::Error) -> NapiError {
-    NapiError::new(Status::GenericFailure, format!("Git error: {}", error.message()))
+    NapiError::new(
+        Status::GenericFailure,
+        format!("Git error: {}", error.message()),
+    )
 }
 
 /// Convert GitError to NAPI error with appropriate status codes
@@ -164,7 +183,10 @@ pub fn git_error_to_napi_structured(error: GitError) -> NapiError {
 }
 
 // GitError version for internal use
-pub fn validate_and_normalize_path_git(repo_path: &str, file_path: &str) -> Result<std::path::PathBuf, GitError> {
+pub fn validate_and_normalize_path_git(
+    repo_path: &str,
+    file_path: &str,
+) -> Result<std::path::PathBuf, GitError> {
     // Validate repository path exists and is a directory
     let repo_path_buf = Path::new(repo_path);
     if !repo_path_buf.exists() {
@@ -184,7 +206,8 @@ pub fn validate_and_normalize_path_git(repo_path: &str, file_path: &str) -> Resu
 
     let relative_path = if abs_file_path.is_absolute() {
         // Check for path traversal attempts
-        abs_file_path.strip_prefix(repo_path_buf)
+        abs_file_path
+            .strip_prefix(repo_path_buf)
             .map_err(|_| GitError::FileNotInRepository {
                 path: file_path.to_string(),
             })?
@@ -193,7 +216,10 @@ pub fn validate_and_normalize_path_git(repo_path: &str, file_path: &str) -> Resu
     };
 
     // Additional security check - ensure no ".." components
-    if relative_path.components().any(|component| matches!(component, std::path::Component::ParentDir)) {
+    if relative_path
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
         return Err(GitError::PathTraversal {
             attempted_path: file_path.to_string(),
         });
@@ -203,9 +229,11 @@ pub fn validate_and_normalize_path_git(repo_path: &str, file_path: &str) -> Resu
 }
 
 // Deprecated: Use validate_and_normalize_path_git instead
-pub fn validate_and_normalize_path_anyhow(repo_path: &str, file_path: &str) -> Result<std::path::PathBuf, anyhow::Error> {
-    validate_and_normalize_path_git(repo_path, file_path)
-        .map_err(|e| anyhow::anyhow!("{}", e))
+pub fn validate_and_normalize_path_anyhow(
+    repo_path: &str,
+    file_path: &str,
+) -> Result<std::path::PathBuf, anyhow::Error> {
+    validate_and_normalize_path_git(repo_path, file_path).map_err(|e| anyhow::anyhow!("{}", e))
 }
 
 /// Normalize path separators to forward slashes for Git compatibility
@@ -220,27 +248,28 @@ pub fn format_timestamp(time: git2::Time) -> String {
 }
 
 pub fn is_valid_branch_name(name: &str) -> bool {
-    !name.is_empty() &&
-    !name.starts_with('-') &&
-    !name.contains("..") &&
-    !name.contains('\0') &&
-    !name.ends_with('/') &&
-    !name.ends_with(".lock")
+    !name.is_empty()
+        && !name.starts_with('-')
+        && !name.contains("..")
+        && !name.contains('\0')
+        && !name.ends_with('/')
+        && !name.ends_with(".lock")
 }
 
 pub fn is_valid_tag_name(name: &str) -> bool {
-    !name.is_empty() &&
-    !name.starts_with('-') &&
-    !name.contains("..") &&
-    !name.contains('\0') &&
-    !name.ends_with('/') &&
-    !name.ends_with(".lock")
+    !name.is_empty()
+        && !name.starts_with('-')
+        && !name.contains("..")
+        && !name.contains('\0')
+        && !name.ends_with('/')
+        && !name.ends_with(".lock")
 }
 
 pub fn has_uncommitted_changes_git(repo: &git2::Repository) -> Result<bool, GitError> {
     let mut opts = git2::StatusOptions::new();
     opts.include_untracked(false);
-    let statuses = repo.statuses(Some(&mut opts))
+    let statuses = repo
+        .statuses(Some(&mut opts))
         .map_err(|e| GitError::from(e).with_operation("has_uncommitted_changes"))?;
     Ok(!statuses.is_empty())
 }
@@ -255,8 +284,7 @@ pub fn has_uncommitted_changes(repo: &git2::Repository) -> Result<bool, NapiErro
 
 // Deprecated: Use has_uncommitted_changes_git instead
 pub fn has_uncommitted_changes_anyhow(repo: &git2::Repository) -> Result<bool, anyhow::Error> {
-    has_uncommitted_changes_git(repo)
-        .map_err(|e| anyhow::anyhow!("{}", e))
+    has_uncommitted_changes_git(repo).map_err(|e| anyhow::anyhow!("{}", e))
 }
 
 /// Read user signature from git config with lenient validation
@@ -324,14 +352,15 @@ pub(crate) fn read_user_signature<'a>(
         }
         Some(_) | None => {
             // Empty/whitespace/None → read from config
-            get_config_impl(repo_path, "user.name", true)?
-                .ok_or_else(|| GitError::ConfigMissing {
+            get_config_impl(repo_path, "user.name", true)?.ok_or_else(|| {
+                GitError::ConfigMissing {
                     key: "user.name".to_string(),
                     tried_locations: vec![
                         "repository config".to_string(),
                         "global config".to_string(),
                     ],
-                })?
+                }
+            })?
         }
     };
 
@@ -343,25 +372,25 @@ pub(crate) fn read_user_signature<'a>(
         }
         Some(_) | None => {
             // Empty/whitespace/None → read from config
-            get_config_impl(repo_path, "user.email", true)?
-                .ok_or_else(|| GitError::ConfigMissing {
+            get_config_impl(repo_path, "user.email", true)?.ok_or_else(|| {
+                GitError::ConfigMissing {
                     key: "user.email".to_string(),
                     tried_locations: vec![
                         "repository config".to_string(),
                         "global config".to_string(),
                     ],
-                })?
+                }
+            })?
         }
     };
 
     // Create signature
-    git2::Signature::now(&name, &email)
-        .map_err(|e| GitError::GitOperationFailure {
-            operation: "create_signature".to_string(),
-            class: e.class() as i32,
-            code: e.code() as i32,
-            message: e.message().to_string(),
-        })
+    git2::Signature::now(&name, &email).map_err(|e| GitError::GitOperationFailure {
+        operation: "create_signature".to_string(),
+        class: e.class() as i32,
+        code: e.code() as i32,
+        message: e.message().to_string(),
+    })
 }
 
 #[cfg(test)]
@@ -370,8 +399,8 @@ mod tests {
     use std::path::PathBuf;
 
     fn setup_test_repo() -> (tempfile::TempDir, PathBuf) {
-        let temp_dir = tempfile::TempDir::new_in(std::env::temp_dir())
-            .expect("Failed to create temp dir");
+        let temp_dir =
+            tempfile::TempDir::new_in(std::env::temp_dir()).expect("Failed to create temp dir");
         let repo_path = temp_dir.path().to_path_buf();
 
         // Initialize a git repository
@@ -455,7 +484,8 @@ mod tests {
             .expect("Failed to set user.email");
 
         // Test that explicit values override config
-        let result = read_user_signature(&repo, Some("Explicit User"), Some("explicit@example.com"));
+        let result =
+            read_user_signature(&repo, Some("Explicit User"), Some("explicit@example.com"));
 
         assert!(result.is_ok());
         let signature = result.unwrap();
@@ -484,7 +514,10 @@ mod tests {
 
         if result.is_err() {
             match result {
-                Err(GitError::ConfigMissing { key, tried_locations }) => {
+                Err(GitError::ConfigMissing {
+                    key,
+                    tried_locations,
+                }) => {
                     // Should fail on user.name
                     assert_eq!(key, "user.name");
                     assert_eq!(tried_locations.len(), 2);

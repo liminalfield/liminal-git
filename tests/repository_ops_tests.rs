@@ -1,10 +1,8 @@
-
 mod common;
 
 #[cfg(test)]
 mod repository_ops_tests {
     use crate::common::*;
-
 
     #[test]
     fn test_is_repository_impl_valid_repo() {
@@ -52,7 +50,9 @@ mod repository_ops_tests {
         assert_eq!(status.staged_files.len(), 0);
 
         // Check file names
-        let file_names: Vec<&str> = status.untracked_files.iter()
+        let file_names: Vec<&str> = status
+            .untracked_files
+            .iter()
             .map(|f| f.path.as_str())
             .collect();
         assert!(file_names.contains(&"untracked1.txt"));
@@ -88,10 +88,14 @@ mod repository_ops_tests {
         let test_repo = TestRepo::new().unwrap();
 
         // Create and commit a file first
-        test_repo.add_and_commit("tracked.txt", "initial content", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("tracked.txt", "initial content", "Initial commit")
+            .unwrap();
 
         // Now modify it
-        test_repo.add_file("tracked.txt", "modified content").unwrap();
+        test_repo
+            .add_file("tracked.txt", "modified content")
+            .unwrap();
 
         let status = get_status_impl(test_repo.path_str()).unwrap();
 
@@ -107,11 +111,17 @@ mod repository_ops_tests {
         let test_repo = TestRepo::new().unwrap();
 
         // Create initial commit
-        test_repo.add_and_commit("existing.txt", "content", "Initial commit").unwrap();
+        test_repo
+            .add_and_commit("existing.txt", "content", "Initial commit")
+            .unwrap();
 
         // Create various file states
-        test_repo.add_file("existing.txt", "modified content").unwrap(); // Modified
-        test_repo.add_file("untracked.txt", "untracked content").unwrap(); // Untracked
+        test_repo
+            .add_file("existing.txt", "modified content")
+            .unwrap(); // Modified
+        test_repo
+            .add_file("untracked.txt", "untracked content")
+            .unwrap(); // Untracked
         test_repo.add_file("staged.txt", "staged content").unwrap(); // Will be staged
         test_repo.stage_file("staged.txt").unwrap();
 
@@ -140,22 +150,24 @@ mod repository_ops_tests {
         use std::thread;
 
         // Create multiple repositories for concurrent access since git2::Repository is not Send/Sync
-        let test_repos: Vec<_> = (0..5).map(|i| {
-            let repo = TestRepo::new().unwrap();
-            repo.add_file(format!("concurrent{}.txt", i), &format!("content{}", i)).unwrap();
-            repo.add_file(format!("concurrent{}_2.txt", i), &format!("content{}_2", i)).unwrap();
-            let path = repo.path_str().to_string();
-            (repo, path)
-        }).collect();
+        let test_repos: Vec<_> = (0..5)
+            .map(|i| {
+                let repo = TestRepo::new().unwrap();
+                repo.add_file(format!("concurrent{}.txt", i), &format!("content{}", i))
+                    .unwrap();
+                repo.add_file(format!("concurrent{}_2.txt", i), &format!("content{}_2", i))
+                    .unwrap();
+                let path = repo.path_str().to_string();
+                (repo, path)
+            })
+            .collect();
 
         let mut handles = vec![];
 
         // Spawn multiple threads checking status on different repositories
         for (_repo, repo_path) in &test_repos {
             let repo_path = repo_path.clone();
-            let handle = thread::spawn(move || {
-                get_status_impl(&repo_path)
-            });
+            let handle = thread::spawn(move || get_status_impl(&repo_path));
             handles.push(handle);
         }
 
@@ -173,7 +185,6 @@ mod repository_ops_tests {
         // Keep test_repos alive until threads complete
         drop(test_repos);
     }
-    
 
     #[test]
     fn test_init_repository_impl() {
@@ -237,7 +248,8 @@ mod repository_ops_tests {
             "Initial commit",
             "Test User",
             "test@example.com",
-        ).unwrap();
+        )
+        .unwrap();
 
         let health = is_repository_healthy_impl(&path);
         assert!(health.is_ok());
@@ -387,7 +399,8 @@ mod repository_ops_tests {
             "Initial commit",
             "Test User",
             "test@example.com",
-        ).unwrap();
+        )
+        .unwrap();
 
         let info = get_repository_info_impl(&path);
         assert!(info.is_ok());
