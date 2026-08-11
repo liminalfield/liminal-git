@@ -738,10 +738,27 @@ pub fn get_repository_info_impl(repo_path: &str) -> Result<RepositoryInfo, GitEr
         Err(_) => 0,
     };
 
-    // Check for uncommitted changes
+    // Check for uncommitted changes.
+    //
+    // These options are not decoration. Passing `None` here takes libgit2's
+    // defaults, which include ignored files — so a repository whose working
+    // tree holds nothing but an ignored directory reported uncommitted
+    // changes, permanently and with no way for the user to clear it. Every
+    // other status call in this crate says `include_ignored(false)`; this one
+    // was the only one that didn't.
+    //
+    // The options match `get_status_impl` exactly, so this field and
+    // `GitStatus::is_clean` answer the same question the same way. They are
+    // shown side by side in the UI, and disagreeing is worse than either
+    // answer alone.
     let has_uncommitted_changes = if !is_bare {
+        let mut opts = StatusOptions::new();
+        opts.include_untracked(true);
+        opts.include_ignored(false);
+        opts.recurse_untracked_dirs(true);
+
         let statuses = repo
-            .statuses(None)
+            .statuses(Some(&mut opts))
             .map_err(|e| GitError::from(e).with_operation("get_status"))?;
         !statuses.is_empty()
     } else {

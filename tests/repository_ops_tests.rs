@@ -411,4 +411,72 @@ mod repository_ops_tests {
         assert_eq!(repo_info.commit_count, 1);
         assert!(!repo_info.has_uncommitted_changes);
     }
+
+    /// Ignored files are not uncommitted changes.
+    ///
+    /// `get_repository_info_impl` used to call `statuses(None)`, taking
+    /// libgit2's defaults — which include ignored entries. A repository whose
+    /// working tree held nothing but an ignored directory therefore reported
+    /// uncommitted changes permanently, and no amount of committing would
+    /// clear it. That is not a hypothetical shape: an application that keeps
+    /// its own state in a gitignored directory inside the repository hits it
+    /// on every repository it manages.
+    #[test]
+    fn test_repository_info_ignores_ignored_files() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().to_string_lossy().to_string();
+
+        init_repository_impl(&path).unwrap();
+
+        let gitignore = temp_dir.path().join(".gitignore");
+        fs::write(&gitignore, "app-state/\n").unwrap();
+        commit_file_impl(
+            &path,
+            &gitignore.to_string_lossy(),
+            "Ignore application state",
+            "Test User",
+            "test@example.com",
+        )
+        .unwrap();
+
+        fs::create_dir(temp_dir.path().join("app-state")).unwrap();
+        fs::write(temp_dir.path().join("app-state/cache.json"), "{}").unwrap();
+
+        let repo_info = get_repository_info_impl(&path).unwrap();
+        assert!(
+            !repo_info.has_uncommitted_changes,
+            "an ignored file is not an uncommitted change"
+        );
+
+        // And the two answers the UI shows side by side must agree.
+        let status = get_status_impl(&path).unwrap();
+        assert!(status.is_clean);
+        assert_eq!(repo_info.has_uncommitted_changes, !status.is_clean);
+    }
+
+    /// The converse, so the fix above cannot degenerate into "always clean":
+    /// an untracked file is still an uncommitted change, as `is_clean` says.
+    #[test]
+    fn test_repository_info_counts_untracked_files() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().to_string_lossy().to_string();
+
+        init_repository_impl(&path).unwrap();
+        let seed = temp_dir.path().join("seed.txt");
+        fs::write(&seed, "seed").unwrap();
+        commit_file_impl(
+            &path,
+            &seed.to_string_lossy(),
+            "Seed",
+            "Test User",
+            "test@example.com",
+        )
+        .unwrap();
+
+        fs::write(temp_dir.path().join("draft.md"), "# Chapter One").unwrap();
+
+        let repo_info = get_repository_info_impl(&path).unwrap();
+        assert!(repo_info.has_uncommitted_changes);
+        assert!(!get_status_impl(&path).unwrap().is_clean);
+    }
 }

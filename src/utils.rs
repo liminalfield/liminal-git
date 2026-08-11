@@ -217,14 +217,14 @@ pub fn is_valid_tag_name(name: &str) -> bool {
         && !name.ends_with(".lock")
 }
 
-// Two `has_uncommitted_changes` helpers lived here (a GitError one and a
-// napi one, plus an anyhow one before that), all three unreferenced. The only
-// live answer to that question is computed inline in
-// `repository_ops::get_repository_info_impl`, and deliberately not on the
-// same terms: these helpers set `include_untracked(false)`, while the live
-// code passes `None` and takes libgit2's defaults. Keeping a dead helper that
-// answers a subtly different question than the live code is a trap for
-// whoever reaches for it next, so they are gone rather than merged.
+// Two `has_uncommitted_changes` helpers lived here (a GitError one and a napi
+// one, plus an anyhow one before that), all three unreferenced. The only live
+// answer to that question is computed inline in
+// `repository_ops::get_repository_info_impl`, and not on the same terms:
+// these helpers set `include_untracked(false)`, so a repository holding only
+// a new file looked clean to them. Keeping a dead helper that answers a
+// subtly different question than the live code is a trap for whoever reaches
+// for it next, so they are gone rather than merged.
 
 /// Read user signature from git config with lenient validation
 ///
