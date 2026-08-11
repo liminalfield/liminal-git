@@ -58,7 +58,7 @@ mod file_ops_tests {
             Ok(commit_id)
         } else {
             // First commit - check if index has any entries
-            if index.len() == 0 {
+            if index.is_empty() {
                 return Err(anyhow::anyhow!("No changes to commit"));
             }
 

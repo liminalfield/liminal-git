@@ -36,12 +36,12 @@ pub fn get_status_impl(repo_path: &str) -> Result<GitStatus, GitError> {
     };
 
     for entry in statuses.iter() {
-        let path = normalize_git_path(&entry.path().unwrap_or("invalid_path").to_string());
+        let path = normalize_git_path(entry.path().unwrap_or("invalid_path"));
         let status_flags = entry.status();
 
-        if status_flags.contains(Status::INDEX_RENAMED) {
-            if let Some(delta) = entry.head_to_index() {
-                if let Some((old_path, new_path)) = extract_paths(delta) {
+        if status_flags.contains(Status::INDEX_RENAMED)
+            && let Some(delta) = entry.head_to_index()
+                && let Some((old_path, new_path)) = extract_paths(delta) {
                     renamed_files.push(RenamedStatus {
                         old_path,
                         new_path,
@@ -49,12 +49,10 @@ pub fn get_status_impl(repo_path: &str) -> Result<GitStatus, GitError> {
                     });
                     continue;
                 }
-            }
-        }
 
-        if status_flags.contains(Status::WT_RENAMED) {
-            if let Some(delta) = entry.index_to_workdir() {
-                if let Some((old_path, new_path)) = extract_paths(delta) {
+        if status_flags.contains(Status::WT_RENAMED)
+            && let Some(delta) = entry.index_to_workdir()
+                && let Some((old_path, new_path)) = extract_paths(delta) {
                     renamed_files.push(RenamedStatus {
                         old_path,
                         new_path,
@@ -62,8 +60,6 @@ pub fn get_status_impl(repo_path: &str) -> Result<GitStatus, GitError> {
                     });
                     continue;
                 }
-            }
-        }
 
         if status_flags.contains(Status::INDEX_MODIFIED) {
             staged_files.push(FileStatus {
@@ -130,29 +126,27 @@ pub fn get_status_impl(repo_path: &str) -> Result<GitStatus, GitError> {
     // Additional rename detection using diffs for staged and unstaged changes
     let mut track_diff_renames = |diff: Diff, staged: bool| {
         for delta in diff.deltas() {
-            if delta.status() == git2::Delta::Renamed {
-                if let Some((old_path, new_path)) = extract_paths(delta) {
+            if delta.status() == git2::Delta::Renamed
+                && let Some((old_path, new_path)) = extract_paths(delta) {
                     renamed_files.push(RenamedStatus {
                         old_path: old_path.clone(),
                         new_path: new_path.clone(),
                         staged,
                     });
                 }
-            }
         }
     };
 
     let mut diff_opts = DiffOptions::new();
     diff_opts.include_untracked(true);
 
-    if let Ok(head_tree) = repo.head().and_then(|h| h.peel_to_tree()) {
-        if let Ok(mut diff_index) = repo.diff_tree_to_index(Some(&head_tree), None, Some(&mut diff_opts)) {
+    if let Ok(head_tree) = repo.head().and_then(|h| h.peel_to_tree())
+        && let Ok(mut diff_index) = repo.diff_tree_to_index(Some(&head_tree), None, Some(&mut diff_opts)) {
             let mut find_opts = DiffFindOptions::new();
             find_opts.renames(true).rename_threshold(40).copy_threshold(40);
             let _ = diff_index.find_similar(Some(&mut find_opts));
             track_diff_renames(diff_index, true);
         }
-    }
 
     if let Ok(mut diff_wt) = repo.diff_index_to_workdir(None, Some(&mut diff_opts)) {
         let mut find_opts = DiffFindOptions::new();
@@ -162,15 +156,15 @@ pub fn get_status_impl(repo_path: &str) -> Result<GitStatus, GitError> {
     }
 
     // Additional rename detection: HEAD to working directory (covers full moves)
-    if let Ok(head_tree) = repo.head().and_then(|h| h.peel_to_tree()) {
-        if let Ok(mut diff_full) = repo.diff_tree_to_workdir_with_index(Some(&head_tree), Some(&mut diff_opts)) {
+    if let Ok(head_tree) = repo.head().and_then(|h| h.peel_to_tree())
+        && let Ok(mut diff_full) = repo.diff_tree_to_workdir_with_index(Some(&head_tree), Some(&mut diff_opts)) {
             let mut find_opts = DiffFindOptions::new();
             find_opts.renames(true).rename_threshold(40).copy_threshold(40);
             let _ = diff_full.find_similar(Some(&mut find_opts));
 
             for delta in diff_full.deltas() {
-                if delta.status() == git2::Delta::Renamed {
-                    if let Some((old_path, new_path)) = extract_paths(delta) {
+                if delta.status() == git2::Delta::Renamed
+                    && let Some((old_path, new_path)) = extract_paths(delta) {
                         // Check if this rename isn't already recorded
                         let already_exists = renamed_files.iter().any(|r|
                             r.old_path == old_path && r.new_path == new_path
@@ -183,10 +177,8 @@ pub fn get_status_impl(repo_path: &str) -> Result<GitStatus, GitError> {
                             });
                         }
                     }
-                }
             }
         }
-    }
 
     // Remove renamed paths from deleted/untracked sets and surface new path as modified
     for rename in &renamed_files {
@@ -689,13 +681,11 @@ pub fn get_repository_info_impl(repo_path: &str) -> Result<RepositoryInfo, GitEr
     let mut remote_urls = Vec::new();
     if let Ok(remotes) = repo.remotes() {
         for remote_name in remotes.iter() {
-            if let Some(name) = remote_name {
-                if let Ok(remote) = repo.find_remote(name) {
-                    if let Some(url) = remote.url() {
+            if let Some(name) = remote_name
+                && let Ok(remote) = repo.find_remote(name)
+                    && let Some(url) = remote.url() {
                         remote_urls.push(url.to_string());
                     }
-                }
-            }
         }
     }
 

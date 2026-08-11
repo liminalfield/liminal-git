@@ -140,12 +140,15 @@ pub fn git_error_to_napi_with_flags(error: GitError, structured: bool) -> NapiEr
         // Serialize complete error structure to JSON
         let serialized = error.to_serializable();
         serde_json::to_string(&serialized).unwrap_or_else(|_| {
-            // Fallback if serialization fails (should never happen)
-            format!("{{\"code\":\"SERIALIZATION_ERROR\",\"message\":\"Failed to serialize error\",\"retriable\":false,\"details\":{{}}}}")
+            // Fallback if serialization fails (should never happen). A raw
+            // string keeps this readable; it was previously a format! with no
+            // arguments and every brace and quote escaped.
+            r#"{"code":"SERIALIZATION_ERROR","message":"Failed to serialize error","retriable":false,"details":{}}"#
+                .to_string()
         })
     } else {
         // Simple string message for backward compatibility
-        format!("{}", error)
+        error.to_string()
     };
 
     NapiError::new(status, message)

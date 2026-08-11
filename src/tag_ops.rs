@@ -27,11 +27,10 @@ pub fn list_tags_impl(repo_path: &str) -> std::result::Result<Vec<TagInfo>, GitE
     let mut tags = Vec::new();
 
     for tag_name in tag_names.iter() {
-        if let Some(name) = tag_name {
-            if let Some(tag_info) = extract_tag_info_impl(&repo, name)? {
+        if let Some(name) = tag_name
+            && let Some(tag_info) = extract_tag_info_impl(&repo, name)? {
                 tags.push(tag_info);
             }
-        }
     }
 
     // Sort tags by creation date (newest first) - note: for testing we reverse to ensure predictable order

@@ -259,7 +259,7 @@ fn test_large_repository_performance() {
 
     // Create many files
     for i in 0..100 {
-        test_repo.add_file(&format!("file_{}.txt", i), &format!("content {}", i)).unwrap();
+        test_repo.add_file(format!("file_{}.txt", i), &format!("content {}", i)).unwrap();
     }
 
     // Time the status operation
@@ -315,7 +315,7 @@ fn test_concurrent_operations() {
 
     let mut handles = vec![];
     for (i, repo) in repos.iter().enumerate() {
-        repo.add_file(&format!("concurrent_{}.txt", i), &format!("content {}", i))
+        repo.add_file(format!("concurrent_{}.txt", i), &format!("content {}", i))
             .unwrap();
 
         // The thread gets an owned path, so it borrows nothing from `repos`.
@@ -349,9 +349,9 @@ fn test_repository_with_complex_history() {
     let status = git_service.get_status(repo_path.clone()).unwrap();
 
     // Should detect the various file states created by the fixture
-    assert!(status.modified_files.len() > 0, "Should have modified files");
-    assert!(status.staged_files.len() > 0, "Should have staged files");
-    assert!(status.untracked_files.len() > 0, "Should have untracked files");
+    assert!(!status.modified_files.is_empty(), "Should have modified files");
+    assert!(!status.staged_files.is_empty(), "Should have staged files");
+    assert!(!status.untracked_files.is_empty(), "Should have untracked files");
 
     // Repository should be detected as a valid git repo
     assert!(git_service.is_repository(repo_path).unwrap());
@@ -367,7 +367,7 @@ fn test_binary_file_handling() {
     // Add binary file
     use std::fs;
     let binary_path = test_repo.path.join("binary.dat");
-    fs::write(&binary_path, &[0x00, 0x01, 0x02, 0xFF, 0xFE]).unwrap();
+    fs::write(&binary_path, [0x00, 0x01, 0x02, 0xFF, 0xFE]).unwrap();
 
     // Should detect as untracked
     let status = git_service.get_status(repo_path.clone()).unwrap();

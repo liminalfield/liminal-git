@@ -142,8 +142,8 @@ mod repository_ops_tests {
         // Create multiple repositories for concurrent access since git2::Repository is not Send/Sync
         let test_repos: Vec<_> = (0..5).map(|i| {
             let repo = TestRepo::new().unwrap();
-            repo.add_file(&format!("concurrent{}.txt", i), &format!("content{}", i)).unwrap();
-            repo.add_file(&format!("concurrent{}_2.txt", i), &format!("content{}_2", i)).unwrap();
+            repo.add_file(format!("concurrent{}.txt", i), &format!("content{}", i)).unwrap();
+            repo.add_file(format!("concurrent{}_2.txt", i), &format!("content{}_2", i)).unwrap();
             let path = repo.path_str().to_string();
             (repo, path)
         }).collect();

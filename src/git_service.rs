@@ -34,6 +34,12 @@ impl GitService {
     /// Initializes logging if LIMINAL_LOG environment variable is set.
     /// Loads feature flags from LIMINAL_FEATURE_FLAGS environment variable.
     /// Uses try_init() to safely handle multiple instantiations.
+    // clippy suggests a Default impl alongside `new()`. Not here: this is a
+    // #[napi(constructor)], reached from JavaScript as `new GitService()`, and
+    // it has side effects — it initialises the logger and reads feature flags
+    // from the environment. A Default impl would be unreachable from JS, be
+    // called by nothing in Rust, and imply that constructing one is free.
+    #[allow(clippy::new_without_default)]
     #[napi(constructor)]
     pub fn new() -> Self {
         // Initialize logging if LIMINAL_LOG is set

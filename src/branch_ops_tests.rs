@@ -1,6 +1,6 @@
 use super::*;
 use git2::Repository;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 fn setup_test_repo() -> (TempDir, PathBuf) {
@@ -33,7 +33,7 @@ fn setup_test_repo() -> (TempDir, PathBuf) {
     (temp_dir, repo_path)
 }
 
-fn create_test_file(repo_path: &PathBuf, file_path: &str, content: &str) {
+fn create_test_file(repo_path: &Path, file_path: &str, content: &str) {
     let full_path = repo_path.join(file_path);
     if let Some(parent) = full_path.parent() {
         std::fs::create_dir_all(parent).expect("Failed to create parent directories");
@@ -41,7 +41,7 @@ fn create_test_file(repo_path: &PathBuf, file_path: &str, content: &str) {
     std::fs::write(&full_path, content).expect("Failed to write file");
 }
 
-fn commit_file(repo_path: &PathBuf, file_path: &str, message: &str) -> String {
+fn commit_file(repo_path: &Path, file_path: &str, message: &str) -> String {
     let repo = Repository::open(repo_path).expect("Failed to open repository");
     let relative_path = std::path::Path::new(file_path);
 
@@ -80,7 +80,7 @@ fn commit_file(repo_path: &PathBuf, file_path: &str, message: &str) -> String {
     commit_id.expect("Failed to create commit").to_string()
 }
 
-fn create_branch(repo_path: &PathBuf, branch_name: &str) {
+fn create_branch(repo_path: &Path, branch_name: &str) {
     let repo = Repository::open(repo_path).expect("Failed to open repository");
     let head = repo.head().expect("Failed to get HEAD");
     let commit = head.peel_to_commit().expect("Failed to get commit");
@@ -260,14 +260,14 @@ fn test_checkout_branch_safe_strategy_default() {
 // ===== ahead/behind + real commits_ahead (#390 criterion 3) =====
 
 /// Check out the default branch, tolerating either `master` or `main`.
-fn checkout_default(repo_path: &PathBuf) {
+fn checkout_default(repo_path: &Path) {
     checkout_branch_impl(repo_path.to_str().unwrap(), "master")
         .or_else(|_| checkout_branch_impl(repo_path.to_str().unwrap(), "main"))
         .expect("checkout default branch");
 }
 
 /// Write a file then commit it to the current branch.
-fn write_and_commit(repo_path: &PathBuf, file: &str, message: &str) {
+fn write_and_commit(repo_path: &Path, file: &str, message: &str) {
     create_test_file(repo_path, file, message);
     commit_file(repo_path, file, message);
 }

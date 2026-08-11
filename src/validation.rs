@@ -306,11 +306,10 @@ pub fn validate_history_pagination(limit: Option<usize>, offset: Option<usize>) 
         }
     }
 
-    if let Some(offset) = offset {
-        if offset > 100000 {
+    if let Some(offset) = offset
+        && offset > 100000 {
             return Err(GitError::InvalidArgument { argument: "offset".to_string(), reason: "Offset too large".to_string() });
         }
-    }
 
     Ok(())
 }

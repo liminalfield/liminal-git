@@ -197,7 +197,7 @@ pub fn new_function() {
     fs::write(repo_path.join("temp/temp_file.txt"), "Temporary file")?;
 
     // Binary file
-    fs::write(repo_path.join("binary.dat"), &[0x00, 0x01, 0x02, 0x03, 0xFF, 0xFE, 0xFD])?;
+    fs::write(repo_path.join("binary.dat"), [0x00, 0x01, 0x02, 0x03, 0xFF, 0xFE, 0xFD])?;
 
     println!("Created complex repository at {:?}", repo_path);
     Ok(())

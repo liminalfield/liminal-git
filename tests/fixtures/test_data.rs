@@ -1,4 +1,4 @@
-/// Test data constants and utilities
+//! Test data constants and utilities
 
 pub const SAMPLE_COMMIT_MESSAGES: &[&str] = &[
     "Initial commit",
@@ -154,27 +154,42 @@ pub const COMMON_EXTENSIONS: &[&str] = &[
 
 /// Generate a realistic project structure
 pub fn generate_project_structure() -> Vec<(String, String)> {
-    let mut files = Vec::new();
-
-    // Root files
-    files.push(("README.md".to_string(), "# Test Project\n\nA test project for git operations.".to_string()));
-    files.push(("Cargo.toml".to_string(), "[package]\nname = \"test-project\"\nversion = \"0.1.0\"\nedition = \"2021\"".to_string()));
-    files.push(("LICENSE".to_string(), "MIT License\n\nCopyright (c) 2024".to_string()));
-    files.push((".gitignore".to_string(), "target/\n*.log\n.env".to_string()));
-
-    // Source files
-    files.push(("src/main.rs".to_string(), "fn main() {\n    println!(\"Hello, world!\");\n}".to_string()));
-    files.push(("src/lib.rs".to_string(), "pub mod utils;\npub mod models;".to_string()));
-    files.push(("src/utils.rs".to_string(), "pub fn helper_function() -> String {\n    \"helper\".to_string()\n}".to_string()));
-    files.push(("src/models.rs".to_string(), "pub struct Model {\n    pub id: u32,\n    pub name: String,\n}".to_string()));
-
-    // Test files
-    files.push(("tests/integration_test.rs".to_string(), "#[test]\nfn integration_test() {\n    assert!(true);\n}".to_string()));
-    files.push(("tests/common/mod.rs".to_string(), "pub fn setup() {\n    // Test setup code\n}".to_string()));
-
-    // Documentation
-    files.push(("docs/API.md".to_string(), "# API Documentation\n\n## Overview\n\nThis is the API documentation.".to_string()));
-    files.push(("docs/CHANGELOG.md".to_string(), "# Changelog\n\n## v0.1.0\n\n- Initial release".to_string()));
+    let files: Vec<(&str, &str)> = vec![
+        // Root files
+        ("README.md", "# Test Project\n\nA test project for git operations."),
+        (
+            "Cargo.toml",
+            "[package]\nname = \"test-project\"\nversion = \"0.1.0\"\nedition = \"2021\"",
+        ),
+        ("LICENSE", "MIT License\n\nCopyright (c) 2024"),
+        (".gitignore", "target/\n*.log\n.env"),
+        // Source files
+        ("src/main.rs", "fn main() {\n    println!(\"Hello, world!\");\n}"),
+        ("src/lib.rs", "pub mod utils;\npub mod models;"),
+        (
+            "src/utils.rs",
+            "pub fn helper_function() -> String {\n    \"helper\".to_string()\n}",
+        ),
+        (
+            "src/models.rs",
+            "pub struct Model {\n    pub id: u32,\n    pub name: String,\n}",
+        ),
+        // Test files
+        (
+            "tests/integration_test.rs",
+            "#[test]\nfn integration_test() {\n    assert!(true);\n}",
+        ),
+        ("tests/common/mod.rs", "pub fn setup() {\n    // Test setup code\n}"),
+        // Documentation
+        (
+            "docs/API.md",
+            "# API Documentation\n\n## Overview\n\nThis is the API documentation.",
+        ),
+        ("docs/CHANGELOG.md", "# Changelog\n\n## v0.1.0\n\n- Initial release"),
+    ];
 
     files
+        .into_iter()
+        .map(|(path, content)| (path.to_string(), content.to_string()))
+        .collect()
 }

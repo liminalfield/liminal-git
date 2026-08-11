@@ -42,11 +42,10 @@ pub fn assert_commit_exists(repo: &Repository, message: &str) -> bool {
     revwalk.push_head().unwrap();
 
     for oid in revwalk {
-        if let Ok(commit) = repo.find_commit(oid.unwrap()) {
-            if commit.message().unwrap_or("").contains(message) {
+        if let Ok(commit) = repo.find_commit(oid.unwrap())
+            && commit.message().unwrap_or("").contains(message) {
                 return true;
             }
-        }
     }
     false
 }
@@ -62,7 +61,7 @@ pub fn assert_error_contains(error: &dyn std::error::Error, expected_text: &str)
     assert!(
         error.to_string().contains(expected_text),
         "Error message '{}' does not contain expected text '{}'",
-        error.to_string(),
+        error,
         expected_text
     );
 }

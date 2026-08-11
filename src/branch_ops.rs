@@ -182,7 +182,9 @@ pub fn checkout_branch_impl(repo_path: &str, branch_name: &str) -> std::result::
             info!("checkout_branch: using force strategy (from config)");
             true
         }
-        "safe" | _ => {
+        // "safe" is the documented default; anything unrecognised gets it
+        // too, since refusing a destructive checkout is the safer failure.
+        _ => {
             info!("checkout_branch: using safe strategy");
             false
         }
@@ -218,13 +220,12 @@ pub fn delete_branch_impl(
     let head = repo.head()
         .map_err(|e| GitError::from(e).with_operation("get_head"))?;
 
-    if let Some(current_branch) = head.shorthand() {
-        if current_branch == branch_name {
+    if let Some(current_branch) = head.shorthand()
+        && current_branch == branch_name {
             return Err(GitError::CannotDeleteCurrentBranch {
                 name: branch_name.to_string(),
             });
         }
-    }
 
     let mut branch = repo.find_branch(branch_name, BranchType::Local)
         .map_err(|_| GitError::BranchNotFound { name: branch_name.to_string() })?;
@@ -466,8 +467,8 @@ fn calculate_ahead_behind_impl(repo: &Repository, branch: &Branch) -> std::resul
 
     // Prefer the branch's configured upstream (tracking) branch — that's the
     // ahead/behind a user actually cares about when one is set.
-    if let Ok(upstream) = branch.upstream() {
-        if let Ok(upstream_commit) = upstream.get().peel_to_commit() {
+    if let Ok(upstream) = branch.upstream()
+        && let Ok(upstream_commit) = upstream.get().peel_to_commit() {
             let (ahead, behind) = repo
                 .graph_ahead_behind(branch_commit.id(), upstream_commit.id())
                 .map_err(|e| GitError::from(e).with_operation("graph_ahead_behind"))?;
@@ -476,7 +477,6 @@ fn calculate_ahead_behind_impl(repo: &Repository, branch: &Branch) -> std::resul
                 behind: behind as u32,
             });
         }
-    }
 
     // Fall back to the local default branch (main/master), skipping self so a
     // main branch isn't compared against itself.

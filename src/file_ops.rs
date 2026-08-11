@@ -198,13 +198,11 @@ fn commit_impl(
         .map_err(|e| GitError::from(e).with_operation("write_tree"))?;
 
     // Check if there are actually changes to commit
-    if let Ok(head) = repo.head() {
-        if let Ok(head_commit) = head.peel_to_commit() {
-            if head_commit.tree_id() == tree_id {
+    if let Ok(head) = repo.head()
+        && let Ok(head_commit) = head.peel_to_commit()
+            && head_commit.tree_id() == tree_id {
                 return Err(GitError::NothingToCommit);
             }
-        }
-    }
 
     // Get the tree object from the tree_id
     let tree = repo.find_tree(tree_id)
@@ -215,8 +213,7 @@ fn commit_impl(
 
     let parent_commit = match repo.head() {
         Ok(head) => {
-            let target = head.target().ok_or_else(||
-                GitError::DetachedHead)?;
+            let target = head.target().ok_or(GitError::DetachedHead)?;
             Some(repo.find_commit(target)
                 .map_err(|e| GitError::from(e).with_operation("find_commit"))?)
         }
@@ -265,7 +262,7 @@ pub fn stage_file_impl(repo_path: &str, file_path: &str) -> Result<bool, GitErro
     if full_path.is_dir() {
         // Use add_all for directories (recursive staging like `git add .nocturne`)
         let pathspec = relative_path.to_string_lossy().to_string();
-        let pathspecs = vec![pathspec.as_str()];
+        let pathspecs = [pathspec.as_str()];
         index.add_all(pathspecs.iter(), git2::IndexAddOption::DEFAULT, None)
             .map_err(|e| GitError::from(e).with_operation("add_all"))?;
     } else {
@@ -428,7 +425,7 @@ pub fn unstage_file_impl(repo_path: &str, file_path: &str, _force: bool) -> Resu
             message: "Cannot unstage in empty repository (no HEAD)".to_string(),
         })?;
 
-    let target = head.target().ok_or_else(|| GitError::DetachedHead)?;
+    let target = head.target().ok_or(GitError::DetachedHead)?;
     let commit = repo.find_commit(target)
         .map_err(|e| GitError::from(e).with_operation("find_commit"))?;
     let tree = commit.tree()
@@ -494,7 +491,7 @@ pub fn get_staged_files_impl(repo_path: &str) -> Result<Vec<String>, GitError> {
         if status_flags.contains(Status::INDEX_MODIFIED) ||
             status_flags.contains(Status::INDEX_NEW) ||
             status_flags.contains(Status::INDEX_DELETED) {
-            staged_files.push(normalize_git_path(&entry.path().unwrap_or("invalid_path").to_string()));
+            staged_files.push(normalize_git_path(entry.path().unwrap_or("invalid_path")));
         }
     }
 
@@ -631,7 +628,7 @@ pub fn discard_changes_impl(repo_path: &str, file_path: &str) -> Result<bool, Gi
     // Get HEAD commit
     let head = repo.head()
         .map_err(|e| GitError::from(e).with_operation("get_head"))?;
-    let target = head.target().ok_or_else(|| GitError::DetachedHead)?;
+    let target = head.target().ok_or(GitError::DetachedHead)?;
     let commit = repo.find_commit(target)
         .map_err(|e| GitError::from(e).with_operation("find_commit"))?;
     let tree = commit.tree()
@@ -702,7 +699,7 @@ pub fn commit_amend_impl(
     // Get HEAD commit
     let head = repo.head()
         .map_err(|e| GitError::from(e).with_operation("get_head"))?;
-    let target = head.target().ok_or_else(|| GitError::DetachedHead)?;
+    let target = head.target().ok_or(GitError::DetachedHead)?;
     let head_commit = repo.find_commit(target)
         .map_err(|e| GitError::from(e).with_operation("find_commit"))?;
 

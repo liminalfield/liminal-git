@@ -45,7 +45,7 @@ pub fn get_file_history_impl(
         .map_err(|e| GitError::from(e).with_operation("set_sorting"))?;
 
     // Gracefully handle unborn HEAD (new repo with no commits)
-    if let Err(_) = revwalk.push_head() {
+    if revwalk.push_head().is_err() {
         return Ok(CommitHistory { commits: Vec::new(), total_count: 0, has_more: false });
     }
 
@@ -158,8 +158,8 @@ fn check_file_in_commit_with_rename(
             .map(|p| p.to_string_lossy().to_string());
 
         // Check if this delta involves our file
-        let involves_our_file = new_file_path.as_ref().map_or(false, |p| p == file_path)
-            || old_file_path.as_ref().map_or(false, |p| p == file_path);
+        let involves_our_file = new_file_path.as_ref().is_some_and(|p| p == file_path)
+            || old_file_path.as_ref().is_some_and(|p| p == file_path);
 
         if !involves_our_file {
             continue;
@@ -168,17 +168,13 @@ fn check_file_in_commit_with_rename(
         file_touched = true;
 
         // Check for rename: new path matches our file, old path is different
-        if let (Some(new_path), Some(old_path_str)) = (&new_file_path, &old_file_path) {
-            if new_path == file_path && old_path_str != file_path {
+        if let (Some(new_path), Some(old_path_str)) = (&new_file_path, &old_file_path)
+            && new_path == file_path && old_path_str != file_path {
                 // This is a rename TO our current path
-                match delta.status() {
-                    git2::Delta::Renamed => {
-                        old_path = Some(old_path_str.clone());
-                    }
-                    _ => {}
+                if delta.status() == git2::Delta::Renamed {
+                    old_path = Some(old_path_str.clone());
                 }
             }
-        }
     }
 
     // If file was touched, get diff stats
@@ -232,7 +228,7 @@ pub fn get_commit_history_impl(
     revwalk.set_sorting(git2::Sort::TIME)
         .map_err(|e| GitError::from(e).with_operation("set_sorting"))?;
     // Gracefully handle unborn HEAD (new repo with no commits)
-    if let Err(_) = revwalk.push_head() {
+    if revwalk.push_head().is_err() {
         return Ok(CommitHistory { commits: Vec::new(), total_count: 0, has_more: false });
     }
 
@@ -379,14 +375,11 @@ pub fn get_deleted_files_impl(
     revwalk.set_sorting(git2::Sort::TIME)
         .map_err(|e| GitError::from(e).with_operation("set_sorting"))?;
     // Gracefully handle unborn HEAD (new repo with no commits)
-    if let Err(_) = revwalk.push_head() {
+    if revwalk.push_head().is_err() {
         return Ok(Vec::new());
     }
 
-    let head_tree = match repo.head().and_then(|head| head.peel_to_tree()) {
-        Ok(tree) => Some(tree),
-        Err(_) => None,
-    };
+    let head_tree = repo.head().and_then(|head| head.peel_to_tree()).ok();
 
     let commit_limit = limit.unwrap_or(20);  // Default for reasonable coverage
     let max_deleted_files = 50;  // Stop early once we have enough deleted files
@@ -569,11 +562,10 @@ pub fn get_file_diff_impl(
                 _ => "modified".to_string(),
             };
 
-            if let Some(old_path) = delta.old_file().path() {
-                if old_path != std::path::Path::new(file_path) {
+            if let Some(old_path) = delta.old_file().path()
+                && old_path != std::path::Path::new(file_path) {
                     file_diff.old_path = Some(old_path.to_string_lossy().to_string());
                 }
-            }
 
             file_diff.is_binary = delta.new_file().is_binary();
             true

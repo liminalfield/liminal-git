@@ -629,7 +629,7 @@ mod tests {
 
         assert_eq!(serialized.code, "FILE_NOT_FOUND");
         assert_eq!(serialized.message, "File not found: /test/file.txt");
-        assert_eq!(serialized.retriable, false);
+        assert!(!serialized.retriable);
         assert_eq!(serialized.details.len(), 1);
         assert_eq!(
             serialized.details.get("path").unwrap(),
@@ -647,7 +647,7 @@ mod tests {
 
         assert_eq!(serialized.code, "BRANCH_NOT_MERGED");
         assert!(serialized.message.contains("feature-branch"));
-        assert_eq!(serialized.retriable, false);
+        assert!(!serialized.retriable);
         assert_eq!(serialized.details.len(), 2);
         assert_eq!(
             serialized.details.get("name").unwrap(),
@@ -687,7 +687,7 @@ mod tests {
 
         assert_eq!(serialized.code, "NOTHING_TO_COMMIT");
         assert_eq!(serialized.message, "Nothing to commit");
-        assert_eq!(serialized.retriable, false);
+        assert!(!serialized.retriable);
         assert_eq!(serialized.details.len(), 0); // No details for this variant
     }
 
@@ -720,7 +720,7 @@ mod tests {
 
         assert_eq!(serialized.code, "UNSTAGED_CHANGES_WOULD_BE_LOST");
         assert!(serialized.message.contains("2 file(s)"));
-        assert_eq!(serialized.retriable, false);
+        assert!(!serialized.retriable);
         assert_eq!(serialized.details.len(), 2);
 
         // Verify files array
@@ -753,7 +753,7 @@ mod tests {
         assert!(serialized.message.contains("user.name"));
         assert!(serialized.message.contains("repository config"));
         assert!(serialized.message.contains("global config"));
-        assert_eq!(serialized.retriable, false);
+        assert!(!serialized.retriable);
         assert_eq!(serialized.details.len(), 2);
 
         // Verify key

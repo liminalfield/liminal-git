@@ -1,6 +1,6 @@
 use super::*;
 use git2::Repository;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 fn setup_test_repo() -> (TempDir, PathBuf) {
@@ -18,7 +18,7 @@ fn setup_test_repo() -> (TempDir, PathBuf) {
     (temp_dir, repo_path)
 }
 
-fn create_test_file(repo_path: &PathBuf, file_path: &str, content: &str) {
+fn create_test_file(repo_path: &Path, file_path: &str, content: &str) {
     let full_path = repo_path.join(file_path);
     if let Some(parent) = full_path.parent() {
         std::fs::create_dir_all(parent).expect("Failed to create parent directories");
@@ -26,7 +26,7 @@ fn create_test_file(repo_path: &PathBuf, file_path: &str, content: &str) {
     std::fs::write(&full_path, content).expect("Failed to write file");
 }
 
-fn commit_file(repo_path: &PathBuf, file_path: &str, message: &str) -> String {
+fn commit_file(repo_path: &Path, file_path: &str, message: &str) -> String {
     let repo = Repository::open(repo_path).expect("Failed to open repository");
     let relative_path = std::path::Path::new(file_path);
 
