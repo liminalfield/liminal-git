@@ -55,7 +55,7 @@ mod file_ops_tests {
         message: &str,
         name: &str,
         email: &str,
-    ) -> Result<git2::Oid, anyhow::Error> {
+    ) -> Result<git2::Oid, Box<dyn std::error::Error>> {
         let signature = Signature::now(name, email)?;
         let mut index = repo.index()?;
         let tree_id = index.write_tree()?;
@@ -69,7 +69,7 @@ mod file_ops_tests {
 
             // Compare current tree with HEAD tree
             if tree.id() == head_tree.id() {
-                return Err(anyhow::anyhow!("No changes to commit"));
+                return Err("No changes to commit".into());
             }
 
             let commit_id = repo.commit(
@@ -84,7 +84,7 @@ mod file_ops_tests {
         } else {
             // First commit - check if index has any entries
             if index.is_empty() {
-                return Err(anyhow::anyhow!("No changes to commit"));
+                return Err("No changes to commit".into());
             }
 
             let commit_id =

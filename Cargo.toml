@@ -14,8 +14,21 @@ repository = "https://github.com/liminalfield/liminal-git"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-# Git operations - the core library
-git2 = "0.18"
+# Git operations - the core library.
+#
+# default-features = false switches off "https", "ssh" and
+# "ssh_key_from_memory", which pull in openssl-sys and libssh2-sys. This crate
+# performs no network operations — the only uses of the word "remote" are
+# `BranchType::Remote` when listing remote-tracking branches and
+# `find_remote()` when reading configured URLs, both purely local reads.
+#
+# This is not only about a shorter dependency list. Consumers build this from
+# source (see the `prepare` script in package.json), and openssl-sys is the
+# single most common reason a `cargo build` fails on a machine that has not
+# been set up for it. Shipping that cost for capability the crate does not
+# have is a bad trade. When remote operations land, turn the features back on
+# in the same change as the credential handling they require, not before.
+git2 = { version = "0.18", default-features = false }
 walkdir = "2.3"
 
 # Node.js native module bindings (optional for testing)
@@ -29,25 +42,19 @@ serde_json = "1.0"
 # Async runtime (for future file watching, if needed)
 tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
 
-# Error handling
-anyhow = "1.0"
-
-# Logging
+# Logging. The `log` facade is used throughout; a concrete subscriber is only
+# installed by GitService::new(), which exists solely under napi-binding — so
+# env_logger rides along with that feature rather than burdening a plain
+# `cargo build --no-default-features`.
 log = "0.4"
-env_logger = "0.11"
-
-# Path manipulation
-path-absolutize = "3.1"
-
-# Test utilities
-tempfile = "3.8"
+env_logger = { version = "0.11", optional = true }
 
 [build-dependencies]
 napi-build = "2.2.3"
 
 [features]
 default = ["napi-binding"]
-napi-binding = ["napi", "napi-derive"]
+napi-binding = ["napi", "napi-derive", "env_logger"]
 
 [dev-dependencies]
 tempfile = "3.8"

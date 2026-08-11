@@ -25,9 +25,6 @@ pub mod validation;
 pub mod branch_ops;
 pub mod tag_ops;
 
-// Core service for testing without NAPI
-mod core;
-
 // Only export GitService when NAPI is enabled
 #[cfg(feature = "napi-binding")]
 pub use git_service::GitService;
@@ -42,8 +39,13 @@ pub use repository_ops::*;
 pub use tag_ops::*;
 pub use types::*;
 
-// Export core service for tests
-pub use core::GitServiceCore;
+// There used to be a `GitServiceCore` here: a 186-line struct whose every
+// method forwarded to a `*_impl` function and re-wrapped the error in
+// `anyhow`. Its stated purpose was "testing without NAPI dependencies" — it
+// existed only because the ops modules were once gated behind the napi
+// feature and so unreachable from a test binary. That gating is gone, tests
+// call the `*_impl` functions directly, and nothing referenced the shim.
+// Deleting it removed the crate's last use of `anyhow`.
 
 // Shared test helpers live in tests/common/ and are pulled in with
 // `mod common;`. There used to be a second copy at tests/test_utils.rs, which
@@ -51,19 +53,3 @@ pub use core::GitServiceCore;
 // that never existed, since files under tests/ are separate test binaries and
 // not part of this crate. It has been deleted; tests/common/ was a strict
 // superset of it.
-
-// Simple test to verify GitServiceCore works without NAPI
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_git_service_core_creation() {
-        let core = GitServiceCore::new();
-        // Test basic functionality
-        assert!(!core.is_valid_branch_name(""));
-        assert!(core.is_valid_branch_name("main"));
-        assert!(!core.is_valid_tag_name(""));
-        assert!(core.is_valid_tag_name("v1.0.0"));
-    }
-}

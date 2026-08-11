@@ -38,60 +38,13 @@ where
         .map_err(|e| git_error_to_napi_with_flags(e, structured))
 }
 
-#[cfg(feature = "napi-binding")]
-pub fn validate_and_normalize_path(
-    repo_path: &str,
-    file_path: &str,
-) -> Result<std::path::PathBuf, NapiError> {
-    // Validate repository path exists and is a directory
-    let repo_path_buf = Path::new(repo_path);
-    if !repo_path_buf.exists() {
-        return Err(NapiError::new(
-            Status::InvalidArg,
-            "Repository path does not exist",
-        ));
-    }
-
-    if !repo_path_buf.is_dir() {
-        return Err(NapiError::new(
-            Status::InvalidArg,
-            "Repository path is not a directory",
-        ));
-    }
-
-    // Convert file path to relative path from repository root
-    let abs_file_path = Path::new(file_path);
-
-    let relative_path = if abs_file_path.is_absolute() {
-        // Check for path traversal attempts
-        abs_file_path
-            .strip_prefix(repo_path_buf)
-            .map_err(|_| NapiError::new(Status::InvalidArg, "File path is not within repository"))?
-    } else {
-        abs_file_path
-    };
-
-    // Additional security check - ensure no ".." components
-    if relative_path
-        .components()
-        .any(|component| matches!(component, std::path::Component::ParentDir))
-    {
-        return Err(NapiError::new(
-            Status::InvalidArg,
-            "Path traversal not allowed",
-        ));
-    }
-
-    Ok(relative_path.to_path_buf())
-}
-
-#[cfg(feature = "napi-binding")]
-pub fn git_error_to_napi(error: git2::Error) -> NapiError {
-    NapiError::new(
-        Status::GenericFailure,
-        format!("Git error: {}", error.message()),
-    )
-}
+// There were two more path helpers here: `validate_and_normalize_path`, a
+// napi-flavoured copy of `validate_and_normalize_path_git` below, and
+// `validate_and_normalize_path_anyhow`, a third wrapper around the same
+// logic. Neither had a caller. Two unexercised copies of path-traversal
+// checking is a liability, not redundancy — the copy nothing runs is the copy
+// that drifts. One implementation, `..._git`, is what the eight call sites in
+// file_ops use, and it is the one the tests cover.
 
 /// Convert GitError to NAPI error with appropriate status codes
 ///
@@ -173,15 +126,6 @@ pub fn git_error_to_napi_with_flags(error: GitError, structured: bool) -> NapiEr
     NapiError::new(status, message)
 }
 
-/// Convert GitError to structured NAPI error (always uses JSON serialization)
-///
-/// This is a convenience wrapper that always enables structured error formatting.
-/// Use this when you want structured errors regardless of feature flag state.
-#[cfg(feature = "napi-binding")]
-pub fn git_error_to_napi_structured(error: GitError) -> NapiError {
-    git_error_to_napi_with_flags(error, true)
-}
-
 // GitError version for internal use
 pub fn validate_and_normalize_path_git(
     repo_path: &str,
@@ -228,14 +172,6 @@ pub fn validate_and_normalize_path_git(
     Ok(relative_path.to_path_buf())
 }
 
-// Deprecated: Use validate_and_normalize_path_git instead
-pub fn validate_and_normalize_path_anyhow(
-    repo_path: &str,
-    file_path: &str,
-) -> Result<std::path::PathBuf, anyhow::Error> {
-    validate_and_normalize_path_git(repo_path, file_path).map_err(|e| anyhow::anyhow!("{}", e))
-}
-
 /// Normalize path separators to forward slashes for Git compatibility
 /// Git internally uses forward slashes regardless of platform
 pub fn normalize_git_path(path: &str) -> String {
@@ -265,27 +201,14 @@ pub fn is_valid_tag_name(name: &str) -> bool {
         && !name.ends_with(".lock")
 }
 
-pub fn has_uncommitted_changes_git(repo: &git2::Repository) -> Result<bool, GitError> {
-    let mut opts = git2::StatusOptions::new();
-    opts.include_untracked(false);
-    let statuses = repo
-        .statuses(Some(&mut opts))
-        .map_err(|e| GitError::from(e).with_operation("has_uncommitted_changes"))?;
-    Ok(!statuses.is_empty())
-}
-
-#[cfg(feature = "napi-binding")]
-pub fn has_uncommitted_changes(repo: &git2::Repository) -> Result<bool, NapiError> {
-    let mut opts = git2::StatusOptions::new();
-    opts.include_untracked(false);
-    let statuses = repo.statuses(Some(&mut opts)).map_err(git_error_to_napi)?;
-    Ok(!statuses.is_empty())
-}
-
-// Deprecated: Use has_uncommitted_changes_git instead
-pub fn has_uncommitted_changes_anyhow(repo: &git2::Repository) -> Result<bool, anyhow::Error> {
-    has_uncommitted_changes_git(repo).map_err(|e| anyhow::anyhow!("{}", e))
-}
+// Two `has_uncommitted_changes` helpers lived here (a GitError one and a
+// napi one, plus an anyhow one before that), all three unreferenced. The only
+// live answer to that question is computed inline in
+// `repository_ops::get_repository_info_impl`, and deliberately not on the
+// same terms: these helpers set `include_untracked(false)`, while the live
+// code passes `None` and takes libgit2's defaults. Keeping a dead helper that
+// answers a subtly different question than the live code is a trap for
+// whoever reaches for it next, so they are gone rather than merged.
 
 /// Read user signature from git config with lenient validation
 ///
@@ -397,6 +320,42 @@ pub(crate) fn read_user_signature<'a>(
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    /// Every rule these two functions actually enforce.
+    ///
+    /// The only coverage they had was a smoke test on the deleted
+    /// `GitServiceCore`, asserting the empty case and one good name — four
+    /// of the twelve branches below. The two functions are byte-identical
+    /// today, so they are tested against the same table; if they ever
+    /// diverge (git's tag rules are not quite git's branch rules), this is
+    /// where the divergence gets written down.
+    #[test]
+    fn ref_name_validity_rules() {
+        let valid = ["main", "feature/thing", "v1.0.0", "release-2"];
+        let invalid = [
+            "",               // empty
+            "-leading-dash",  // git reads a leading dash as a flag
+            "a..b",           // reserved range syntax
+            "with\0null",     // NUL is never legal in a ref name
+            "trailing/",      // a ref cannot end in a separator
+            "something.lock", // collides with git's lockfile convention
+        ];
+
+        for name in valid {
+            assert!(
+                is_valid_branch_name(name),
+                "branch {name:?} should be valid"
+            );
+            assert!(is_valid_tag_name(name), "tag {name:?} should be valid");
+        }
+        for name in invalid {
+            assert!(
+                !is_valid_branch_name(name),
+                "branch {name:?} should be rejected"
+            );
+            assert!(!is_valid_tag_name(name), "tag {name:?} should be rejected");
+        }
+    }
 
     fn setup_test_repo() -> (tempfile::TempDir, PathBuf) {
         let temp_dir =

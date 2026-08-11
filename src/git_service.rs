@@ -16,12 +16,6 @@ use log::info;
 use napi::Result;
 use napi_derive::napi;
 
-// Deprecated: Use git_error_to_napi instead
-#[allow(dead_code)]
-fn anyhow_to_napi(error: anyhow::Error) -> napi::Error {
-    napi::Error::new(napi::Status::GenericFailure, format!("{}", error))
-}
-
 #[napi]
 pub struct GitService {
     feature_flags: FeatureFlags,
@@ -726,31 +720,11 @@ impl GitService {
         &self.feature_flags
     }
 
-    /// Internal helper: Format git timestamp to ISO string
-    /// (Reserved for future use by operation modules)
-    #[allow(dead_code)]
-    pub(crate) fn format_timestamp(&self, time: git2::Time) -> String {
-        utils::format_timestamp(time)
-    }
-
-    /// Internal helper: Check if branch name is valid
-    /// (Reserved for future use by operation modules)
-    #[allow(dead_code)]
-    pub(crate) fn is_valid_branch_name(&self, name: &str) -> bool {
-        utils::is_valid_branch_name(name)
-    }
-
-    /// Internal helper: Check if tag name is valid
-    /// (Reserved for future use by operation modules)
-    #[allow(dead_code)]
-    pub(crate) fn is_valid_tag_name(&self, name: &str) -> bool {
-        utils::is_valid_tag_name(name)
-    }
-
-    /// Internal helper: Check for uncommitted changes
-    /// (Reserved for future use by operation modules)
-    #[allow(dead_code)]
-    pub(crate) fn has_uncommitted_changes(&self, repo: &git2::Repository) -> Result<bool> {
-        utils::has_uncommitted_changes(repo)
-    }
+    // Four more `pub(crate)` helpers followed, each one line forwarding to the
+    // identically-named `utils::` function, each carrying `#[allow(dead_code)]`
+    // and a comment reading "reserved for future use by operation modules".
+    // The operation modules import `utils` and call those functions directly,
+    // which is why the forwarders were never called and why the compiler had
+    // to be silenced to keep them. A `#[allow(dead_code)]` on a delegate is
+    // not a reservation; it is an unused method with the warning turned off.
 }
