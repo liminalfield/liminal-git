@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 
 // Per-repo cache for deleted files, keyed by repo path — valid if HEAD matches
 // OR the entry is < 30s old (time-based validity avoids thrashing during rapid
-// auto-commits). Keying by path stops multiple open books from evicting each
-// other's entries (the old single-slot cache thrashed across repos). BTreeMap
+// auto-commits). Keying by path stops multiple open repositories from evicting
+// each other's entries (the old single-slot cache thrashed across repos). BTreeMap
 // is used because its `new()` is const, so the static needs no lazy init.
 static DELETED_FILES_CACHE: Mutex<BTreeMap<String, DeletedFilesCache>> =
     Mutex::new(BTreeMap::new());
@@ -556,7 +556,7 @@ pub fn get_deleted_files_impl(
         start.elapsed().as_millis()
     );
 
-    // Store this repo's entry (keyed by path, so other open books are untouched).
+    // Store this repo's entry (keyed by path, so other open repos are untouched).
     {
         let mut cache = DELETED_FILES_CACHE
             .lock()

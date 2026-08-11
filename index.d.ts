@@ -10,10 +10,10 @@ export declare class GitService {
    */
   constructor()
   isRepository(path: string): Promise<boolean>
-  getStatus(bookPath: string): Promise<GitStatus>
-  commitFile(bookPath: string, filePath: string, message: string, userName: string, userEmail: string): Promise<string>
-  commitFiles(bookPath: string, filePaths: Array<string>, message: string, userName: string, userEmail: string): Promise<string>
-  stageFile(bookPath: string, filePath: string): Promise<boolean>
+  getStatus(repoPath: string): Promise<GitStatus>
+  commitFile(repoPath: string, filePath: string, message: string, userName: string, userEmail: string): Promise<string>
+  commitFiles(repoPath: string, filePaths: Array<string>, message: string, userName: string, userEmail: string): Promise<string>
+  stageFile(repoPath: string, filePath: string): Promise<boolean>
   /**
    * Unstage a file from the index (reset to HEAD state)
    *
@@ -21,27 +21,29 @@ export declare class GitService {
    * become "unstaged" instead of "staged".
    *
    * # Arguments
-   * * `book_path` - Path to repository
+   * * `repo_path` - Path to repository
    * * `file_path` - Path to file to unstage
    * * `force` - Reserved for future use (currently ignored, unstaging is inherently safe)
    */
-  unstageFile(bookPath: string, filePath: string, force?: boolean | undefined | null): Promise<boolean>
-  getStagedFiles(bookPath: string): Promise<Array<string>>
-  stageDeletion(bookPath: string, filePath: string): Promise<boolean>
-  stageRename(bookPath: string, oldPath: string, newPath: string): Promise<boolean>
-  commitStagedChanges(bookPath: string, message: string, userName: string, userEmail: string): Promise<string>
-  moveFile(bookPath: string, sourcePath: string, destPath: string, message: string, userName: string, userEmail: string): Promise<string>
-  moveDirectory(bookPath: string, sourcePath: string, destPath: string, message: string, userName: string, userEmail: string): Promise<string>
+  unstageFile(repoPath: string, filePath: string, force?: boolean | undefined | null): Promise<boolean>
+  getStagedFiles(repoPath: string): Promise<Array<string>>
+  stageDeletion(repoPath: string, filePath: string): Promise<boolean>
+  stageRename(repoPath: string, oldPath: string, newPath: string): Promise<boolean>
+  commitStagedChanges(repoPath: string, message: string, userName: string, userEmail: string): Promise<string>
+  moveFile(repoPath: string, sourcePath: string, destPath: string, message: string, userName: string, userEmail: string): Promise<string>
+  moveDirectory(repoPath: string, sourcePath: string, destPath: string, message: string, userName: string, userEmail: string): Promise<string>
   initRepository(path: string): Promise<boolean>
   initRepositoryWithConfig(path: string, config: RepositoryConfig): Promise<boolean>
   /**
    * Initialize a Git repository in a directory that already contains files.
-   * Used for book duplication where content is copied first, then git is initialized.
+   * For duplicating an existing project: copy the content into place first,
+   * then initialise git over it.
    */
   initRepositoryInExistingDir(path: string): Promise<boolean>
   /**
    * Remove all remotes from a repository.
-   * Used when duplicating a book with "clone history" to prevent accidental pushes.
+   * Used when duplicating a repository with its history, so the copy cannot
+   * accidentally push to the original's remotes.
    */
   removeAllRemotes(repoPath: string): Promise<Array<string>>
   isRepositoryHealthy(repoPath: string): Promise<RepositoryHealth>
@@ -98,7 +100,7 @@ export declare class GitService {
    * Returns a unified diff string suitable for display in a diff viewer.
    * Handles new files, binary files, and modified files.
    */
-  getDiff(bookPath: string, filePath: string): Promise<string>
+  getDiff(repoPath: string, filePath: string): Promise<string>
   /** List all branches in the repository */
   listBranches(repoPath: string, includeRemote?: boolean | undefined | null): Promise<Array<BranchInfo>>
   /** Get information about the current branch */
@@ -295,7 +297,7 @@ export interface RepositoryInfo {
 
 /** Information about a git tag */
 export interface TagInfo {
-  /** Tag name (e.g., "v1.0.0", "chapter-5-complete") */
+  /** Tag name (e.g., "v1.0.0", "release-candidate") */
   name: string
   /** Hash of the commit this tag points to */
   commitHash: string

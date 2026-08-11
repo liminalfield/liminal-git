@@ -289,7 +289,8 @@ pub fn init_repository_impl(path: &str) -> Result<bool, GitError> {
 }
 
 /// Initialize a Git repository in a directory that may already contain files.
-/// Used for book duplication where we copy content first, then init git.
+/// For duplicating an existing project: content is copied into place first,
+/// then git is initialised over it.
 /// Unlike init_repository_impl, this does NOT check if directory is empty.
 pub fn init_repository_in_existing_dir_impl(path: &str) -> Result<bool, GitError> {
     info!("init_repository_in_existing_dir: path={}", path);
@@ -306,7 +307,8 @@ pub fn init_repository_in_existing_dir_impl(path: &str) -> Result<bool, GitError
 }
 
 /// Remove all remotes from a repository.
-/// Used when duplicating a book with "clone history" to prevent accidental pushes.
+/// Used when duplicating a repository with its history, so the copy cannot
+/// accidentally push to the original's remotes.
 pub fn remove_all_remotes_impl(repo_path: &str) -> Result<Vec<String>, GitError> {
     info!("remove_all_remotes: path={}", repo_path);
     let start = std::time::Instant::now();

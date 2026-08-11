@@ -193,7 +193,7 @@ pub struct AheadBehind {
 #[derive(Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "napi-binding", napi(object))]
 pub struct TagInfo {
-    /// Tag name (e.g., "v1.0.0", "chapter-5-complete")
+    /// Tag name (e.g., "v1.0.0", "release-candidate")
     pub name: String,
     /// Hash of the commit this tag points to
     pub commit_hash: String,

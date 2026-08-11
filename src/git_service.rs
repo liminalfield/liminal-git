@@ -63,29 +63,29 @@ impl GitService {
     }
 
     #[napi]
-    pub async fn get_status(&self, book_path: String) -> Result<GitStatus> {
-        validate_repo_path(&book_path)?;
+    pub async fn get_status(&self, repo_path: String) -> Result<GitStatus> {
+        validate_repo_path(&repo_path)?;
         let structured = self.feature_flags().structured_errors;
-        utils::run_blocking(structured, move || get_status_impl(&book_path)).await
+        utils::run_blocking(structured, move || get_status_impl(&repo_path)).await
     }
 
     #[napi]
     pub async fn commit_file(
         &self,
-        book_path: String,
+        repo_path: String,
         file_path: String,
         message: String,
         user_name: String,
         user_email: String,
     ) -> Result<String> {
-        validate_repo_path(&book_path)?;
+        validate_repo_path(&repo_path)?;
         validate_file_path(&file_path)?;
         validate_commit_message(&message)?;
         validate_user_info(&user_name, &user_email)?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            let _guard = utils::lock_repo(&book_path)?;
-            commit_file_impl(&book_path, &file_path, &message, &user_name, &user_email)
+            let _guard = utils::lock_repo(&repo_path)?;
+            commit_file_impl(&repo_path, &file_path, &message, &user_name, &user_email)
         })
         .await
     }
@@ -93,32 +93,32 @@ impl GitService {
     #[napi]
     pub async fn commit_files(
         &self,
-        book_path: String,
+        repo_path: String,
         file_paths: Vec<String>,
         message: String,
         user_name: String,
         user_email: String,
     ) -> Result<String> {
-        validate_repo_path(&book_path)?;
+        validate_repo_path(&repo_path)?;
         validate_file_paths(&file_paths)?;
         validate_commit_message(&message)?;
         validate_user_info(&user_name, &user_email)?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            let _guard = utils::lock_repo(&book_path)?;
-            commit_files_impl(&book_path, &file_paths, &message, &user_name, &user_email)
+            let _guard = utils::lock_repo(&repo_path)?;
+            commit_files_impl(&repo_path, &file_paths, &message, &user_name, &user_email)
         })
         .await
     }
 
     #[napi]
-    pub async fn stage_file(&self, book_path: String, file_path: String) -> Result<bool> {
-        validate_repo_path(&book_path)?;
+    pub async fn stage_file(&self, repo_path: String, file_path: String) -> Result<bool> {
+        validate_repo_path(&repo_path)?;
         validate_file_path(&file_path)?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            let _guard = utils::lock_repo(&book_path)?;
-            stage_file_impl(&book_path, &file_path)
+            let _guard = utils::lock_repo(&repo_path)?;
+            stage_file_impl(&repo_path, &file_path)
         })
         .await
     }
@@ -129,43 +129,43 @@ impl GitService {
     /// become "unstaged" instead of "staged".
     ///
     /// # Arguments
-    /// * `book_path` - Path to repository
+    /// * `repo_path` - Path to repository
     /// * `file_path` - Path to file to unstage
     /// * `force` - Reserved for future use (currently ignored, unstaging is inherently safe)
     #[napi]
     pub async fn unstage_file(
         &self,
-        book_path: String,
+        repo_path: String,
         file_path: String,
         force: Option<bool>,
     ) -> Result<bool> {
-        validate_repo_path(&book_path)?;
+        validate_repo_path(&repo_path)?;
         validate_file_path(&file_path)?;
 
         let force_flag = force.unwrap_or(false);
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            let _guard = utils::lock_repo(&book_path)?;
-            unstage_file_impl(&book_path, &file_path, force_flag)
+            let _guard = utils::lock_repo(&repo_path)?;
+            unstage_file_impl(&repo_path, &file_path, force_flag)
         })
         .await
     }
 
     #[napi]
-    pub async fn get_staged_files(&self, book_path: String) -> Result<Vec<String>> {
-        validate_repo_path(&book_path)?;
+    pub async fn get_staged_files(&self, repo_path: String) -> Result<Vec<String>> {
+        validate_repo_path(&repo_path)?;
         let structured = self.feature_flags().structured_errors;
-        utils::run_blocking(structured, move || get_staged_files_impl(&book_path)).await
+        utils::run_blocking(structured, move || get_staged_files_impl(&repo_path)).await
     }
 
     #[napi]
-    pub async fn stage_deletion(&self, book_path: String, file_path: String) -> Result<bool> {
-        validate_repo_path(&book_path)?;
+    pub async fn stage_deletion(&self, repo_path: String, file_path: String) -> Result<bool> {
+        validate_repo_path(&repo_path)?;
         validate_file_path(&file_path)?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            let _guard = utils::lock_repo(&book_path)?;
-            stage_deletion_impl(&book_path, &file_path)
+            let _guard = utils::lock_repo(&repo_path)?;
+            stage_deletion_impl(&repo_path, &file_path)
         })
         .await
     }
@@ -173,17 +173,17 @@ impl GitService {
     #[napi]
     pub async fn stage_rename(
         &self,
-        book_path: String,
+        repo_path: String,
         old_path: String,
         new_path: String,
     ) -> Result<bool> {
-        validate_repo_path(&book_path)?;
+        validate_repo_path(&repo_path)?;
         validate_file_path(&old_path)?;
         validate_file_path(&new_path)?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            let _guard = utils::lock_repo(&book_path)?;
-            stage_rename_impl(&book_path, &old_path, &new_path)
+            let _guard = utils::lock_repo(&repo_path)?;
+            stage_rename_impl(&repo_path, &old_path, &new_path)
         })
         .await
     }
@@ -191,16 +191,16 @@ impl GitService {
     #[napi]
     pub async fn commit_staged_changes(
         &self,
-        book_path: String,
+        repo_path: String,
         message: String,
         user_name: String,
         user_email: String,
     ) -> Result<String> {
-        validate_repo_path(&book_path)?;
+        validate_repo_path(&repo_path)?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            let _guard = utils::lock_repo(&book_path)?;
-            commit_staged_changes_impl(&book_path, &message, &user_name, &user_email)
+            let _guard = utils::lock_repo(&repo_path)?;
+            commit_staged_changes_impl(&repo_path, &message, &user_name, &user_email)
         })
         .await
     }
@@ -208,23 +208,23 @@ impl GitService {
     #[napi]
     pub async fn move_file(
         &self,
-        book_path: String,
+        repo_path: String,
         source_path: String,
         dest_path: String,
         message: String,
         user_name: String,
         user_email: String,
     ) -> Result<String> {
-        validate_repo_path(&book_path)?;
+        validate_repo_path(&repo_path)?;
         validate_file_path(&source_path)?;
         validate_file_path(&dest_path)?;
         validate_commit_message(&message)?;
         validate_user_info(&user_name, &user_email)?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            let _guard = utils::lock_repo(&book_path)?;
+            let _guard = utils::lock_repo(&repo_path)?;
             move_file_impl(
-                &book_path,
+                &repo_path,
                 &source_path,
                 &dest_path,
                 &message,
@@ -238,23 +238,23 @@ impl GitService {
     #[napi]
     pub async fn move_directory(
         &self,
-        book_path: String,
+        repo_path: String,
         source_path: String,
         dest_path: String,
         message: String,
         user_name: String,
         user_email: String,
     ) -> Result<String> {
-        validate_repo_path(&book_path)?;
+        validate_repo_path(&repo_path)?;
         validate_directory_path(&source_path)?;
         validate_directory_path(&dest_path)?;
         validate_commit_message(&message)?;
         validate_user_info(&user_name, &user_email)?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            let _guard = utils::lock_repo(&book_path)?;
+            let _guard = utils::lock_repo(&repo_path)?;
             move_directory_impl(
-                &book_path,
+                &repo_path,
                 &source_path,
                 &dest_path,
                 &message,
@@ -298,7 +298,8 @@ impl GitService {
     }
 
     /// Initialize a Git repository in a directory that already contains files.
-    /// Used for book duplication where content is copied first, then git is initialized.
+    /// For duplicating an existing project: copy the content into place first,
+    /// then initialise git over it.
     #[napi]
     pub async fn init_repository_in_existing_dir(&self, path: String) -> Result<bool> {
         validate_repo_path(&path)?;
@@ -312,7 +313,8 @@ impl GitService {
     }
 
     /// Remove all remotes from a repository.
-    /// Used when duplicating a book with "clone history" to prevent accidental pushes.
+    /// Used when duplicating a repository with its history, so the copy cannot
+    /// accidentally push to the original's remotes.
     #[napi]
     pub async fn remove_all_remotes(&self, repo_path: String) -> Result<Vec<String>> {
         validate_repo_path(&repo_path)?;
@@ -614,11 +616,11 @@ impl GitService {
     /// Returns a unified diff string suitable for display in a diff viewer.
     /// Handles new files, binary files, and modified files.
     #[napi]
-    pub async fn get_diff(&self, book_path: String, file_path: String) -> Result<String> {
-        validate_repo_path(&book_path)?;
+    pub async fn get_diff(&self, repo_path: String, file_path: String) -> Result<String> {
+        validate_repo_path(&repo_path)?;
         validate_file_path(&file_path)?;
         let structured = self.feature_flags().structured_errors;
-        utils::run_blocking(structured, move || get_diff_impl(&book_path, &file_path)).await
+        utils::run_blocking(structured, move || get_diff_impl(&repo_path, &file_path)).await
     }
 
     /// List all branches in the repository

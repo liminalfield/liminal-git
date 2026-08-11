@@ -44,13 +44,6 @@ pub struct RepoLock {
     _process: MutexGuard<'static, ()>,
 }
 
-/// Where the lock file lives for a repository.
-///
-/// Inside the git directory, which pins the lock to the *repository* rather
-/// than to a user or a machine. A path under `$TMPDIR` or `~/.local/state`
-/// would be simpler and wrong: two users sharing a repository on a network
-/// volume would take different locks and exclude nobody. `.git/` also keeps it
-/// out of `git status`, which a file in the working tree would not.
 /// Resolve a caller's path string to the two things a lock is identified by:
 /// the registry key and the lock file.
 ///
@@ -69,6 +62,13 @@ pub(crate) fn lock_identity(repo_path: &str) -> Result<(String, PathBuf), GitErr
     Ok((key, path))
 }
 
+/// Where the lock file lives for a repository.
+///
+/// Inside the git directory, which pins the lock to the *repository* rather
+/// than to a user or a machine. A path under `$TMPDIR` or `~/.local/state`
+/// would be simpler and wrong: two users sharing a repository on a network
+/// volume would take different locks and exclude nobody. `.git/` also keeps it
+/// out of `git status`, which a file in the working tree would not.
 fn lock_file_path(repo_path: &Path) -> PathBuf {
     let dot_git = repo_path.join(".git");
 
@@ -119,7 +119,7 @@ fn lock_file_path(repo_path: &Path) -> PathBuf {
 /// moment.
 ///
 /// The key is the canonicalised path, not the caller's string. One repository
-/// can be named `/books/a`, `/books/a/`, a relative path, or a symlink into the
+/// can be named `/srv/repo`, `/srv/repo/`, a relative path, or a symlink into the
 /// real location; keyed literally, those are different entries, and both
 /// callers proceed at once — a mutual exclusion that silently isn't one, in
 /// exactly the situation the lock exists for.

@@ -268,7 +268,7 @@ pub fn stage_file_impl(repo_path: &str, file_path: &str) -> Result<bool, GitErro
     // Check if path is a directory by checking if it exists on disk
     let full_path = std::path::Path::new(repo_path).join(&relative_path);
     if full_path.is_dir() {
-        // Use add_all for directories (recursive staging like `git add .nocturne`)
+        // Use add_all for directories (recursive staging, like `git add <dir>`)
         let pathspec = relative_path.to_string_lossy().to_string();
         let pathspecs = [pathspec.as_str()];
         index
