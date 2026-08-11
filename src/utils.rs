@@ -11,14 +11,30 @@ use napi::Status;
 
 // Per-repo lock registry (#390). Mutating git ops on the same repo run under
 // this lock so concurrent IPC handlers can't race the index/HEAD. Read-only ops
-// don't take it. Keyed by repo path; BTreeMap::new() is const so no lazy init.
+// don't take it. BTreeMap::new() is const, so no lazy init.
 static REPO_LOCKS: Mutex<BTreeMap<String, Arc<Mutex<()>>>> = Mutex::new(BTreeMap::new());
 
 /// The mutating-operation lock for a repo path (created on first use).
+///
+/// The key is the canonicalised path, not the caller's string. The path
+/// arrives from JavaScript and two callers can name one repository
+/// differently — `/books/a` and `/books/a/`, a relative path against the
+/// process cwd, or a symlink into the real location. Keyed by the raw string
+/// those produce different entries, so both operations acquire different
+/// locks and proceed at once: a mutual exclusion that silently isn't one, in
+/// exactly the concurrent situation the lock exists for.
+///
+/// `canonicalize` requires the path to exist. When it doesn't there is no
+/// repository to serialise access to, so falling back to the raw string is
+/// safe — the caller is about to fail its own path validation anyway.
 pub fn repo_lock(repo_path: &str) -> Arc<Mutex<()>> {
+    let key = std::fs::canonicalize(repo_path)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| repo_path.to_string());
+
     let mut locks = REPO_LOCKS.lock().unwrap_or_else(|p| p.into_inner());
     locks
-        .entry(repo_path.to_string())
+        .entry(key)
         .or_insert_with(|| Arc::new(Mutex::new(())))
         .clone()
 }
@@ -355,6 +371,50 @@ mod tests {
             );
             assert!(!is_valid_tag_name(name), "tag {name:?} should be rejected");
         }
+    }
+
+    /// Different spellings of one repository must share one lock.
+    ///
+    /// This is the property the registry exists for, and the one a raw-string
+    /// key quietly failed to provide. `Arc::ptr_eq` is the assertion that
+    /// matters: two equal-but-distinct `Mutex<()>` values would satisfy any
+    /// weaker comparison while excluding nothing.
+    #[test]
+    fn repo_lock_is_keyed_by_identity_not_spelling() {
+        let (_temp, repo_path) = setup_test_repo();
+        let canonical = std::fs::canonicalize(&repo_path).unwrap();
+        let base = canonical.to_string_lossy().into_owned();
+
+        let spellings = [
+            base.clone(),
+            format!("{base}/"),                       // trailing separator
+            format!("{base}/."),                      // same directory, said the long way
+            format!("{base}/sub/.."),                 // a round trip through a child
+            repo_path.to_string_lossy().into_owned(), // possibly a symlinked /tmp
+        ];
+        std::fs::create_dir_all(canonical.join("sub")).unwrap();
+
+        let first = repo_lock(&spellings[0]);
+        for spelling in &spellings[1..] {
+            assert!(
+                Arc::ptr_eq(&first, &repo_lock(spelling)),
+                "{spelling:?} got a different lock than {:?} — two writers to \
+                 the same repository would run concurrently",
+                spellings[0],
+            );
+        }
+    }
+
+    /// The converse: distinct repositories must not contend.
+    #[test]
+    fn repo_lock_separates_distinct_repos() {
+        let (_temp_a, path_a) = setup_test_repo();
+        let (_temp_b, path_b) = setup_test_repo();
+
+        assert!(!Arc::ptr_eq(
+            &repo_lock(&path_a.to_string_lossy()),
+            &repo_lock(&path_b.to_string_lossy()),
+        ));
     }
 
     fn setup_test_repo() -> (tempfile::TempDir, PathBuf) {

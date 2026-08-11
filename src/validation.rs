@@ -184,10 +184,19 @@ pub fn validate_user_info(user_name: &str, user_email: &str) -> Result<(), GitEr
         });
     }
 
-    // More thorough email validation
-    let at_pos = user_email.find('@').unwrap();
-    let local_part = &user_email[..at_pos];
-    let domain_part = &user_email[at_pos + 1..];
+    // More thorough email validation.
+    //
+    // The `contains('@')` check above already guarantees this succeeds, which
+    // is exactly why this was written as `find('@').unwrap()` and two slices.
+    // Splitting instead makes that guarantee the compiler's to keep rather
+    // than the reader's to verify, and it survives someone reordering the
+    // checks above. `split_once` splits on the first '@', as `find` did.
+    let Some((local_part, domain_part)) = user_email.split_once('@') else {
+        return Err(GitError::InvalidArgument {
+            argument: "user_email".to_string(),
+            reason: "Invalid email format".to_string(),
+        });
+    };
 
     if local_part.is_empty() {
         return Err(GitError::InvalidArgument {

@@ -184,10 +184,11 @@ fn extract_tag_info_impl(
         .peel(ObjectType::Any)
         .map_err(|e| GitError::from(e).with_operation("peel_tag_object"))?;
 
-    // Check if it's an annotated tag
-    if tag_object.kind() == Some(ObjectType::Tag) {
-        // Annotated tag
-        let tag = tag_object.as_tag().unwrap();
+    // An annotated tag is its own object; a lightweight tag is a ref pointing
+    // straight at a commit. `as_tag()` returns Some exactly when the object
+    // kind is Tag, so asking for the tag *is* the discriminant — this used to
+    // test `kind() == Some(ObjectType::Tag)` and then unwrap the same answer.
+    if let Some(tag) = tag_object.as_tag() {
         let target_commit = tag
             .target()
             .and_then(|obj| obj.peel_to_commit())
