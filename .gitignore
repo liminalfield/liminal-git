@@ -8,5 +8,11 @@
 # Node
 node_modules/
 
+# Real git repositories built at test time by tests/fixtures/create_repos.rs,
+# written to the working directory rather than a temp dir. They are build
+# output — and being git repos themselves, committing them would nest a
+# repository inside this one.
+/test-fixtures/
+
 # OS
 .DS_Store

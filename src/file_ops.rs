@@ -612,8 +612,13 @@ pub fn restore_file_from_commit_impl(
 /// * `Err(GitError::DetachedHead)` - Repository is in detached HEAD state
 ///
 /// # Example
-/// ```rust
+/// ```no_run
+/// # fn main() -> Result<(), liminal_git::GitError> {
+/// use liminal_git::file_ops::discard_changes_impl;
+///
 /// discard_changes_impl("/repo", "file.txt")?;
+/// # Ok(())
+/// # }
 /// ```
 pub fn discard_changes_impl(repo_path: &str, file_path: &str) -> Result<bool, GitError> {
     info!("discard_changes: path={}", file_path);
@@ -670,12 +675,17 @@ pub fn discard_changes_impl(repo_path: &str, file_path: &str) -> Result<bool, Gi
 /// * `Err(GitError::ConfigMissing)` - user.name/email not configured
 ///
 /// # Example
-/// ```rust
+/// ```no_run
+/// # fn main() -> Result<(), liminal_git::GitError> {
+/// use liminal_git::file_ops::commit_amend_impl;
+///
 /// // Amend with new message
 /// commit_amend_impl("/repo", "Updated message", Some("Alice"), Some("alice@example.com"))?;
 ///
 /// // Amend keeping original message
 /// commit_amend_impl("/repo", "", None, None)?;
+/// # Ok(())
+/// # }
 /// ```
 pub fn commit_amend_impl(
     repo_path: &str,

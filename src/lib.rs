@@ -45,7 +45,12 @@ pub use tag_ops::*;
 // Export core service for tests
 pub use core::GitServiceCore;
 
-// Note: test_utils is in tests/ directory and available for integration tests
+// Shared test helpers live in tests/common/ and are pulled in with
+// `mod common;`. There used to be a second copy at tests/test_utils.rs, which
+// integration_tests.rs tried to reach as `liminal_git::test_utils` — a path
+// that never existed, since files under tests/ are separate test binaries and
+// not part of this crate. It has been deleted; tests/common/ was a strict
+// superset of it.
 
 // Simple test to verify GitServiceCore works without NAPI
 #[cfg(test)]

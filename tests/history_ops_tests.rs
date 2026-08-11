@@ -70,14 +70,23 @@ mod history_ops_tests {
         assert!(!history2.has_more);
     }
 
+    /// A repository with no commits yet has an empty history, not an error.
+    ///
+    /// This asserted `is_err()`, from when an unborn HEAD let the revwalk
+    /// failure propagate. `get_commit_history_impl` now handles that case
+    /// explicitly, which is what a freshly created book needs: an empty
+    /// history to display, rather than a load failure.
     #[test]
     fn test_get_commit_history_empty_repo() {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().to_string_lossy().to_string();
         init_repository_impl(&path).unwrap();
 
-        let result = get_commit_history_impl(&path, None, None);
-        assert!(result.is_err()); // Should fail on empty repo with no HEAD
+        let history = get_commit_history_impl(&path, None, None)
+            .expect("an unborn HEAD is an empty history, not a failure");
+        assert!(history.commits.is_empty());
+        assert_eq!(history.total_count, 0);
+        assert!(!history.has_more);
     }
 
     #[test]

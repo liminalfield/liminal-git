@@ -1,21 +1,102 @@
-use tempfile::TempDir;
 use serial_test::serial;
 
-// Import the git service modules - note: hyphens become underscores
-use liminal_git::{GitService, test_utils};
+mod common;
+use common::*;
 
 mod fixtures;
 use fixtures::create_repos;
 
-// Helper function to create a test git service
-fn create_git_service() -> GitService {
-    GitService::new()
+/// A pure-Rust stand-in for the N-API `GitService`.
+///
+/// These tests were written against `GitService` itself, which cannot be
+/// exercised from a Rust test binary: it links napi, whose symbols the host
+/// Node process supplies at run time, so the target fails at the linker. The
+/// tests consequently never ran, and drifted until they no longer compiled.
+///
+/// Rather than rewrite fifty-odd call sites, this mirrors what each
+/// `GitService` method actually does — run the same validators in the same
+/// order, then call the same `*_impl` — minus the async wrapper and the
+/// per-repo lock. The workflows below therefore still exercise the real code
+/// path, including the validation the error-path tests depend on.
+///
+/// What it does NOT prove is that `GitService` is wired this way. That is a
+/// property of the N-API surface, only observable from Node, and there is no
+/// JS suite in this package today. If a validator were dropped from a method
+/// in git_service.rs, nothing here would notice.
+struct GitOps;
+
+impl GitOps {
+    fn is_repository(&self, path: String) -> Result<bool, GitError> {
+        validate_repo_path(&path)?;
+        Ok(is_repository_impl(&path))
+    }
+
+    fn get_status(&self, repo_path: String) -> Result<GitStatus, GitError> {
+        validate_repo_path(&repo_path)?;
+        get_status_impl(&repo_path)
+    }
+
+    fn stage_file(&self, repo_path: String, file_path: String) -> Result<bool, GitError> {
+        validate_repo_path(&repo_path)?;
+        validate_file_path(&file_path)?;
+        stage_file_impl(&repo_path, &file_path)
+    }
+
+    fn unstage_file(
+        &self,
+        repo_path: String,
+        file_path: String,
+        force: Option<bool>,
+    ) -> Result<bool, GitError> {
+        validate_repo_path(&repo_path)?;
+        validate_file_path(&file_path)?;
+        unstage_file_impl(&repo_path, &file_path, force.unwrap_or(false))
+    }
+
+    fn get_staged_files(&self, repo_path: String) -> Result<Vec<String>, GitError> {
+        validate_repo_path(&repo_path)?;
+        get_staged_files_impl(&repo_path)
+    }
+
+    fn commit_file(
+        &self,
+        repo_path: String,
+        file_path: String,
+        message: String,
+        user_name: String,
+        user_email: String,
+    ) -> Result<String, GitError> {
+        validate_repo_path(&repo_path)?;
+        validate_file_path(&file_path)?;
+        validate_commit_message(&message)?;
+        validate_user_info(&user_name, &user_email)?;
+        commit_file_impl(&repo_path, &file_path, &message, &user_name, &user_email)
+    }
+
+    fn commit_files(
+        &self,
+        repo_path: String,
+        file_paths: Vec<String>,
+        message: String,
+        user_name: String,
+        user_email: String,
+    ) -> Result<String, GitError> {
+        validate_repo_path(&repo_path)?;
+        validate_file_paths(&file_paths)?;
+        validate_commit_message(&message)?;
+        validate_user_info(&user_name, &user_email)?;
+        commit_files_impl(&repo_path, &file_paths, &message, &user_name, &user_email)
+    }
+}
+
+fn create_git_service() -> GitOps {
+    GitOps
 }
 
 #[serial]
 #[test]
 fn test_complete_git_workflow() {
-    let test_repo = test_utils::TestRepo::new().unwrap();
+    let test_repo = TestRepo::new().unwrap();
     let repo_path = test_repo.path_str().to_string();
     let git_service = create_git_service();
 
@@ -71,7 +152,7 @@ fn test_complete_git_workflow() {
 #[serial]
 #[test]
 fn test_file_modification_workflow() {
-    let test_repo = test_utils::TestRepo::new().unwrap();
+    let test_repo = TestRepo::new().unwrap();
     let repo_path = test_repo.path_str().to_string();
     let git_service = create_git_service();
 
@@ -107,7 +188,7 @@ fn test_file_modification_workflow() {
 #[serial]
 #[test]
 fn test_mixed_file_states() {
-    let test_repo = test_utils::TestRepo::new().unwrap();
+    let test_repo = TestRepo::new().unwrap();
     let repo_path = test_repo.path_str().to_string();
     let git_service = create_git_service();
 
@@ -150,7 +231,7 @@ fn test_error_handling() {
     assert!(result.is_err());
 
     // Test invalid file paths
-    let test_repo = test_utils::TestRepo::new().unwrap();
+    let test_repo = TestRepo::new().unwrap();
     let result = git_service.stage_file(
         test_repo.path_str().to_string(),
         "../outside.txt".to_string()
@@ -172,7 +253,7 @@ fn test_error_handling() {
 #[serial]
 #[test]
 fn test_large_repository_performance() {
-    let test_repo = test_utils::TestRepo::new().unwrap();
+    let test_repo = TestRepo::new().unwrap();
     let repo_path = test_repo.path_str().to_string();
     let git_service = create_git_service();
 
@@ -219,47 +300,38 @@ fn test_large_repository_performance() {
 #[serial]
 #[test]
 fn test_concurrent_operations() {
-    use std::sync::{Arc, Mutex};
     use std::thread;
 
-    // Create separate repos for each thread to avoid sharing git2::Repository
-    let repo_paths: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    // The repositories are created here and owned by this function for the
+    // whole test.
+    //
+    // They used to be created inside each thread closure. A TestRepo owns a
+    // TempDir, so every repository was deleted the instant its closure
+    // returned — and the paths collected for the verification loop below then
+    // pointed at directories that no longer existed. The test could not have
+    // passed as written; nothing noticed, because this target had not compiled
+    // since the API went async.
+    let repos: Vec<TestRepo> = (0..5).map(|_| TestRepo::new().unwrap()).collect();
+
     let mut handles = vec![];
+    for (i, repo) in repos.iter().enumerate() {
+        repo.add_file(&format!("concurrent_{}.txt", i), &format!("content {}", i))
+            .unwrap();
 
-    // Spawn multiple threads performing git operations
-    for i in 0..5 {
-        let paths = Arc::clone(&repo_paths);
-        let handle = thread::spawn(move || {
-            let test_repo = test_utils::TestRepo::new().unwrap();
-            let git_service = create_git_service();
-            let file_name = format!("concurrent_{}.txt", i);
-            test_repo.add_file(&file_name, &format!("content {}", i)).unwrap();
-
-            // Store the repo path for later verification
-            {
-                let mut paths_guard = paths.lock().unwrap();
-                paths_guard.push(test_repo.path_str().to_string());
-            }
-
-            // Each task performs its own status check
-            git_service.get_status(test_repo.path_str().to_string())
-        });
-        handles.push(handle);
+        // The thread gets an owned path, so it borrows nothing from `repos`.
+        let path = repo.path_str().to_string();
+        handles.push(thread::spawn(move || create_git_service().get_status(path)));
     }
 
-    // Wait for all tasks to complete
     for handle in handles {
-        let result = handle.join().unwrap();
-        assert!(result.is_ok());
+        let status = handle.join().expect("thread panicked").expect("get_status failed");
+        assert_eq!(status.untracked_files.len(), 1);
     }
 
-    // Verify each repo has one untracked file
-    let paths = repo_paths.lock().unwrap();
-    assert_eq!(paths.len(), 5);
-
+    // And again after the threads have joined, against the live directories.
     let git_service = create_git_service();
-    for path in paths.iter() {
-        let status = git_service.get_status(path.clone()).unwrap();
+    for repo in &repos {
+        let status = git_service.get_status(repo.path_str().to_string()).unwrap();
         assert_eq!(status.untracked_files.len(), 1);
     }
 }
@@ -269,7 +341,7 @@ fn test_concurrent_operations() {
 fn test_repository_with_complex_history() {
     // Use the complex fixture
     create_repos::create_all_fixtures().unwrap();
-    let complex_repo = liminal_git::test_utils::TestRepo::from_fixture("complex-repo").unwrap();
+    let complex_repo = TestRepo::from_fixture("complex-repo").unwrap();
     let repo_path = complex_repo.path_str().to_string();
     let git_service = create_git_service();
 
@@ -288,7 +360,7 @@ fn test_repository_with_complex_history() {
 #[serial]
 #[test]
 fn test_binary_file_handling() {
-    let test_repo = test_utils::TestRepo::new().unwrap();
+    let test_repo = TestRepo::new().unwrap();
     let repo_path = test_repo.path_str().to_string();
     let git_service = create_git_service();
 
@@ -323,8 +395,8 @@ fn test_binary_file_handling() {
 #[test]
 fn test_cleanup_and_isolation() {
     // Each test should start with a clean state
-    let test_repo1 = liminal_git::test_utils::TestRepo::new().unwrap();
-    let test_repo2 = liminal_git::test_utils::TestRepo::new().unwrap();
+    let test_repo1 = TestRepo::new().unwrap();
+    let test_repo2 = TestRepo::new().unwrap();
     let git_service = create_git_service();
 
     // Repos should be independent
@@ -349,7 +421,7 @@ fn test_cleanup_and_isolation() {
 #[serial]
 #[test]
 fn test_unstage_operations() {
-    let test_repo = test_utils::TestRepo::new().unwrap();
+    let test_repo = TestRepo::new().unwrap();
     let repo_path = test_repo.path_str().to_string();
     let git_service = create_git_service();
 
@@ -365,7 +437,7 @@ fn test_unstage_operations() {
     assert_eq!(status.staged_files.len(), 1);
 
     // Unstage it
-    git_service.unstage_file(repo_path.clone(), "test.txt".to_string()).unwrap();
+    git_service.unstage_file(repo_path.clone(), "test.txt".to_string(), None).unwrap();
 
     // Verify it's no longer staged but still modified
     let status = git_service.get_status(repo_path).unwrap();
@@ -376,7 +448,7 @@ fn test_unstage_operations() {
 #[serial]
 #[test]
 fn test_get_staged_files() {
-    let test_repo = test_utils::TestRepo::new().unwrap();
+    let test_repo = TestRepo::new().unwrap();
     let repo_path = test_repo.path_str().to_string();
     let git_service = create_git_service();
 
@@ -400,7 +472,7 @@ fn test_get_staged_files() {
 #[serial]
 #[test]
 fn test_unicode_and_special_characters() {
-    let test_repo = test_utils::TestRepo::new().unwrap();
+    let test_repo = TestRepo::new().unwrap();
     let repo_path = test_repo.path_str().to_string();
     let git_service = create_git_service();
 
@@ -439,7 +511,7 @@ fn test_unicode_and_special_characters() {
 #[serial]
 #[test]
 fn test_empty_repository_operations() {
-    let test_repo = test_utils::TestRepo::new().unwrap();
+    let test_repo = TestRepo::new().unwrap();
     let repo_path = test_repo.path_str().to_string();
     let git_service = create_git_service();
 
@@ -460,7 +532,7 @@ fn test_empty_repository_operations() {
 #[serial]
 #[test]
 fn test_stress_commit_operations() {
-    let test_repo = test_utils::TestRepo::new().unwrap();
+    let test_repo = TestRepo::new().unwrap();
     let repo_path = test_repo.path_str().to_string();
     let git_service = create_git_service();
 
@@ -491,7 +563,7 @@ fn test_stress_commit_operations() {
 #[serial]
 #[test]
 fn test_validation_integration() {
-    let test_repo = test_utils::TestRepo::new().unwrap();
+    let test_repo = TestRepo::new().unwrap();
     let repo_path = test_repo.path_str().to_string();
     let git_service = create_git_service();
 

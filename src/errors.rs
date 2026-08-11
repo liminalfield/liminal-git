@@ -254,8 +254,8 @@ impl From<std::io::Error> for GitError {
 impl GitError {
     /// Add operation context to a GitOperationFailure
     ///
-    /// Example:
-    /// ```
+    /// Example (a fragment — `repo` and `name` come from the caller):
+    /// ```ignore
     /// let result = repo.find_branch(name, BranchType::Local)
     ///     .map_err(|e| GitError::from(e).with_operation("find_branch"))?;
     /// ```

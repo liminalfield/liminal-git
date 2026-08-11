@@ -22,7 +22,13 @@ impl FeatureFlags {
     ///
     /// Example:
     /// ```
-    /// std::env::set_var("LIMINAL_FEATURE_FLAGS", "structured_errors,enhanced_status");
+    /// use liminal_git::feature_flags::FeatureFlags;
+    ///
+    /// // set_var is unsafe as of edition 2024: it mutates process-global
+    /// // state that other threads may be reading. A doc test is a process of
+    /// // its own, so this is sound here.
+    /// unsafe { std::env::set_var("LIMINAL_FEATURE_FLAGS", "structured_errors,enhanced_status") };
+    ///
     /// let flags = FeatureFlags::from_env();
     /// assert!(flags.structured_errors);
     /// assert!(flags.enhanced_status);

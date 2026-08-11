@@ -3,7 +3,6 @@ mod common;
 #[cfg(test)]
 mod tag_ops_tests {
     use crate::common::*;
-    use liminal_git::*;
 
     #[test]
     fn test_list_tags_impl_empty_repo() {
@@ -27,6 +26,8 @@ mod tag_ops_tests {
             message: None, // Lightweight tag
             target_commit: None, // Tag HEAD
             force: false,
+            user_name: None,
+            user_email: None,
         };
 
         let result = create_tag_impl(test_repo.path_str(), &options);
@@ -52,6 +53,8 @@ mod tag_ops_tests {
             message: Some("Release version 1.0.0".to_string()), // Try to create annotated tag
             target_commit: None, // Tag HEAD
             force: false,
+            user_name: None,
+            user_email: None,
         };
 
         let result = create_tag_impl(test_repo.path_str(), &options);
@@ -81,6 +84,8 @@ mod tag_ops_tests {
             message: None,
             target_commit: Some(first_commit.to_string()),
             force: false,
+            user_name: None,
+            user_email: None,
         };
 
         let result = create_tag_impl(test_repo.path_str(), &options);
@@ -101,6 +106,8 @@ mod tag_ops_tests {
             message: None,
             target_commit: None,
             force: false,
+            user_name: None,
+            user_email: None,
         };
 
         let result = create_tag_impl(test_repo.path_str(), &options);
@@ -118,6 +125,8 @@ mod tag_ops_tests {
             message: None,
             target_commit: None,
             force: false,
+            user_name: None,
+            user_email: None,
         };
 
         // Create tag first time - should succeed
@@ -144,6 +153,8 @@ mod tag_ops_tests {
             message: None,
             target_commit: Some(first_commit.to_string()),
             force: false,
+            user_name: None,
+            user_email: None,
         };
         create_tag_impl(test_repo.path_str(), &options1).unwrap();
 
@@ -153,6 +164,8 @@ mod tag_ops_tests {
             message: None,
             target_commit: Some(second_commit.to_string()),
             force: true,
+            user_name: None,
+            user_email: None,
         };
 
         let result = create_tag_impl(test_repo.path_str(), &options2);
@@ -175,6 +188,8 @@ mod tag_ops_tests {
                 message: Some(format!("Release {}", name)),
                 target_commit: None,
                 force: false,
+                user_name: None,
+                user_email: None,
             };
             create_tag_impl(test_repo.path_str(), &options).unwrap();
         }
@@ -207,6 +222,8 @@ mod tag_ops_tests {
             message: Some("Release version 1.0.0".to_string()),
             target_commit: None,
             force: false,
+            user_name: None,
+            user_email: None,
         };
         create_tag_impl(test_repo.path_str(), &options).unwrap();
 
@@ -236,6 +253,8 @@ mod tag_ops_tests {
             message: None,
             target_commit: None,
             force: false,
+            user_name: None,
+            user_email: None,
         };
         create_tag_impl(test_repo.path_str(), &options).unwrap();
 
@@ -276,6 +295,8 @@ mod tag_ops_tests {
                 message: Some(format!("Release {}", name)),
                 target_commit: None,
                 force: false,
+                user_name: None,
+                user_email: None,
             };
             create_tag_impl(test_repo.path_str(), &options).unwrap();
         }
@@ -300,6 +321,8 @@ mod tag_ops_tests {
             message: None,
             target_commit: None,
             force: false,
+            user_name: None,
+            user_email: None,
         };
         create_tag_impl(test_repo.path_str(), &lightweight_options).unwrap();
 
@@ -309,6 +332,8 @@ mod tag_ops_tests {
             message: Some("Tag with message".to_string()),
             target_commit: None,
             force: false,
+            user_name: None,
+            user_email: None,
         };
         create_tag_impl(test_repo.path_str(), &with_message_options).unwrap();
 

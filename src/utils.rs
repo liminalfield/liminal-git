@@ -278,7 +278,11 @@ pub fn has_uncommitted_changes_anyhow(repo: &git2::Repository) -> Result<bool, a
 /// * `Err(GitError::GitOperationFailure)` - Failed to create signature
 ///
 /// # Example
-/// ```rust
+///
+/// Not run: `read_user_signature` is `pub(crate)`, so a doc test — which is
+/// compiled as an external consumer of the crate — cannot call it.
+///
+/// ```ignore
 /// // Use explicit override
 /// let sig = read_user_signature(&repo, Some("Alice"), Some("alice@example.com"))?;
 ///

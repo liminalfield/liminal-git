@@ -3,8 +3,6 @@ mod common;
 #[cfg(test)]
 mod branch_ops_tests {
     use crate::common::*;
-    use liminal_git::*;
-    use std::fs;
 
     #[test]
     fn test_list_branches_impl_new_repo() {
@@ -182,12 +180,20 @@ mod branch_ops_tests {
         assert!(result.unwrap_err().to_string().contains("not found"));
     }
 
+    /// Switching branches carries non-conflicting work across, as git does.
+    ///
+    /// This asserted the opposite — that *any* uncommitted change blocks a
+    /// checkout — which has never been true here. `checkout_branch_impl` runs
+    /// git2's "safe" strategy, which refuses only when the switch would lose
+    /// something. A newly staged file that does not exist on the target branch
+    /// conflicts with nothing, so it comes along. Nothing caught the wrong
+    /// assertion because CI only ever ran `cargo test --lib`; this target
+    /// compiled but was never executed.
     #[test]
-    fn test_checkout_branch_impl_with_uncommitted_changes() {
+    fn test_checkout_branch_impl_carries_non_conflicting_changes_across() {
         let test_repo = TestRepo::new().unwrap();
         test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
 
-        // Create a new branch
         let options = CreateBranchOptions {
             name: "feature-branch".to_string(),
             from_commit: None,
@@ -195,14 +201,52 @@ mod branch_ops_tests {
         };
         create_branch_impl(test_repo.path_str(), &options).unwrap();
 
-        // Make uncommitted changes (stage but don't commit)
         test_repo.add_file("uncommitted.txt", "uncommitted content").unwrap();
         test_repo.stage_file("uncommitted.txt").unwrap();
 
-        // Try to switch branches - should fail
+        let branch = checkout_branch_impl(test_repo.path_str(), "feature-branch")
+            .expect("a staged file absent from the target branch conflicts with nothing");
+        assert_eq!(branch.name, "feature-branch");
+
+        // The work came across rather than being discarded.
+        assert!(test_repo.path.join("uncommitted.txt").exists());
+    }
+
+    /// The case the test above was reaching for: a change that genuinely
+    /// cannot survive the switch, because the target branch has its own
+    /// version of the same file.
+    #[test]
+    fn test_checkout_branch_impl_refuses_when_changes_would_be_lost() {
+        let test_repo = TestRepo::new().unwrap();
+        test_repo.add_and_commit("test.txt", "content", "Initial commit").unwrap();
+
+        // A branch where test.txt has diverged.
+        let options = CreateBranchOptions {
+            name: "feature-branch".to_string(),
+            from_commit: None,
+            checkout: true,
+        };
+        create_branch_impl(test_repo.path_str(), &options).unwrap();
+        test_repo.add_and_commit("test.txt", "feature content", "Diverge").unwrap();
+
+        let default_branch = get_current_branch_impl(test_repo.path_str())
+            .unwrap()
+            .unwrap()
+            .name;
+        assert_eq!(default_branch, "feature-branch");
+        checkout_branch_impl(test_repo.path_str(), "master")
+            .or_else(|_| checkout_branch_impl(test_repo.path_str(), "main"))
+            .expect("should return to the default branch");
+
+        // Uncommitted edit to the same file that differs on the target branch.
+        test_repo.add_file("test.txt", "local edit").unwrap();
+
         let result = checkout_branch_impl(test_repo.path_str(), "feature-branch");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("uncommitted changes"));
+        assert!(result.is_err(), "expected a refusal, got {result:?}");
+
+        // The local edit survives the refusal.
+        let on_disk = std::fs::read_to_string(test_repo.path.join("test.txt")).unwrap();
+        assert_eq!(on_disk, "local edit");
     }
 
     #[test]
@@ -245,9 +289,14 @@ mod branch_ops_tests {
 
         // Get the current branch name and try to delete it - should fail
         let current_branch = get_current_branch_impl(test_repo.path_str()).unwrap().unwrap().name;
+        // Assert the variant, not the prose. This matched "currently checked
+        // out", which stopped being the wording when the duplicate error
+        // modules were unified.
         let result = delete_branch_impl(test_repo.path_str(), &current_branch, true);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("currently checked out"));
+        assert!(
+            matches!(result, Err(GitError::CannotDeleteCurrentBranch { .. })),
+            "got {result:?}"
+        );
     }
 
     #[test]
@@ -282,10 +331,14 @@ mod branch_ops_tests {
         // Switch back to default branch
         checkout_branch_impl(test_repo.path_str(), &default_branch).unwrap();
 
-        // Try to delete without force - should fail
+        // Try to delete without force - should fail. Assert the variant, not
+        // the prose: this matched "not fully merged", which stopped being the
+        // wording when the duplicate error modules were unified.
         let result = delete_branch_impl(test_repo.path_str(), "feature-branch", false);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not fully merged"));
+        assert!(
+            matches!(result, Err(GitError::BranchNotMerged { .. })),
+            "got {result:?}"
+        );
     }
 
     #[test]

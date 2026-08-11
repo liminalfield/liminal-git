@@ -3,7 +3,7 @@ mod common;
 #[cfg(test)]
 mod file_ops_tests {
     use crate::common::*;
-    use git2::{Repository, Signature, Time};
+    use git2::{Repository, Signature};
     
 
     fn create_test_repo_with_history() -> (TempDir, String) {
@@ -128,8 +128,11 @@ mod file_ops_tests {
             "test@example.com"
         );
 
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("No changes"));
+        // Assert the variant, not the prose. This matched on "No changes"
+        // until the duplicate error modules were unified and the message
+        // became "Nothing to commit" — and nothing noticed, because this
+        // target had not compiled since.
+        assert!(matches!(result, Err(GitError::NothingToCommit)), "got {result:?}");
     }
 
     #[test]
@@ -402,7 +405,7 @@ mod file_ops_tests {
         assert_eq!(status.staged_files.len(), 1);
 
         // Unstage it
-        let result = unstage_file_impl(test_repo.path_str(), "test.txt");
+        let result = unstage_file_impl(test_repo.path_str(), "test.txt", false);
         assert!(result.is_ok());
         assert!(result.unwrap());
 
@@ -415,7 +418,7 @@ mod file_ops_tests {
     #[test]
     fn test_unstage_file_impl_invalid_repo() {
         let temp_dir = TempDir::new().unwrap();
-        let result = unstage_file_impl(temp_dir.path().to_str().unwrap(), "test.txt");
+        let result = unstage_file_impl(temp_dir.path().to_str().unwrap(), "test.txt", false);
         assert!(result.is_err());
     }
 
@@ -443,26 +446,65 @@ mod file_ops_tests {
     }
 
 
+    /// Find a commit by its message.
+    ///
+    /// These tests used to index into the history — `commits[1]` with the
+    /// comment "Initial commit (oldest)", though the fixture makes three
+    /// commits, so the oldest is at index 2. Looking it up by message says
+    /// what is meant and does not depend on the ordering the API returns.
+    fn commit_hash_by_message(path: &str, message: &str) -> String {
+        let history = get_commit_history_impl(path, None, None).unwrap();
+        history
+            .commits
+            .iter()
+            .find(|c| c.message.trim() == message)
+            .unwrap_or_else(|| panic!("no commit with message {message:?}"))
+            .hash
+            .clone()
+    }
+
     #[test]
     fn test_restore_file_from_commit_impl() {
         let (temp_dir, path) = create_test_repo_with_history();
+        let initial = commit_hash_by_message(&path, "Initial commit");
 
-        // Get first commit hash (has "Initial content")
-        let history = get_commit_history_impl(&path, None, None).unwrap();
-        let first_commit = &history.commits[1].hash; // Initial commit (oldest)
-
-        // Modify the file
+        // file1.txt matches HEAD here, so restoring an older revision of it
+        // destroys no uncommitted work and the guard below does not fire.
         let file_path = temp_dir.path().join("file1.txt");
-        fs::write(&file_path, "Current content").unwrap();
-
-        // Restore from first commit
-        let result = restore_file_from_commit_impl(&path, "file1.txt", first_commit);
-        assert!(result.is_ok());
-        assert!(result.unwrap());
+        let restored = restore_file_from_commit_impl(&path, "file1.txt", &initial)
+            .expect("restoring over a clean working file should succeed");
+        assert!(restored);
 
         // Verify file was restored
         let restored_content = fs::read_to_string(&file_path).unwrap();
         assert_eq!(restored_content, "Initial content");
+    }
+
+    /// Restoring must not silently destroy work in the working tree.
+    ///
+    /// Nothing covered this guard, which is why the test above could sit
+    /// broken: it modified the file first and then expected the restore to
+    /// succeed, which is exactly the case the guard now refuses.
+    ///
+    /// Note there is no way to override this — restore has no `force`
+    /// parameter — so a caller that wants "discard my changes and restore"
+    /// cannot express it yet.
+    #[test]
+    fn test_restore_file_from_commit_impl_refuses_to_discard_uncommitted_changes() {
+        let (temp_dir, path) = create_test_repo_with_history();
+        let initial = commit_hash_by_message(&path, "Initial commit");
+
+        let file_path = temp_dir.path().join("file1.txt");
+        fs::write(&file_path, "Unsaved work").unwrap();
+
+        let result = restore_file_from_commit_impl(&path, "file1.txt", &initial);
+        assert!(
+            matches!(result, Err(GitError::UnstagedChangesWouldBeLost { .. })),
+            "expected the guard to fire, got {result:?}"
+        );
+
+        // The refusal must leave the working file exactly as it was.
+        assert_eq!(fs::read_to_string(&file_path).unwrap(), "Unsaved work");
     }
 
     #[test]
