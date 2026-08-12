@@ -1,39 +1,29 @@
 name: CI
 
-# ---------------------------------------------------------------------------
-# There are deliberately NO `push` or `pull_request` triggers.
+# The repository is public, so Actions minutes are free and every push and pull
+# request runs the full three-platform matrix. While it was private this was
+# workflow_dispatch only, and defaulted to Linux, because private-repo minutes
+# bill at 1x for Linux, 2x for Windows and 10x for macOS.
 #
-# This repository is private, and Actions minutes on private repositories are
-# billed against the account allowance. Until it goes public, this workflow
-# runs only when someone asks for it — from the Actions tab, or:
+# The manual trigger is kept for targeting a single platform when iterating on
+# something platform-specific:
 #
-#     gh workflow run ci.yml -R liminalfield/liminal-git
 #     gh workflow run ci.yml -R liminalfield/liminal-git -f platforms=windows
-#     gh workflow run ci.yml -R liminalfield/liminal-git -f platforms=all
-#
-# Platform choice matters while private: Linux bills at 1x, Windows at 2x and
-# macOS at 10x. `linux` is the default for that reason.
-#
-# To restore automatic runs when the repository is public, add:
-#
-#     push:
-#       branches: [main]
-#     pull_request:
-#
-# and delete this comment. Nothing else needs to change.
-# ---------------------------------------------------------------------------
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
     inputs:
       platforms:
         description: "Platforms to test on"
         type: choice
-        default: linux
+        default: all
         options:
+          - all
           - linux
           - windows
           - macos
-          - all
         required: true
 
 concurrency:
@@ -46,8 +36,9 @@ env:
   CARGO_PROFILE_DEV_DEBUG: 0
 
 jobs:
-  # Cheapest job, and it gates the rest: a formatting slip should not spend
-  # macOS minutes (billed at 10x) before it is caught.
+  # Cheapest job, and it gates the rest: a formatting slip should fail in
+  # ninety seconds on one runner rather than after three platforms have built
+  # libgit2 from source.
   lint:
     name: Format and lint
     runs-on: ubuntu-latest
@@ -79,11 +70,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # A specific platform narrows the matrix; anything else — including a
+        # push or pull request, where `inputs` is empty — runs all three.
         os: ${{ fromJSON(
-          inputs.platforms == 'all' && '["ubuntu-latest", "macos-latest", "windows-latest"]'
+          inputs.platforms == 'linux' && '["ubuntu-latest"]'
           || inputs.platforms == 'windows' && '["windows-latest"]'
           || inputs.platforms == 'macos' && '["macos-latest"]'
-          || '["ubuntu-latest"]') }}
+          || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -141,11 +134,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # A specific platform narrows the matrix; anything else — including a
+        # push or pull request, where `inputs` is empty — runs all three.
         os: ${{ fromJSON(
-          inputs.platforms == 'all' && '["ubuntu-latest", "macos-latest", "windows-latest"]'
+          inputs.platforms == 'linux' && '["ubuntu-latest"]'
           || inputs.platforms == 'windows' && '["windows-latest"]'
           || inputs.platforms == 'macos' && '["macos-latest"]'
-          || '["ubuntu-latest"]') }}
+          || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7

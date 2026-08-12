@@ -249,12 +249,12 @@ cargo llvm-cov --no-default-features
 
 ### CI
 
-The workflow is `workflow_dispatch` only while the repository is private,
-because Actions minutes on private repositories are billed. Run it deliberately:
+Every push and pull request runs the full matrix on Linux, macOS and Windows.
+A single platform can be targeted manually when iterating on something
+platform-specific:
 
 ```bash
-gh workflow run ci.yml -R liminalfield/liminal-git
-gh workflow run ci.yml -R liminalfield/liminal-git -f platforms=all
+gh workflow run ci.yml -R liminalfield/liminal-git -f platforms=windows
 ```
 
 It checks formatting, clippy under both feature sets, the test suite, the
