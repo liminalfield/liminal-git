@@ -91,18 +91,42 @@ otool -L <binary> | grep -i libz     # macOS
 zlib is Copyright (C) 1995-2024 Jean-loup Gailly and Mark Adler, under the zlib
 license — permissive, with no attribution requirement for binary distribution.
 
-## What is *not* linked
+## libssh2
 
-Worth stating, because libgit2 pulls these in by default and their absence is
-deliberate:
+Statically linked, from vendored C source, because `remote_ops` supports SSH
+remotes. libssh2 is Copyright (c) the libssh2 contributors, under the
+**BSD 3-Clause** license — permissive, requiring that the copyright notice and
+disclaimer be retained in redistributions, which this file does.
 
-- **OpenSSL** — not present. git2's default features are switched off in
-  `Cargo.toml`, which drops `openssl-sys`.
-- **libssh2** — not present, for the same reason.
+Source: <https://github.com/libssh2/libssh2>
 
-liminal-git performs no network operations, so neither is needed. Reinstating
-them means revisiting this file: OpenSSL in particular carries its own terms
-(Apache-2.0 for 3.x, the older dual OpenSSL/SSLeay license before that).
+## OpenSSL — used, but not distributed
+
+This is the one place where the distinction between *linking against* and
+*shipping* a library changes the obligation, so it is worth being exact.
+
+On **Linux**, OpenSSL is **dynamically** linked. The compiled addon records a
+dependency on `libssl.so.3` and `libcrypto.so.3` and resolves them from the
+host at load time; no OpenSSL code is contained in, or distributed with, this
+package. The licence obligations that attach to redistributing OpenSSL
+therefore do not arise here — but the *runtime dependency* does, and anything
+packaging this must declare it.
+
+On **Windows**, OpenSSL is not involved at all: `openssl-sys` is declared under
+`[target."cfg(unix)".dependencies]`, and libgit2 uses winhttp and schannel
+instead.
+
+If `vendored-openssl` is ever enabled, OpenSSL becomes statically linked and
+this section must change: it would then be redistributed, and OpenSSL's terms
+(Apache-2.0 for 3.x; the dual OpenSSL/SSLeay license before that) would need
+reproducing in full.
+
+Verify on any platform you ship with:
+
+```sh
+ldd <binary> | grep -iE 'ssl|crypto'      # Linux
+otool -L <binary> | grep -iE 'ssl|crypto' # macOS
+```
 
 ---
 

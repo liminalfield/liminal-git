@@ -23,6 +23,7 @@ pub mod validation;
 
 // Branch and tag operations - core functionality always available
 pub mod branch_ops;
+pub mod remote_ops;
 pub mod tag_ops;
 
 // Only export GitService when NAPI is enabled
@@ -35,6 +36,7 @@ pub use errors::*;
 pub use feature_flags::*;
 pub use file_ops::*;
 pub use history_ops::*;
+pub use remote_ops::*;
 pub use repository_ops::*;
 pub use tag_ops::*;
 pub use types::*;

@@ -238,3 +238,78 @@ pub struct CreateTagOptions {
     /// User email for annotated tag signature (optional, falls back to git config)
     pub user_email: Option<String>,
 }
+
+// ===== REMOTE OPERATIONS =====
+
+#[cfg_attr(feature = "napi-binding", napi(object))]
+#[derive(Debug, Clone)]
+pub struct RemoteInfo {
+    pub name: String,
+    /// Fetch URL. `None` for a remote configured with no URL, which git allows.
+    pub url: Option<String>,
+    /// Push URL when it differs from the fetch URL, as `remote.<name>.pushurl`.
+    pub push_url: Option<String>,
+}
+
+/// Credentials for a single remote operation.
+///
+/// Deliberately passed per call rather than stored. This library has no
+/// business owning secrets: the host application knows where they came from
+/// (an OS keychain, an environment variable, a prompt) and how long they may
+/// live, and it is far better placed to decide. Everything here is optional —
+/// see `remote_ops::credential_callback` for the fallback order when a field
+/// is absent.
+#[cfg_attr(feature = "napi-binding", napi(object))]
+#[derive(Debug, Clone, Default)]
+pub struct RemoteCredentials {
+    /// Username for HTTPS. For a personal access token on GitHub this can be
+    /// anything non-empty; the token goes in `password`.
+    pub username: Option<String>,
+    /// Password or personal access token for HTTPS.
+    pub password: Option<String>,
+    /// Path to an SSH private key. The matching `.pub` is used if present.
+    pub ssh_private_key_path: Option<String>,
+    /// Passphrase for the SSH private key, when it has one.
+    pub ssh_passphrase: Option<String>,
+}
+
+#[cfg_attr(feature = "napi-binding", napi(object))]
+#[derive(Debug, Clone)]
+pub struct FetchResult {
+    pub remote: String,
+    /// Refs whose remote-tracking branch moved, as "refs/heads/main".
+    pub updated_refs: Vec<String>,
+    pub received_objects: u32,
+    pub received_bytes: f64,
+}
+
+#[cfg_attr(feature = "napi-binding", napi(object))]
+#[derive(Debug, Clone)]
+pub struct PushResult {
+    pub remote: String,
+    /// Refspecs that were pushed.
+    pub pushed_refs: Vec<String>,
+}
+
+/// How the local branch stands against its remote-tracking branch.
+///
+/// Distinct from `AheadBehind`, which compares two local branches. This one
+/// answers "do I need to push, pull, both, or neither", and is only meaningful
+/// after a fetch — git cannot know what a remote holds without asking it.
+#[cfg_attr(feature = "napi-binding", napi(object))]
+#[derive(Debug, Clone)]
+pub struct UpstreamStatus {
+    pub branch: String,
+    /// The tracking branch, as "origin/main". `None` if the branch has no
+    /// upstream configured, which is not an error.
+    pub upstream: Option<String>,
+    /// Local commits the upstream does not have.
+    pub ahead: u32,
+    /// Upstream commits the local branch does not have.
+    pub behind: u32,
+    /// True when there is no upstream to compare against, so `ahead` and
+    /// `behind` are both zero for lack of information rather than for lack of
+    /// difference. Callers must distinguish these or they will report a branch
+    /// as up to date when they simply do not know.
+    pub no_upstream: bool,
+}

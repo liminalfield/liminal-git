@@ -1,6 +1,6 @@
 [package]
 name = "liminal-git"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2024"
 # Verified, not inferred. Two things set this floor, and the higher one wins:
 #   - let-chains (`if let ... && let ...`), unstable until 1.88 — 1.85 fails
@@ -20,35 +20,39 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 # Git operations - the core library.
 #
-# default-features = false switches off "https", "ssh" and
-# "ssh_key_from_memory", which pull in openssl-sys and libssh2-sys. This crate
-# performs no network operations — the only uses of the word "remote" are
-# `BranchType::Remote` when listing remote-tracking branches and
-# `find_remote()` when reading configured URLs, both purely local reads.
+# "https" and "ssh" are on because remote_ops fetches and pushes. They were
+# off while the crate was purely local, and turning them on has a consequence
+# worth stating plainly, because it is easy to get wrong in both directions:
 #
-# The reason is simply that the code is dead weight: a TLS and SSH stack
-# compiled into every binary for capability that does not exist. It also keeps
-# OpenSSL, which carries its own licence terms, out of THIRD-PARTY-NOTICES.
+#   libgit2   statically linked
+#   libssh2   statically linked (vendored C source)
+#   OpenSSL   DYNAMICALLY linked on Linux — libssl.so.3, libcrypto.so.3
 #
-# An earlier version of this comment claimed the bigger motive was build
-# failures on unprepared machines. That was overstated, and the per-platform
-# detail is worth recording because it is the opposite of what people assume:
+# So on Linux the compiled addon now has a *runtime* dependency it did not
+# have before. Anything packaging this must declare it: Nocturne's pacman
+# target lists `openssl` and its deb target `libssl3` for exactly this reason.
+# An AppImage cannot declare dependencies at all, which makes that format the
+# weak spot — accepted deliberately rather than solved with vendored-openssl.
 #
-#   Windows  needs nothing. openssl-sys is declared under
+# "vendored-openssl" is the alternative: it links OpenSSL statically, removing
+# the runtime dependency, at the cost of build time and of OpenSSL's licence
+# terms moving from "we use it" to "we distribute it" in
+# THIRD-PARTY-NOTICES.md. Worth revisiting if portable single-file artifacts
+# ever matter more than they do now.
+#
+# Build-time requirements per platform, which are the reverse of what people
+# assume — read from libgit2-sys 0.16.2, not from memory:
+#
+#   Windows  nothing. openssl-sys is declared under
 #            [target."cfg(unix)".dependencies], so Windows never pulls it;
 #            libgit2 links winhttp/crypt32/secur32 instead.
-#   Linux    needs OpenSSL development headers, or the vendored-openssl feature.
-#   macOS    also needs OpenSSL — macOS is cfg(unix) — and its system LibreSSL
-#            is not accepted, so Homebrew or vendored.
+#   Linux    OpenSSL development headers, or vendored-openssl.
+#   macOS    also OpenSSL — macOS is cfg(unix) — and its system LibreSSL is
+#            not accepted, so Homebrew or vendored.
 #
-# "ssh" pulls libssh2-sys on every platform, but that is vendored C source and
-# needs only the compiler this crate already requires. None of this affects
-# anyone running a packaged application: the libraries are statically linked,
-# so the cost lands on whoever compiles, never on an end user.
-#
-# When remote operations land, turn these back on in the same change as the
-# credential handling they require, and update THIRD-PARTY-NOTICES.md.
-git2 = { version = "0.18", default-features = false }
+# Build-time cost lands on whoever compiles. Run-time cost, on Linux only,
+# now lands on whoever runs it.
+git2 = { version = "0.18", default-features = false, features = ["https", "ssh"] }
 walkdir = "2.3"
 
 # Node.js native module bindings (optional for testing)

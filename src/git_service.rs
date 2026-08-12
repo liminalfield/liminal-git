@@ -4,11 +4,13 @@ use crate::branch_ops;
 use crate::feature_flags::FeatureFlags;
 use crate::file_ops::*;
 use crate::history_ops::*;
+use crate::remote_ops;
 use crate::repository_ops::*;
 use crate::tag_ops;
 use crate::types::GitStatus;
 use crate::types::{BranchInfo, CreateBranchOptions, CreateTagOptions, TagInfo};
 use crate::types::{CommitDiff, CommitHistory, DeletedFileEntry, FileAtCommit, FileDiff};
+use crate::types::{FetchResult, PushResult, RemoteCredentials, RemoteInfo, UpstreamStatus};
 use crate::types::{GitConfig, RepositoryConfig, RepositoryHealth, RepositoryInfo};
 use crate::utils;
 use crate::validation::*;
@@ -696,6 +698,93 @@ impl GitService {
     /// Get reference to feature flags
     pub(crate) fn feature_flags(&self) -> &FeatureFlags {
         &self.feature_flags
+    }
+
+    // ===== REMOTE OPERATIONS =====
+    //
+    // The only operations here that touch the network. Credentials are passed
+    // per call rather than held by the service: this library has no business
+    // owning secrets, and the host application knows where they came from and
+    // how long they may live.
+
+    /// List configured remotes.
+    #[napi]
+    pub async fn list_remotes(&self, repo_path: String) -> Result<Vec<RemoteInfo>> {
+        validate_repo_path(&repo_path)?;
+        remote_ops::list_remotes(self, repo_path).await
+    }
+
+    /// Add a remote.
+    #[napi]
+    pub async fn add_remote(
+        &self,
+        repo_path: String,
+        name: String,
+        url: String,
+    ) -> Result<RemoteInfo> {
+        validate_repo_path(&repo_path)?;
+        remote_ops::add_remote(self, repo_path, name, url).await
+    }
+
+    /// Remove a remote and its remote-tracking branches.
+    #[napi]
+    pub async fn remove_remote(&self, repo_path: String, name: String) -> Result<bool> {
+        validate_repo_path(&repo_path)?;
+        remote_ops::remove_remote(self, repo_path, name).await
+    }
+
+    /// Change a remote's fetch URL.
+    #[napi]
+    pub async fn set_remote_url(
+        &self,
+        repo_path: String,
+        name: String,
+        url: String,
+    ) -> Result<RemoteInfo> {
+        validate_repo_path(&repo_path)?;
+        remote_ops::set_remote_url(self, repo_path, name, url).await
+    }
+
+    /// Fetch from a remote, updating remote-tracking branches.
+    ///
+    /// Touches neither the working tree nor any local branch, so nothing you
+    /// have can be lost by it.
+    #[napi]
+    pub async fn fetch(
+        &self,
+        repo_path: String,
+        remote_name: String,
+        credentials: Option<RemoteCredentials>,
+    ) -> Result<FetchResult> {
+        validate_repo_path(&repo_path)?;
+        remote_ops::fetch(self, repo_path, remote_name, credentials).await
+    }
+
+    /// Push a local branch to a remote.
+    #[napi]
+    pub async fn push(
+        &self,
+        repo_path: String,
+        remote_name: String,
+        branch: String,
+        credentials: Option<RemoteCredentials>,
+    ) -> Result<PushResult> {
+        validate_repo_path(&repo_path)?;
+        remote_ops::push(self, repo_path, remote_name, branch, credentials).await
+    }
+
+    /// Compare a local branch with its upstream.
+    ///
+    /// Reads only what the repository already knows, so the answer is as fresh
+    /// as the last fetch. Call `fetch` first for current information.
+    #[napi]
+    pub async fn get_upstream_status(
+        &self,
+        repo_path: String,
+        branch: String,
+    ) -> Result<UpstreamStatus> {
+        validate_repo_path(&repo_path)?;
+        remote_ops::get_upstream_status(self, repo_path, branch).await
     }
 
     // Four more `pub(crate)` helpers followed, each one line forwarding to the

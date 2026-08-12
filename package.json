@@ -1,6 +1,6 @@
 {
   "name": "liminal-git",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Native git operations for Node.js, built on libgit2 via napi-rs.",
   "repository": {
     "type": "git",

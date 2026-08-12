@@ -118,6 +118,30 @@ export declare class GitService {
   deleteTag(repoPath: string, tagName: string): Promise<boolean>
   /** Get tag information by name */
   getTag(repoPath: string, tagName: string): Promise<TagInfo | null>
+  /** List configured remotes. */
+  listRemotes(repoPath: string): Promise<Array<RemoteInfo>>
+  /** Add a remote. */
+  addRemote(repoPath: string, name: string, url: string): Promise<RemoteInfo>
+  /** Remove a remote and its remote-tracking branches. */
+  removeRemote(repoPath: string, name: string): Promise<boolean>
+  /** Change a remote's fetch URL. */
+  setRemoteUrl(repoPath: string, name: string, url: string): Promise<RemoteInfo>
+  /**
+   * Fetch from a remote, updating remote-tracking branches.
+   *
+   * Touches neither the working tree nor any local branch, so nothing you
+   * have can be lost by it.
+   */
+  fetch(repoPath: string, remoteName: string, credentials?: RemoteCredentials | undefined | null): Promise<FetchResult>
+  /** Push a local branch to a remote. */
+  push(repoPath: string, remoteName: string, branch: string, credentials?: RemoteCredentials | undefined | null): Promise<PushResult>
+  /**
+   * Compare a local branch with its upstream.
+   *
+   * Reads only what the repository already knows, so the answer is as fresh
+   * as the last fetch. Call `fetch` first for current information.
+   */
+  getUpstreamStatus(repoPath: string, branch: string): Promise<UpstreamStatus>
 }
 
 /** Tracking information relative to upstream branch */
@@ -225,6 +249,14 @@ export interface DiffLine {
   newLineNumber?: number
 }
 
+export interface FetchResult {
+  remote: string
+  /** Refs whose remote-tracking branch moved, as "refs/heads/main". */
+  updatedRefs: Array<string>
+  receivedObjects: number
+  receivedBytes: number
+}
+
 export interface FileAtCommit {
   path: string
   content: string
@@ -264,6 +296,44 @@ export interface GitStatus {
   renamedFiles: Array<RenamedStatus>
   isClean: boolean
   currentBranch?: string
+}
+
+export interface PushResult {
+  remote: string
+  /** Refspecs that were pushed. */
+  pushedRefs: Array<string>
+}
+
+/**
+ * Credentials for a single remote operation.
+ *
+ * Deliberately passed per call rather than stored. This library has no
+ * business owning secrets: the host application knows where they came from
+ * (an OS keychain, an environment variable, a prompt) and how long they may
+ * live, and it is far better placed to decide. Everything here is optional —
+ * see `remote_ops::credential_callback` for the fallback order when a field
+ * is absent.
+ */
+export interface RemoteCredentials {
+  /**
+   * Username for HTTPS. For a personal access token on GitHub this can be
+   * anything non-empty; the token goes in `password`.
+   */
+  username?: string
+  /** Password or personal access token for HTTPS. */
+  password?: string
+  /** Path to an SSH private key. The matching `.pub` is used if present. */
+  sshPrivateKeyPath?: string
+  /** Passphrase for the SSH private key, when it has one. */
+  sshPassphrase?: string
+}
+
+export interface RemoteInfo {
+  name: string
+  /** Fetch URL. `None` for a remote configured with no URL, which git allows. */
+  url?: string
+  /** Push URL when it differs from the fetch URL, as `remote.<name>.pushurl`. */
+  pushUrl?: string
 }
 
 export interface RenamedStatus {
@@ -310,4 +380,31 @@ export interface TagInfo {
   created: string
   /** Whether this is an annotated tag (vs lightweight tag) */
   isAnnotated: boolean
+}
+
+/**
+ * How the local branch stands against its remote-tracking branch.
+ *
+ * Distinct from `AheadBehind`, which compares two local branches. This one
+ * answers "do I need to push, pull, both, or neither", and is only meaningful
+ * after a fetch — git cannot know what a remote holds without asking it.
+ */
+export interface UpstreamStatus {
+  branch: string
+  /**
+   * The tracking branch, as "origin/main". `None` if the branch has no
+   * upstream configured, which is not an error.
+   */
+  upstream?: string
+  /** Local commits the upstream does not have. */
+  ahead: number
+  /** Upstream commits the local branch does not have. */
+  behind: number
+  /**
+   * True when there is no upstream to compare against, so `ahead` and
+   * `behind` are both zero for lack of information rather than for lack of
+   * difference. Callers must distinguish these or they will report a branch
+   * as up to date when they simply do not know.
+   */
+  noUpstream: boolean
 }

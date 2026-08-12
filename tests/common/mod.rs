@@ -26,6 +26,6 @@ pub use tempfile::TempDir;
 // from the only profile these tests can run under — a test binary cannot link
 // napi, which resolves its symbols from the host Node process at runtime.
 pub use liminal_git::{
-    branch_ops::*, errors::*, file_ops::*, history_ops::*, repository_ops::*, tag_ops::*, types::*,
-    validation::*,
+    branch_ops::*, errors::*, file_ops::*, history_ops::*, remote_ops::*, repository_ops::*,
+    tag_ops::*, types::*, validation::*,
 };

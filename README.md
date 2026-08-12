@@ -91,14 +91,53 @@ a commit run from a terminal knows nothing about `.git/liminal-git.lock`.
 
 ## Scope
 
-There are **no network operations**: no clone, fetch, push, or remote
-authentication. git2's default features are switched off accordingly, so the
-build does not compile a TLS and SSH stack into every binary for capability that
-does not exist. It also keeps OpenSSL, and its licence terms, out of the
-third-party notices.
+Remote operations are supported: `listRemotes`, `addRemote`, `removeRemote`,
+`setRemoteUrl`, `fetch`, `push` and `getUpstreamStatus`.
 
-Reinstating them is a deliberate future change, to be made alongside the
-credential handling they require.
+**Not** supported, deliberately: `clone`, and `pull` or `merge`. Merging is not
+a missing binding — it is a design problem about conflict resolution, and doing
+it badly is worse than not doing it.
+
+Credentials are passed **per operation** rather than held by the service. This
+library has no business owning secrets; the host application knows where they
+came from and how long they may live. Given explicit credentials it uses them;
+without them it falls back to ssh-agent and then to git's credential helper, so
+a machine where `git push` already works keeps working.
+
+```js
+await git.fetch(repo, 'origin', { password: process.env.GITHUB_TOKEN });
+await git.push(repo, 'origin', 'main', {
+  sshPrivateKeyPath: '/home/me/.ssh/id_ed25519',
+});
+```
+
+### A runtime dependency on Linux
+
+Enabling HTTPS means OpenSSL, and on Linux it is **dynamically** linked:
+
+```
+libssl.so.3     libcrypto.so.3
+```
+
+libgit2 and libssh2 are statically linked; OpenSSL is not. So anything
+packaging this on Linux must declare that dependency — `openssl` for pacman,
+`libssl3` for deb. Formats that cannot declare dependencies, AppImage in
+particular, are the weak spot. Windows is unaffected: it uses winhttp and
+schannel, and never pulls OpenSSL at all.
+
+git2's `vendored-openssl` feature would link it statically and remove the
+runtime dependency, at the cost of build time and of OpenSSL's licence terms
+entering [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
+### What the tests do and do not cover
+
+Remote operations are tested end to end against **local bare repositories used
+as remotes** — git treats a filesystem path as an ordinary remote, so refspecs,
+ref updates, ahead/behind and push rejection are all exercised with no network
+and no server.
+
+Authentication is not covered, because a local path never asks for any. The
+credential callback is exercised by no test, and that gap is real.
 
 ## Errors
 
