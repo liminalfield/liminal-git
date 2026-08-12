@@ -26,12 +26,28 @@ crate-type = ["cdylib", "rlib"]
 # `BranchType::Remote` when listing remote-tracking branches and
 # `find_remote()` when reading configured URLs, both purely local reads.
 #
-# This is not only about a shorter dependency list. Consumers build this from
-# source (see the `prepare` script in package.json), and openssl-sys is the
-# single most common reason a `cargo build` fails on a machine that has not
-# been set up for it. Shipping that cost for capability the crate does not
-# have is a bad trade. When remote operations land, turn the features back on
-# in the same change as the credential handling they require, not before.
+# The reason is simply that the code is dead weight: a TLS and SSH stack
+# compiled into every binary for capability that does not exist. It also keeps
+# OpenSSL, which carries its own licence terms, out of THIRD-PARTY-NOTICES.
+#
+# An earlier version of this comment claimed the bigger motive was build
+# failures on unprepared machines. That was overstated, and the per-platform
+# detail is worth recording because it is the opposite of what people assume:
+#
+#   Windows  needs nothing. openssl-sys is declared under
+#            [target."cfg(unix)".dependencies], so Windows never pulls it;
+#            libgit2 links winhttp/crypt32/secur32 instead.
+#   Linux    needs OpenSSL development headers, or the vendored-openssl feature.
+#   macOS    also needs OpenSSL — macOS is cfg(unix) — and its system LibreSSL
+#            is not accepted, so Homebrew or vendored.
+#
+# "ssh" pulls libssh2-sys on every platform, but that is vendored C source and
+# needs only the compiler this crate already requires. None of this affects
+# anyone running a packaged application: the libraries are statically linked,
+# so the cost lands on whoever compiles, never on an end user.
+#
+# When remote operations land, turn these back on in the same change as the
+# credential handling they require, and update THIRD-PARTY-NOTICES.md.
 git2 = { version = "0.18", default-features = false }
 walkdir = "2.3"
 

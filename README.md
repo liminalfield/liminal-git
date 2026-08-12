@@ -93,8 +93,9 @@ a commit run from a terminal knows nothing about `.git/liminal-git.lock`.
 
 There are **no network operations**: no clone, fetch, push, or remote
 authentication. git2's default features are switched off accordingly, so the
-build does not pull in OpenSSL or libssh2 — which also removes the most common
-reason a native build fails on a machine that is not set up for it.
+build does not compile a TLS and SSH stack into every binary for capability that
+does not exist. It also keeps OpenSSL, and its licence terms, out of the
+third-party notices.
 
 Reinstating them is a deliberate future change, to be made alongside the
 credential handling they require.
