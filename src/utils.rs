@@ -523,15 +523,30 @@ mod tests {
     fn lock_identity_collapses_spellings() {
         let (_temp, repo_path) = setup_test_repo();
         let canonical = std::fs::canonicalize(&repo_path).unwrap();
-        let base = canonical.to_string_lossy().into_owned();
         std::fs::create_dir_all(canonical.join("sub")).unwrap();
+
+        // Spellings are built from the *non-canonical* path, and joined with
+        // the platform separator rather than "/".
+        //
+        // Both matter on Windows, and this test failed there for getting it
+        // wrong. `canonicalize` returns a verbatim path — \\?\C:\... — and
+        // verbatim paths are passed to the filesystem without normalisation,
+        // so a forward slash is a literal character rather than a separator.
+        // Appending "/" produced \\?\C:\...\tmpdir/ and os error 123, "the
+        // filename, directory name, or volume label syntax is incorrect".
+        //
+        // The canonical form is still included below, as the last spelling, so
+        // it is exercised as an input — just not used to build the others.
+        let sep = std::path::MAIN_SEPARATOR;
+        let base = repo_path.to_string_lossy().into_owned();
 
         let spellings = [
             base.clone(),
-            format!("{base}/"),                       // trailing separator
-            format!("{base}/."),                      // same directory, said the long way
-            format!("{base}/sub/.."),                 // a round trip through a child
-            repo_path.to_string_lossy().into_owned(), // possibly a symlinked /tmp
+            format!("{base}{sep}"),           // trailing separator
+            format!("{base}{sep}."),          // the same directory, said the long way
+            format!("{base}{sep}sub{sep}.."), // a round trip through a child
+            canonical.to_string_lossy().into_owned(), // already canonical, and on Unix
+                                              // possibly a symlinked /tmp
         ];
 
         let first = lock_identity(&spellings[0]).expect("resolve identity");

@@ -224,10 +224,28 @@ mod repository_ops_tests {
         assert_eq!(content, "Test repository description");
     }
 
+    /// Initialising somewhere the repository cannot be created must fail.
+    ///
+    /// This used to pass "/nonexistent/path/that/does/not/exist", which is not
+    /// a statement about the code but about Unix filesystem permissions: `/`
+    /// is unwritable, so `Repository::init` failed. On Windows that string is
+    /// a path relative to the current drive, the runner may happily create it,
+    /// and the test failed — `Repository::init` creates missing directories,
+    /// which is exactly what it is documented to do.
+    ///
+    /// Rooting the target under a *file* is impossible on every platform, and
+    /// tests the intended property rather than an accident of where the test
+    /// happens to run.
     #[test]
-    fn test_init_repository_nonexistent_path() {
-        let result = init_repository_impl("/nonexistent/path/that/does/not/exist");
-        assert!(result.is_err());
+    fn test_init_repository_where_it_cannot_be_created() {
+        let temp_dir = TempDir::new().unwrap();
+        let blocker = temp_dir.path().join("this-is-a-file");
+        fs::write(&blocker, "not a directory").unwrap();
+
+        let target = blocker.join("repo");
+        let result = init_repository_impl(&target.to_string_lossy());
+
+        assert!(result.is_err(), "expected an error, got {result:?}");
     }
 
     #[test]
