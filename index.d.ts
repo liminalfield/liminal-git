@@ -23,9 +23,8 @@ export declare class GitService {
    * # Arguments
    * * `repo_path` - Path to repository
    * * `file_path` - Path to file to unstage
-   * * `force` - Reserved for future use (currently ignored, unstaging is inherently safe)
    */
-  unstageFile(repoPath: string, filePath: string, force?: boolean | undefined | null): Promise<boolean>
+  unstageFile(repoPath: string, filePath: string): Promise<boolean>
   getStagedFiles(repoPath: string): Promise<Array<string>>
   stageDeletion(repoPath: string, filePath: string): Promise<boolean>
   stageRename(repoPath: string, oldPath: string, newPath: string): Promise<boolean>

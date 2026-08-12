@@ -42,15 +42,10 @@ impl GitOps {
         stage_file_impl(&repo_path, &file_path)
     }
 
-    fn unstage_file(
-        &self,
-        repo_path: String,
-        file_path: String,
-        force: Option<bool>,
-    ) -> Result<bool, GitError> {
+    fn unstage_file(&self, repo_path: String, file_path: String) -> Result<bool, GitError> {
         validate_repo_path(&repo_path)?;
         validate_file_path(&file_path)?;
-        unstage_file_impl(&repo_path, &file_path, force.unwrap_or(false))
+        unstage_file_impl(&repo_path, &file_path)
     }
 
     fn get_staged_files(&self, repo_path: String) -> Result<Vec<String>, GitError> {
@@ -510,7 +505,7 @@ fn test_unstage_operations() {
 
     // Unstage it
     git_service
-        .unstage_file(repo_path.clone(), "test.txt".to_string(), None)
+        .unstage_file(repo_path.clone(), "test.txt".to_string())
         .unwrap();
 
     // Verify it's no longer staged but still modified

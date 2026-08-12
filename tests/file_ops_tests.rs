@@ -452,7 +452,7 @@ mod file_ops_tests {
         assert_eq!(status.staged_files.len(), 1);
 
         // Unstage it
-        let result = unstage_file_impl(test_repo.path_str(), "test.txt", false);
+        let result = unstage_file_impl(test_repo.path_str(), "test.txt");
         assert!(result.is_ok());
         assert!(result.unwrap());
 
@@ -465,7 +465,7 @@ mod file_ops_tests {
     #[test]
     fn test_unstage_file_impl_invalid_repo() {
         let temp_dir = TempDir::new().unwrap();
-        let result = unstage_file_impl(temp_dir.path().to_str().unwrap(), "test.txt", false);
+        let result = unstage_file_impl(temp_dir.path().to_str().unwrap(), "test.txt");
         assert!(result.is_err());
     }
 

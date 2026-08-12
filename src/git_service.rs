@@ -131,22 +131,15 @@ impl GitService {
     /// # Arguments
     /// * `repo_path` - Path to repository
     /// * `file_path` - Path to file to unstage
-    /// * `force` - Reserved for future use (currently ignored, unstaging is inherently safe)
     #[napi]
-    pub async fn unstage_file(
-        &self,
-        repo_path: String,
-        file_path: String,
-        force: Option<bool>,
-    ) -> Result<bool> {
+    pub async fn unstage_file(&self, repo_path: String, file_path: String) -> Result<bool> {
         validate_repo_path(&repo_path)?;
         validate_file_path(&file_path)?;
 
-        let force_flag = force.unwrap_or(false);
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
             let _guard = utils::lock_repo(&repo_path)?;
-            unstage_file_impl(&repo_path, &file_path, force_flag)
+            unstage_file_impl(&repo_path, &file_path)
         })
         .await
     }

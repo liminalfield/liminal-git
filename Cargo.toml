@@ -1,6 +1,6 @@
 [package]
 name = "liminal-git"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 # Verified, not inferred. Two things set this floor, and the higher one wins:
 #   - let-chains (`if let ... && let ...`), unstable until 1.88 — 1.85 fails

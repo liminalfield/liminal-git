@@ -415,7 +415,14 @@ pub fn commit_staged_changes_impl(
 /// # Returns
 /// * `Ok(true)` - File successfully unstaged or was not staged
 /// * `Err(GitError)` - Repository error, bare repo, or empty repository
-pub fn unstage_file_impl(repo_path: &str, file_path: &str, _force: bool) -> Result<bool, GitError> {
+///
+/// There used to be a `force` parameter here — ignored, named `_force`, and
+/// documented as "reserved for future use". It was reserved for nothing: this
+/// operation never touches the working tree, so there is no unsafe variant a
+/// flag could permit. A parameter the caller can set and the library discards
+/// is worse than no parameter, because it implies a behaviour that does not
+/// exist. Removed before 1.0, while removing it was free.
+pub fn unstage_file_impl(repo_path: &str, file_path: &str) -> Result<bool, GitError> {
     info!("unstage_file: path={}", file_path);
     let start = std::time::Instant::now();
 
@@ -1283,7 +1290,7 @@ mod tests {
         drop(repo);
 
         // Unstage the file
-        let result = unstage_file_impl(repo_path.to_str().unwrap(), "test.txt", false);
+        let result = unstage_file_impl(repo_path.to_str().unwrap(), "test.txt");
         assert!(result.is_ok(), "Unstage should succeed");
 
         // Verify file is unstaged (index matches HEAD, not the modified version)
@@ -1325,7 +1332,7 @@ mod tests {
         commit_file(&repo_path, "test.txt", "Initial commit");
 
         // Try to unstage a file that is not staged (idempotent operation)
-        let result = unstage_file_impl(repo_path.to_str().unwrap(), "test.txt", false);
+        let result = unstage_file_impl(repo_path.to_str().unwrap(), "test.txt");
         assert!(
             result.is_ok(),
             "Unstaging non-staged file should succeed (idempotent)"
@@ -1346,7 +1353,7 @@ mod tests {
         let _ = stage_file_impl(repo_path.to_str().unwrap(), "test.txt");
 
         // Try to unstage in empty repository (no HEAD)
-        let result = unstage_file_impl(repo_path.to_str().unwrap(), "test.txt", false);
+        let result = unstage_file_impl(repo_path.to_str().unwrap(), "test.txt");
 
         // Should fail - no HEAD to reset to
         assert!(result.is_err(), "Unstaging in empty repository should fail");
@@ -1372,7 +1379,7 @@ mod tests {
         Repository::init_bare(&repo_path).expect("Failed to initialize bare repository");
 
         // Try to unstage in bare repo
-        let result = unstage_file_impl(repo_path.to_str().unwrap(), "test.txt", false);
+        let result = unstage_file_impl(repo_path.to_str().unwrap(), "test.txt");
 
         // Should fail - bare repos have no working tree
         assert!(result.is_err(), "Unstaging in bare repository should fail");
@@ -1411,7 +1418,7 @@ mod tests {
         drop(repo);
 
         // Unstage the new file
-        let result = unstage_file_impl(repo_path.to_str().unwrap(), "new.txt", false);
+        let result = unstage_file_impl(repo_path.to_str().unwrap(), "new.txt");
         assert!(result.is_ok(), "Unstaging new file should succeed");
 
         // Verify file is removed from index
