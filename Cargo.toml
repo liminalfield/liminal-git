@@ -52,7 +52,14 @@ crate-type = ["cdylib", "rlib"]
 #
 # Build-time cost lands on whoever compiles. Run-time cost, on Linux only,
 # now lands on whoever runs it.
-git2 = { version = "0.18", default-features = false, features = ["https", "ssh"] }
+git2 = { version = "0.21", default-features = false, features = ["https", "ssh"] }
+#
+# 0.21 changed a family of string accessors from Option<&str> to
+# Result<&str, Error> — Reference::name/shorthand, Commit::message, Tag::message,
+# Remote::name/url/pushurl, Branch::name, Signature::name/email,
+# StatusEntry::path, and StringArray's iterator. The migration here is `.ok()`,
+# which keeps the old behaviour exactly: a value that is not valid UTF-8 becomes
+# None and is skipped, rather than failing the operation around it.
 walkdir = "2.3"
 
 # Node.js native module bindings (optional for testing)

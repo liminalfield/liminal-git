@@ -93,7 +93,8 @@ fn test_create_annotated_tag_with_explicit_signature() {
 
     assert_eq!(tag.tagger().unwrap().name().unwrap(), "Custom User");
     assert_eq!(tag.tagger().unwrap().email().unwrap(), "custom@example.com");
-    assert_eq!(tag.message().unwrap(), "Release 1.0.0");
+    // git2 0.21: message() is Result<Option<&str>, _> rather than Option<&str>.
+    assert_eq!(tag.message().unwrap(), Some("Release 1.0.0"));
 }
 
 #[test]

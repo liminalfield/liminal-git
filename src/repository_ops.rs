@@ -221,7 +221,7 @@ pub fn get_status_impl(repo_path: &str) -> Result<GitStatus, GitError> {
 
     // Get current branch
     let current_branch = match repo.head() {
-        Ok(head) => head.shorthand().map(|s| s.to_string()),
+        Ok(head) => head.shorthand().ok().map(|s| s.to_string()),
         Err(_) => None,
     };
 
@@ -321,7 +321,7 @@ pub fn remove_all_remotes_impl(repo_path: &str) -> Result<Vec<String>, GitError>
         .map_err(|e| GitError::from(e).with_operation("list_remotes"))?;
 
     let mut removed = Vec::new();
-    for remote_name in remotes.iter().flatten() {
+    for remote_name in remotes.iter().filter_map(|n| n.ok()).flatten() {
         repo.remote_delete(remote_name)
             .map_err(|e| GitError::from(e).with_operation("delete_remote"))?;
         removed.push(remote_name.to_string());
@@ -770,10 +770,10 @@ pub fn get_repository_info_impl(repo_path: &str) -> Result<RepositoryInfo, GitEr
     // Get remote URLs
     let mut remote_urls = Vec::new();
     if let Ok(remotes) = repo.remotes() {
-        for remote_name in remotes.iter() {
+        for remote_name in remotes.iter().filter_map(|n| n.ok()) {
             if let Some(name) = remote_name
                 && let Ok(remote) = repo.find_remote(name)
-                && let Some(url) = remote.url()
+                && let Ok(url) = remote.url()
             {
                 remote_urls.push(url.to_string());
             }
