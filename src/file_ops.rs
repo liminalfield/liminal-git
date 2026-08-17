@@ -810,15 +810,12 @@ pub fn commit_amend_impl(
 
     if head.is_branch() {
         // HEAD points to a branch - update the branch reference
-        let branch_name = head
-            .name()
-            .ok()
-            .ok_or_else(|| GitError::GitOperationFailure {
-                operation: "get_branch_name".to_string(),
-                class: 0,
-                code: 0,
-                message: "HEAD has no name".to_string(),
-            })?;
+        let branch_name = head.name().ok_or_else(|| GitError::GitOperationFailure {
+            operation: "get_branch_name".to_string(),
+            class: 0,
+            code: 0,
+            message: "HEAD has no name".to_string(),
+        })?;
 
         repo.reference(
             branch_name,

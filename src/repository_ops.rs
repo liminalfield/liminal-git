@@ -221,7 +221,7 @@ pub fn get_status_impl(repo_path: &str) -> Result<GitStatus, GitError> {
 
     // Get current branch
     let current_branch = match repo.head() {
-        Ok(head) => head.shorthand().ok().map(|s| s.to_string()),
+        Ok(head) => head.shorthand().map(|s| s.to_string()),
         Err(_) => None,
     };
 
@@ -321,7 +321,7 @@ pub fn remove_all_remotes_impl(repo_path: &str) -> Result<Vec<String>, GitError>
         .map_err(|e| GitError::from(e).with_operation("list_remotes"))?;
 
     let mut removed = Vec::new();
-    for remote_name in remotes.iter().filter_map(|n| n.ok()).flatten() {
+    for remote_name in remotes.iter().flatten() {
         repo.remote_delete(remote_name)
             .map_err(|e| GitError::from(e).with_operation("delete_remote"))?;
         removed.push(remote_name.to_string());
@@ -770,10 +770,10 @@ pub fn get_repository_info_impl(repo_path: &str) -> Result<RepositoryInfo, GitEr
     // Get remote URLs
     let mut remote_urls = Vec::new();
     if let Ok(remotes) = repo.remotes() {
-        for remote_name in remotes.iter().filter_map(|n| n.ok()) {
+        for remote_name in remotes.iter() {
             if let Some(name) = remote_name
                 && let Ok(remote) = repo.find_remote(name)
-                && let Ok(url) = remote.url()
+                && let Some(url) = remote.url()
             {
                 remote_urls.push(url.to_string());
             }
@@ -800,6 +800,7 @@ pub fn get_repository_info_impl(repo_path: &str) -> Result<RepositoryInfo, GitEr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
     use std::path::PathBuf;
 
     fn setup_test_repo() -> (tempfile::TempDir, PathBuf) {
@@ -819,36 +820,24 @@ mod tests {
         // Create a temporary directory for isolated global config
         let config_dir = tempfile::TempDir::new_in(std::env::temp_dir())
             .expect("Failed to create temp config dir");
-        // `.gitconfig`, because that is the name libgit2 looks for inside the
-        // global search path.
-        let config_file = config_dir.path().join(".gitconfig");
+        let config_file = config_dir.path().join("gitconfig");
 
         // Create an empty config file so git2 can lock and write to it
         fs::write(&config_file, "").expect("Failed to create config file");
 
-        // Redirect libgit2's own global-config search, rather than setting
-        // GIT_CONFIG_GLOBAL.
-        //
-        // GIT_CONFIG_GLOBAL is a git(1) variable. libgit2 honoured it closely
-        // enough for this test to pass on every platform under 1.7.2, and stopped
-        // doing so on Windows under 1.9.6 — the fallback then found nothing and
-        // the test read None. The search path is libgit2's documented mechanism
-        // and behaves the same everywhere.
-        //
-        // SAFETY: process-global, so both callers are #[serial].
+        // Point GIT_CONFIG_GLOBAL to our temp file
+        // SAFETY: This is only used in single-threaded tests with proper cleanup
         unsafe {
-            git2::opts::set_search_path(git2::ConfigLevel::Global, config_dir.path())
-                .expect("redirect the global config search path");
+            env::set_var("GIT_CONFIG_GLOBAL", config_file.as_os_str());
         }
 
         config_dir
     }
 
     fn cleanup_global_config() {
-        // SAFETY: process-global; see setup_isolated_global_config.
+        // SAFETY: This is only used in single-threaded tests to clean up test state
         unsafe {
-            git2::opts::reset_search_path(git2::ConfigLevel::Global)
-                .expect("restore the global config search path");
+            env::remove_var("GIT_CONFIG_GLOBAL");
         }
     }
 
@@ -895,7 +884,7 @@ mod tests {
         let (_temp_dir, repo_path) = setup_test_repo();
 
         // Get the config file path and open it explicitly
-        let config_file = config_dir.path().join(".gitconfig");
+        let config_file = config_dir.path().join("gitconfig");
         let mut global_config =
             git2::Config::open(&config_file).expect("Failed to open global config");
         global_config
@@ -927,7 +916,7 @@ mod tests {
         let repo = Repository::open(&repo_path).expect("Failed to open repository");
 
         // Get the config file path and open it explicitly
-        let config_file = config_dir.path().join(".gitconfig");
+        let config_file = config_dir.path().join("gitconfig");
         let mut global_config =
             git2::Config::open(&config_file).expect("Failed to open global config");
         global_config

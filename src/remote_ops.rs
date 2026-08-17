@@ -153,21 +153,16 @@ pub fn list_remotes_impl(repo_path: &str) -> std::result::Result<Vec<RemoteInfo>
         .map_err(|e| GitError::from(e).with_operation("list_remotes"))?;
 
     let mut remotes = Vec::new();
-    // git2 0.21 yields Result<Option<&str>> where 0.18 yielded Option<&str>.
-    // Dropping the Err keeps the old behaviour: a remote whose name is not valid
-    // UTF-8 is skipped rather than failing the listing.
-    for name in names.iter().filter_map(|n| n.ok()).flatten() {
+    for name in names.iter().flatten() {
         let remote = repo
             .find_remote(name)
             .map_err(|e| GitError::from(e).with_operation("find_remote"))?;
 
         // `pushurl` is only interesting when it differs; reporting it always
         // would imply a distinction the repository has not actually made.
-        let url = remote.url().ok().map(str::to_string);
+        let url = remote.url().map(str::to_string);
         let push_url = remote
             .pushurl()
-            .ok()
-            .flatten()
             .map(str::to_string)
             .filter(|p| Some(p) != url.as_ref());
 

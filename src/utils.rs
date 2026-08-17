@@ -709,8 +709,8 @@ mod tests {
 
         assert!(result.is_ok());
         let signature = result.unwrap();
-        assert_eq!(signature.name(), Ok("Test User"));
-        assert_eq!(signature.email(), Ok("test@example.com"));
+        assert_eq!(signature.name(), Some("Test User"));
+        assert_eq!(signature.email(), Some("test@example.com"));
     }
 
     #[test]
@@ -732,8 +732,8 @@ mod tests {
 
         assert!(result.is_ok());
         let signature = result.unwrap();
-        assert_eq!(signature.name(), Ok("Config User"));
-        assert_eq!(signature.email(), Ok("config@example.com"));
+        assert_eq!(signature.name(), Some("Config User"));
+        assert_eq!(signature.email(), Some("config@example.com"));
     }
 
     #[test]
@@ -755,8 +755,8 @@ mod tests {
 
         assert!(result.is_ok());
         let signature = result.unwrap();
-        assert_eq!(signature.name(), Ok("Fallback User"));
-        assert_eq!(signature.email(), Ok("fallback@example.com"));
+        assert_eq!(signature.name(), Some("Fallback User"));
+        assert_eq!(signature.email(), Some("fallback@example.com"));
     }
 
     #[test]
@@ -779,8 +779,8 @@ mod tests {
 
         assert!(result.is_ok());
         let signature = result.unwrap();
-        assert_eq!(signature.name(), Ok("Explicit User"));
-        assert_eq!(signature.email(), Ok("explicit@example.com"));
+        assert_eq!(signature.name(), Some("Explicit User"));
+        assert_eq!(signature.email(), Some("explicit@example.com"));
     }
 
     #[test]
@@ -836,7 +836,7 @@ mod tests {
 
         assert!(result.is_ok());
         let signature = result.unwrap();
-        assert_eq!(signature.name(), Ok("Explicit User"));
-        assert_eq!(signature.email(), Ok("config@example.com"));
+        assert_eq!(signature.name(), Some("Explicit User"));
+        assert_eq!(signature.email(), Some("config@example.com"));
     }
 }

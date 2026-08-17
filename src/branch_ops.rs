@@ -257,7 +257,7 @@ pub fn delete_branch_impl(
         .head()
         .map_err(|e| GitError::from(e).with_operation("get_head"))?;
 
-    if let Ok(current_branch) = head.shorthand()
+    if let Some(current_branch) = head.shorthand()
         && current_branch == branch_name
     {
         return Err(GitError::CannotDeleteCurrentBranch {
@@ -362,11 +362,13 @@ fn checkout_branch_internal_impl(
         match repo.checkout_tree(target_tree.as_object(), Some(&mut checkout_builder)) {
             Ok(_) => {
                 // Checkout succeeded - now update HEAD
-                repo.set_head(branch_ref.name().ok().ok_or_else(|| {
-                    GitError::InvalidBranchName {
-                        name: "<non-UTF-8 branch ref>".to_string(),
-                    }
-                })?)
+                repo.set_head(
+                    branch_ref
+                        .name()
+                        .ok_or_else(|| GitError::InvalidBranchName {
+                            name: "<non-UTF-8 branch ref>".to_string(),
+                        })?,
+                )
                 .map_err(|e| GitError::from(e).with_operation("set_head"))?;
 
                 // Refresh working tree to match new HEAD
@@ -419,7 +421,6 @@ fn checkout_branch_internal_impl(
         repo.set_head(
             branch_ref
                 .name()
-                .ok()
                 .ok_or_else(|| GitError::InvalidBranchName {
                     name: "<non-UTF-8 branch ref>".to_string(),
                 })?,
@@ -463,7 +464,7 @@ fn collect_actual_conflicts(
             continue;
         }
 
-        if let Ok(path) = entry.path() {
+        if let Some(path) = entry.path() {
             // Check if this file exists in the target tree and is different
             match target_tree.get_path(std::path::Path::new(path)) {
                 Ok(target_entry) => {
