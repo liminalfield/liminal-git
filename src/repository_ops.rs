@@ -871,7 +871,13 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(target_env = "msvc"), serial_test::serial)]
+    // Serial on every platform. These two mutate the global git config search
+    // path, which is process-wide, so running them concurrently with each other
+    // means one can clear the setting the other just wrote. Windows was excluded
+    // from serialisation for reasons nobody recorded, and it is where the race
+    // showed: the same commit passed one CI run and failed the next on
+    // `left: None, right: Some("global_value")`.
+    #[serial_test::serial]
     fn test_get_config_global_fallback() {
         // Set up isolated global config to avoid polluting user's ~/.gitconfig
         let config_dir = setup_isolated_global_config();
@@ -896,7 +902,13 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(target_env = "msvc"), serial_test::serial)]
+    // Serial on every platform. These two mutate the global git config search
+    // path, which is process-wide, so running them concurrently with each other
+    // means one can clear the setting the other just wrote. Windows was excluded
+    // from serialisation for reasons nobody recorded, and it is where the race
+    // showed: the same commit passed one CI run and failed the next on
+    // `left: None, right: Some("global_value")`.
+    #[serial_test::serial]
     fn test_get_config_repo_overrides_global() {
         // Set up isolated global config to avoid polluting user's ~/.gitconfig
         let config_dir = setup_isolated_global_config();
