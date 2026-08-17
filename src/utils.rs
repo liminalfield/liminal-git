@@ -589,36 +589,48 @@ mod tests {
 
     /// Two threads must not hold the lock at once.
     ///
-    /// Asserted by timing rather than by inspection: the second acquisition
-    /// cannot complete until the first releases, so it must take at least as
-    /// long as the first holder slept. A test that merely acquired twice in
-    /// sequence would pass against a lock that does nothing.
+    /// Asserted by observation rather than by timing. The second thread reports
+    /// the moment it acquires; while the first holds the lock that report must
+    /// not arrive, and once the first releases it must. A test that merely
+    /// acquired twice in sequence would pass against a lock that does nothing.
+    ///
+    /// This used to measure how long the second acquisition took and require it
+    /// to exceed the sleep of the first. That is a race the test loses on a
+    /// loaded machine — it failed on CI while passing locally — and the thing it
+    /// was trying to establish is exclusion, not duration.
     #[test]
     fn lock_excludes_a_second_thread() {
+        use std::sync::mpsc;
+
         let (_temp, repo_path) = setup_test_repo();
         let path = repo_path.to_string_lossy().into_owned();
-        let hold = Duration::from_millis(250);
 
         let guard = lock_repo(&path).expect("first acquire");
 
+        let (tx, rx) = mpsc::channel();
         let other = {
             let path = path.clone();
             std::thread::spawn(move || {
-                let started = Instant::now();
-                let _guard = lock_repo(&path).expect("second acquire");
-                started.elapsed()
+                let guard = lock_repo(&path).expect("second acquire");
+                tx.send(()).expect("report acquisition");
+                drop(guard);
             })
         };
 
-        std::thread::sleep(hold);
+        // Blocked: no report while the first holder has it. A slow machine makes
+        // this *more* likely to hold, not less, so the assertion cannot flake
+        // into a false failure.
+        assert!(
+            rx.recv_timeout(Duration::from_millis(250)).is_err(),
+            "the second thread took the lock while the first was holding it — \
+             the lock is not excluding anything"
+        );
+
         drop(guard);
 
-        let waited = other.join().expect("thread join");
-        assert!(
-            waited >= hold,
-            "second acquisition took {waited:?}, less than the {hold:?} the \
-             first holder was holding it — the lock is not excluding anything"
-        );
+        rx.recv_timeout(Duration::from_secs(10))
+            .expect("second thread should acquire once the lock is released");
+        other.join().expect("thread join");
     }
 
     /// The lock must exclude *other processes*, which is the entire reason it
