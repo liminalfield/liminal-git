@@ -9,16 +9,9 @@ name: CI
 # something platform-specific:
 #
 #     gh workflow run ci.yml -R liminalfield/liminal-git -f platforms=windows
-# Pull requests and manual runs — not pushes to main.
-#
-# A push to main ran this too, so every change was billed twice: once when its
-# PR opened, once when it merged. The PR run already tests the merge result.
-# This matrix is three platforms and macOS bills at ten times Linux, so the
-# duplicate was the most expensive redundancy in the repository.
-#
-# workflow_dispatch remains, and takes a platform choice — a Linux-only run is
-# the cheap way to check something without spending the matrix.
 on:
+  push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
     inputs:
