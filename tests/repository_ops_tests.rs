@@ -222,6 +222,51 @@ mod repository_ops_tests {
         assert!(desc_path.exists());
         let content = fs::read_to_string(desc_path).unwrap();
         assert_eq!(content, "Test repository description");
+
+        // The initial branch is the point of `default_branch`, and this test
+        // did not assert it — which is how it came to be validated, accepted
+        // and silently ignored while every repository came out on `master`.
+        let head = fs::read_to_string(temp_dir.path().join(".git").join("HEAD")).unwrap();
+        assert_eq!(head.trim(), "ref: refs/heads/main");
+    }
+
+    /// Without a `default_branch`, whatever git would do by itself.
+    #[test]
+    fn test_init_repository_with_config_impl_defaults_the_branch() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().to_string_lossy().to_string();
+
+        let config = RepositoryConfig {
+            description: None,
+            default_branch: None,
+            line_ending: None,
+        };
+
+        assert!(init_repository_with_config_impl(&path, &config).unwrap());
+
+        // Not asserted as "master": that is libgit2's default today, and the
+        // point here is only that omitting the option changes nothing.
+        let head = fs::read_to_string(temp_dir.path().join(".git").join("HEAD")).unwrap();
+        assert!(head.trim().starts_with("ref: refs/heads/"));
+    }
+
+    /// A named branch that is not the default, so the test cannot pass by
+    /// accident on a machine whose git already defaults to `main`.
+    #[test]
+    fn test_init_repository_with_config_impl_honours_an_unusual_branch() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().to_string_lossy().to_string();
+
+        let config = RepositoryConfig {
+            description: None,
+            default_branch: Some("manuscript".to_string()),
+            line_ending: None,
+        };
+
+        assert!(init_repository_with_config_impl(&path, &config).unwrap());
+
+        let head = fs::read_to_string(temp_dir.path().join(".git").join("HEAD")).unwrap();
+        assert_eq!(head.trim(), "ref: refs/heads/manuscript");
     }
 
     /// Initialising somewhere the repository cannot be created must fail.

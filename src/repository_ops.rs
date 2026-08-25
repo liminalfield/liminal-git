@@ -2,7 +2,10 @@ use crate::errors::GitError;
 use crate::types::{FileStatus, GitStatus, RenamedStatus};
 use crate::types::{GitConfig, RepositoryConfig, RepositoryHealth, RepositoryInfo};
 use crate::utils::normalize_git_path;
-use git2::{Diff, DiffDelta, DiffFindOptions, DiffOptions, Repository, Status, StatusOptions};
+use git2::{
+    Diff, DiffDelta, DiffFindOptions, DiffOptions, Repository, RepositoryInitOptions, Status,
+    StatusOptions,
+};
 use log::info;
 use std::fs;
 use std::path::PathBuf;
@@ -342,8 +345,24 @@ pub fn init_repository_with_config_impl(
     info!("init_repository_with_config: path={}", path);
     let start = std::time::Instant::now();
 
-    let repo =
-        Repository::init(path).map_err(|e| GitError::from(e).with_operation("init_repository"))?;
+    // The initial branch is an init OPTION, not configuration.
+    //
+    // This used to call `Repository::init` and then write `init.defaultBranch`
+    // into the new repository's own config. That setting is what `git init`
+    // consults when creating a repository; writing it into one that already
+    // exists changes nothing, because HEAD was set moments earlier and is
+    // never revisited. So `defaultBranch: "main"` was validated, accepted, and
+    // silently ignored — every repository came out on `master` regardless.
+    // `git init -b <name>` does not set that config key either.
+    let repo = match config.default_branch {
+        Some(ref branch) => {
+            let mut opts = RepositoryInitOptions::new();
+            opts.initial_head(branch);
+            Repository::init_opts(path, &opts)
+        }
+        None => Repository::init(path),
+    }
+    .map_err(|e| GitError::from(e).with_operation("init_repository"))?;
 
     // Configure the repository
     let mut repo_config = repo
@@ -376,12 +395,6 @@ pub fn init_repository_with_config_impl(
         repo_config
             .set_str("core.autocrlf", autocrlf_value)
             .map_err(|e| GitError::from(e).with_operation("set_autocrlf"))?;
-    }
-
-    if let Some(ref branch) = config.default_branch {
-        repo_config
-            .set_str("init.defaultBranch", branch)
-            .map_err(|e| GitError::from(e).with_operation("set_default_branch"))?;
     }
 
     info!(
