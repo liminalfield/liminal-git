@@ -8,7 +8,9 @@ use crate::remote_ops;
 use crate::repository_ops::*;
 use crate::tag_ops;
 use crate::types::GitStatus;
-use crate::types::{BranchInfo, CreateBranchOptions, CreateTagOptions, TagInfo};
+use crate::types::{
+    BranchInfo, CreateBranchOptions, CreateTagOptions, FastForwardResult, MergeAnalysis, TagInfo,
+};
 use crate::types::{CommitDiff, CommitHistory, DeletedFileEntry, FileAtCommit, FileDiff};
 use crate::types::{FetchResult, PushResult, RemoteCredentials, RemoteInfo, UpstreamStatus};
 use crate::types::{GitConfig, RepositoryConfig, RepositoryHealth, RepositoryInfo};
@@ -674,6 +676,26 @@ impl GitService {
         force: Option<bool>,
     ) -> Result<bool> {
         branch_ops::delete_branch(self, repo_path, branch_name, force).await
+    }
+
+    /// What merging `branch` into HEAD would do — without doing it. Does not
+    /// touch the working tree, the index, or any ref.
+    #[napi]
+    pub async fn merge_analysis(&self, repo_path: String, branch: String) -> Result<MergeAnalysis> {
+        branch_ops::merge_analysis(self, repo_path, branch).await
+    }
+
+    /// Move the current branch forward to `branch` when that is a strict
+    /// fast-forward. Refuses with `NOT_FAST_FORWARD` when HEAD is already
+    /// up to date with `branch`, or when the two have diverged — either case
+    /// needs a real merge, which this does not perform.
+    #[napi]
+    pub async fn fast_forward(
+        &self,
+        repo_path: String,
+        branch: String,
+    ) -> Result<FastForwardResult> {
+        branch_ops::fast_forward(self, repo_path, branch).await
     }
 
     /// List all tags in the repository

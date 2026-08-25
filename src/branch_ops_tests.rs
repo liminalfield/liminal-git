@@ -415,3 +415,164 @@ fn test_repo_lock_serializes_concurrent_commits() {
         "all 8 concurrent commits serialized onto HEAD"
     );
 }
+
+// ===== mergeAnalysis + fastForward (phase 2, first two functions) =====
+
+#[test]
+#[serial_test::serial]
+fn test_merge_analysis_up_to_date() {
+    let (_tmp, repo_path) = setup_test_repo();
+    write_and_commit(&repo_path, "a.txt", "A"); // default = A
+    create_branch(&repo_path, "feature"); // feature = A, same commit as HEAD
+
+    let result = merge_analysis_impl(repo_path.to_str().unwrap(), "feature")
+        .expect("merge_analysis should succeed");
+    assert_eq!(result.kind, "up-to-date");
+    assert_eq!(result.behind, 0, "nothing on feature that HEAD lacks");
+}
+
+#[test]
+#[serial_test::serial]
+fn test_merge_analysis_fast_forward() {
+    let (_tmp, repo_path) = setup_test_repo();
+    write_and_commit(&repo_path, "a.txt", "A"); // default = A
+    create_branch(&repo_path, "feature"); // feature = A
+
+    checkout_branch_impl(repo_path.to_str().unwrap(), "feature").expect("checkout feature");
+    write_and_commit(&repo_path, "b.txt", "B");
+    write_and_commit(&repo_path, "c.txt", "C"); // feature = A -> B -> C
+    checkout_default(&repo_path); // HEAD back to A, an ancestor of feature
+
+    let result = merge_analysis_impl(repo_path.to_str().unwrap(), "feature")
+        .expect("merge_analysis should succeed");
+    assert_eq!(result.kind, "fast-forward");
+    assert_eq!(result.ahead, 0);
+    assert_eq!(result.behind, 2);
+}
+
+#[test]
+#[serial_test::serial]
+fn test_merge_analysis_diverged() {
+    let (_tmp, repo_path) = setup_test_repo();
+    write_and_commit(&repo_path, "a.txt", "A"); // default = A
+    create_branch(&repo_path, "feature"); // feature = A
+
+    checkout_branch_impl(repo_path.to_str().unwrap(), "feature").expect("checkout feature");
+    write_and_commit(&repo_path, "b.txt", "B"); // feature = A -> B
+    checkout_default(&repo_path);
+    write_and_commit(&repo_path, "d.txt", "D"); // default = A -> D — neither is an ancestor
+
+    let result = merge_analysis_impl(repo_path.to_str().unwrap(), "feature")
+        .expect("merge_analysis should succeed");
+    assert_eq!(result.kind, "normal");
+    assert_eq!(result.ahead, 1);
+    assert_eq!(result.behind, 1);
+}
+
+#[test]
+#[serial_test::serial]
+fn test_merge_analysis_unknown_branch() {
+    let (_tmp, repo_path) = setup_test_repo();
+    write_and_commit(&repo_path, "a.txt", "A");
+
+    match merge_analysis_impl(repo_path.to_str().unwrap(), "does-not-exist") {
+        Err(GitError::BranchNotFound { name }) => assert_eq!(name, "does-not-exist"),
+        other => panic!("expected BranchNotFound, got {:?}", other),
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn test_fast_forward_moves_ref_and_working_tree() {
+    let (_tmp, repo_path) = setup_test_repo();
+    write_and_commit(&repo_path, "a.txt", "A"); // default = A
+    create_branch(&repo_path, "feature"); // feature = A
+
+    checkout_branch_impl(repo_path.to_str().unwrap(), "feature").expect("checkout feature");
+    write_and_commit(&repo_path, "b.txt", "B"); // feature = A -> B
+
+    let feature_tip = {
+        let repo = Repository::open(&repo_path).unwrap();
+        repo.find_branch("feature", git2::BranchType::Local)
+            .unwrap()
+            .get()
+            .target()
+            .unwrap()
+    };
+
+    checkout_default(&repo_path); // HEAD back on default, at A — behind feature by 1
+    let default_branch_name = {
+        let repo = Repository::open(&repo_path).unwrap();
+        repo.head().unwrap().shorthand().unwrap().to_string()
+    };
+    assert!(
+        !repo_path.join("b.txt").exists(),
+        "b.txt only exists on feature before the fast-forward"
+    );
+
+    let result = fast_forward_impl(repo_path.to_str().unwrap(), "feature")
+        .expect("fast_forward should succeed on a strict fast-forward");
+
+    assert_eq!(result.branch, default_branch_name);
+    assert_eq!(result.commit_hash, feature_tip.to_string());
+
+    // The current branch's ref moved to feature's tip.
+    let repo = Repository::open(&repo_path).unwrap();
+    let head = repo.head().unwrap();
+    assert_eq!(head.shorthand().unwrap(), default_branch_name);
+    assert_eq!(head.target().unwrap(), feature_tip);
+
+    // The working tree was updated to match, not just the ref.
+    assert!(
+        repo_path.join("b.txt").exists(),
+        "fast_forward must update the working tree, not just the ref"
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn test_fast_forward_refuses_diverged_branch() {
+    let (_tmp, repo_path) = setup_test_repo();
+    write_and_commit(&repo_path, "a.txt", "A");
+    create_branch(&repo_path, "feature");
+
+    checkout_branch_impl(repo_path.to_str().unwrap(), "feature").expect("checkout feature");
+    write_and_commit(&repo_path, "b.txt", "B"); // feature = A -> B
+    checkout_default(&repo_path);
+    write_and_commit(&repo_path, "d.txt", "D"); // default = A -> D — diverged from feature
+
+    let head_before = {
+        let repo = Repository::open(&repo_path).unwrap();
+        repo.head().unwrap().target().unwrap()
+    };
+
+    let result = fast_forward_impl(repo_path.to_str().unwrap(), "feature");
+    match result {
+        Err(GitError::NotFastForward { branch, reason }) => {
+            assert_eq!(branch, "feature");
+            assert_eq!(reason, "diverged");
+        }
+        other => panic!("expected NotFastForward, got {:?}", other),
+    }
+
+    // Refused means untouched: ref and working tree are exactly as before.
+    let repo = Repository::open(&repo_path).unwrap();
+    assert_eq!(repo.head().unwrap().target().unwrap(), head_before);
+    assert!(
+        !repo_path.join("b.txt").exists(),
+        "a refused fast-forward must not touch the working tree"
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn test_fast_forward_refuses_up_to_date_branch() {
+    let (_tmp, repo_path) = setup_test_repo();
+    write_and_commit(&repo_path, "a.txt", "A");
+    create_branch(&repo_path, "feature"); // feature == HEAD already
+
+    match fast_forward_impl(repo_path.to_str().unwrap(), "feature") {
+        Err(GitError::NotFastForward { reason, .. }) => assert_eq!(reason, "up-to-date"),
+        other => panic!("expected NotFastForward, got {:?}", other),
+    }
+}

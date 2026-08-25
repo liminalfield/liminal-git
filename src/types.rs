@@ -189,6 +189,37 @@ pub struct AheadBehind {
     pub behind: u32,
 }
 
+/// What merging `branch` into HEAD would do, without doing it.
+///
+/// `ahead`/`behind` are always reported relative to `branch`, regardless of
+/// `kind` — even when `kind` is `"up-to-date"` HEAD may be ahead by any
+/// number of commits; `"up-to-date"` only means `behind` is zero.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "napi-binding", napi(object))]
+pub struct MergeAnalysis {
+    /// `"up-to-date"` — HEAD already contains everything `branch` has.
+    /// `"fast-forward"` — HEAD is an ancestor of `branch`; moving the ref is
+    /// sufficient, no merge commit is needed.
+    /// `"normal"` — HEAD and `branch` have diverged; a real merge is required.
+    pub kind: String,
+    /// Commits HEAD has that `branch` does not.
+    pub ahead: u32,
+    /// Commits `branch` has that HEAD does not.
+    pub behind: u32,
+}
+
+/// Result of moving the current branch forward to `branch` via `fastForward`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "napi-binding", napi(object))]
+pub struct FastForwardResult {
+    /// Name of the branch that was moved (the branch HEAD was on).
+    pub branch: String,
+    /// Commit the branch pointed to before the fast-forward.
+    pub previous_commit_hash: String,
+    /// Commit the branch points to now — the same commit `branch` pointed to.
+    pub commit_hash: String,
+}
+
 /// Information about a git tag
 #[derive(Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "napi-binding", napi(object))]

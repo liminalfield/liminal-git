@@ -424,4 +424,142 @@ mod branch_ops_tests {
         assert_eq!(branches[2].name, "beta-branch");
         assert_eq!(branches[3].name, "zebra-branch");
     }
+
+    // ===== mergeAnalysis + fastForward (phase 2, first two functions) =====
+
+    #[test]
+    fn test_merge_analysis_impl_fast_forward() {
+        let test_repo = TestRepo::new().unwrap();
+        test_repo
+            .add_and_commit("a.txt", "A", "Initial commit")
+            .unwrap();
+
+        let options = CreateBranchOptions {
+            name: "feature-branch".to_string(),
+            from_commit: None,
+            checkout: true,
+        };
+        create_branch_impl(test_repo.path_str(), &options).unwrap();
+        test_repo.add_and_commit("b.txt", "B", "B").unwrap();
+        test_repo.add_and_commit("c.txt", "C", "C").unwrap();
+
+        checkout_branch_impl(test_repo.path_str(), "master")
+            .or_else(|_| checkout_branch_impl(test_repo.path_str(), "main"))
+            .expect("back on the default branch, which feature-branch is ahead of");
+
+        let analysis = merge_analysis_impl(test_repo.path_str(), "feature-branch")
+            .expect("merge_analysis should succeed");
+        assert_eq!(analysis.kind, "fast-forward");
+        assert_eq!(analysis.ahead, 0);
+        assert_eq!(analysis.behind, 2);
+    }
+
+    #[test]
+    fn test_merge_analysis_impl_diverged_is_normal() {
+        let test_repo = TestRepo::new().unwrap();
+        test_repo
+            .add_and_commit("a.txt", "A", "Initial commit")
+            .unwrap();
+
+        let options = CreateBranchOptions {
+            name: "feature-branch".to_string(),
+            from_commit: None,
+            checkout: true,
+        };
+        create_branch_impl(test_repo.path_str(), &options).unwrap();
+        test_repo.add_and_commit("b.txt", "B", "B").unwrap();
+
+        checkout_branch_impl(test_repo.path_str(), "master")
+            .or_else(|_| checkout_branch_impl(test_repo.path_str(), "main"))
+            .expect("back on the default branch");
+        test_repo.add_and_commit("d.txt", "D", "D").unwrap();
+
+        let analysis = merge_analysis_impl(test_repo.path_str(), "feature-branch")
+            .expect("merge_analysis should succeed");
+        assert_eq!(analysis.kind, "normal");
+        assert_eq!(analysis.ahead, 1);
+        assert_eq!(analysis.behind, 1);
+    }
+
+    #[test]
+    fn test_fast_forward_impl_moves_ref_and_working_tree() {
+        let test_repo = TestRepo::new().unwrap();
+        test_repo
+            .add_and_commit("a.txt", "A", "Initial commit")
+            .unwrap();
+
+        let options = CreateBranchOptions {
+            name: "feature-branch".to_string(),
+            from_commit: None,
+            checkout: true,
+        };
+        create_branch_impl(test_repo.path_str(), &options).unwrap();
+        let feature_tip = test_repo.add_and_commit("b.txt", "B", "B").unwrap();
+
+        checkout_branch_impl(test_repo.path_str(), "master")
+            .or_else(|_| checkout_branch_impl(test_repo.path_str(), "main"))
+            .expect("back on the default branch, behind feature-branch by one commit");
+        let default_branch = get_current_branch_impl(test_repo.path_str())
+            .unwrap()
+            .unwrap()
+            .name;
+        assert!(!test_repo.path.join("b.txt").exists());
+
+        let result = fast_forward_impl(test_repo.path_str(), "feature-branch")
+            .expect("a strict fast-forward should succeed");
+        assert_eq!(result.branch, default_branch);
+        assert_eq!(result.commit_hash, feature_tip.to_string());
+
+        let current = get_current_branch_impl(test_repo.path_str())
+            .unwrap()
+            .unwrap();
+        assert_eq!(current.name, default_branch, "stays on the same branch");
+        assert_eq!(current.commit_hash, feature_tip.to_string(), "ref moved");
+        assert!(
+            test_repo.path.join("b.txt").exists(),
+            "working tree must reflect the fast-forwarded commit"
+        );
+    }
+
+    #[test]
+    fn test_fast_forward_impl_refuses_a_diverged_branch() {
+        let test_repo = TestRepo::new().unwrap();
+        test_repo
+            .add_and_commit("a.txt", "A", "Initial commit")
+            .unwrap();
+
+        let options = CreateBranchOptions {
+            name: "feature-branch".to_string(),
+            from_commit: None,
+            checkout: true,
+        };
+        create_branch_impl(test_repo.path_str(), &options).unwrap();
+        test_repo.add_and_commit("b.txt", "B", "B").unwrap();
+
+        checkout_branch_impl(test_repo.path_str(), "master")
+            .or_else(|_| checkout_branch_impl(test_repo.path_str(), "main"))
+            .expect("back on the default branch");
+        test_repo.add_and_commit("d.txt", "D", "D").unwrap();
+        let head_before = get_current_branch_impl(test_repo.path_str())
+            .unwrap()
+            .unwrap()
+            .commit_hash;
+
+        let result = fast_forward_impl(test_repo.path_str(), "feature-branch");
+        match result {
+            Err(GitError::NotFastForward { branch, reason }) => {
+                assert_eq!(branch, "feature-branch");
+                assert_eq!(reason, "diverged");
+            }
+            other => panic!("expected NotFastForward, got {:?}", other),
+        }
+
+        // A refusal must leave the repository untouched.
+        let head_after = get_current_branch_impl(test_repo.path_str())
+            .unwrap()
+            .unwrap()
+            .commit_hash;
+        assert_eq!(head_after, head_before);
+        assert!(!test_repo.path.join("b.txt").exists());
+    }
 }

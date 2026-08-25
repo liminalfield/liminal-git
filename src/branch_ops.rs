@@ -2,8 +2,8 @@
 
 use crate::errors::GitError;
 use crate::utils;
-use crate::{AheadBehind, BranchInfo, CreateBranchOptions};
-use git2::{Branch, BranchType, Repository};
+use crate::{AheadBehind, BranchInfo, CreateBranchOptions, FastForwardResult, MergeAnalysis};
+use git2::{Branch, BranchType, Oid, Reference, Repository};
 use log::info;
 
 // NAPI imports only when feature is enabled
@@ -597,6 +597,261 @@ fn calculate_ahead_behind_impl(
     })
 }
 
+/// Resolve `branch` — a local branch name, a remote-tracking name like
+/// `"origin/main"`, or any other short ref name libgit2 recognises — to its
+/// reference. Anything that doesn't resolve is reported the same way
+/// `checkout_branch_impl` reports a missing branch.
+fn resolve_branch_ref<'repo>(
+    repo: &'repo Repository,
+    branch: &str,
+) -> std::result::Result<Reference<'repo>, GitError> {
+    repo.resolve_reference_from_short_name(branch)
+        .map_err(|_| GitError::BranchNotFound {
+            name: branch.to_string(),
+        })
+}
+
+/// `(ahead, behind)` of HEAD against `their_id`: commits HEAD has that
+/// `their_id` does not, and commits `their_id` has that HEAD does not.
+///
+/// Handles the unborn-HEAD case — a freshly initialised repository with no
+/// commits yet, where `repo.head()` itself fails — by reporting nothing
+/// ahead and everything reachable from `their_id` as behind, since there is
+/// no common history to subtract.
+fn ahead_behind_of_head_impl(
+    repo: &Repository,
+    their_id: Oid,
+) -> std::result::Result<(u32, u32), GitError> {
+    match repo.head() {
+        Ok(head) => {
+            let head_commit = head
+                .peel_to_commit()
+                .map_err(|e| GitError::from(e).with_operation("peel_to_commit"))?;
+            let (ahead, behind) = repo
+                .graph_ahead_behind(head_commit.id(), their_id)
+                .map_err(|e| GitError::from(e).with_operation("graph_ahead_behind"))?;
+            Ok((ahead as u32, behind as u32))
+        }
+        Err(e) if e.code() == git2::ErrorCode::UnbornBranch => {
+            let mut revwalk = repo
+                .revwalk()
+                .map_err(|e| GitError::from(e).with_operation("revwalk"))?;
+            revwalk
+                .push(their_id)
+                .map_err(|e| GitError::from(e).with_operation("revwalk_push"))?;
+            let behind = revwalk.count() as u32;
+            Ok((0, behind))
+        }
+        Err(e) => Err(GitError::from(e).with_operation("get_head")),
+    }
+}
+
+/// What merging `branch` into HEAD would do, without doing it. Reads only —
+/// never touches the working tree, the index, or any ref.
+///
+/// Uses libgit2's own `merge_analysis` rather than hand-rolling ancestry
+/// checks, so the three kinds match exactly what a real merge would decide.
+pub fn merge_analysis_impl(
+    repo_path: &str,
+    branch: &str,
+) -> std::result::Result<MergeAnalysis, GitError> {
+    info!("merge_analysis: branch={}", branch);
+    let start = std::time::Instant::now();
+
+    let repo = Repository::open(repo_path)
+        .map_err(|e| GitError::from(e).with_operation("merge_analysis"))?;
+
+    let their_ref = resolve_branch_ref(&repo, branch)?;
+    let their_commit = their_ref
+        .peel_to_commit()
+        .map_err(|e| GitError::from(e).with_operation("peel_to_commit"))?;
+    let their_annotated = repo
+        .reference_to_annotated_commit(&their_ref)
+        .map_err(|e| GitError::from(e).with_operation("reference_to_annotated_commit"))?;
+
+    let (analysis, _preference) = repo
+        .merge_analysis(&[&their_annotated])
+        .map_err(|e| GitError::from(e).with_operation("merge_analysis"))?;
+
+    // Order matters: an unborn HEAD sets both FASTFORWARD and UNBORN, so
+    // checking fast-forward before falling through to "normal" is what makes
+    // that case read as "fast-forward" (move the ref) rather than "normal"
+    // (which would wrongly imply a merge is needed).
+    let kind = if analysis.is_up_to_date() {
+        "up-to-date"
+    } else if analysis.is_fast_forward() {
+        "fast-forward"
+    } else {
+        "normal"
+    }
+    .to_string();
+
+    let (ahead, behind) = ahead_behind_of_head_impl(&repo, their_commit.id())?;
+
+    info!(
+        "merge_analysis: kind={} ahead={} behind={} in {}ms",
+        kind,
+        ahead,
+        behind,
+        start.elapsed().as_millis()
+    );
+
+    Ok(MergeAnalysis {
+        kind,
+        ahead,
+        behind,
+    })
+}
+
+/// Move the current branch forward to `branch` when that is a strict
+/// fast-forward. Refuses — with `NotFastForward` — when HEAD already has
+/// everything `branch` has ("up-to-date"), or when the two have diverged
+/// ("diverged"); both would require a real merge, which this does not do.
+///
+/// Updates the branch ref, the working tree and the index together, using
+/// the same `liminal.checkoutStrategy` policy `checkoutBranch` honours: safe
+/// by default (refuses if a local change would be overwritten, naming the
+/// files via `UnstagedChangesWouldBeLost`), or force when configured.
+pub fn fast_forward_impl(
+    repo_path: &str,
+    branch: &str,
+) -> std::result::Result<FastForwardResult, GitError> {
+    info!("fast_forward: branch={}", branch);
+    let start = std::time::Instant::now();
+
+    let repo = Repository::open(repo_path)
+        .map_err(|e| GitError::from(e).with_operation("fast_forward"))?;
+
+    let mut head = repo
+        .head()
+        .map_err(|e| GitError::from(e).with_operation("get_head"))?;
+
+    if !head.is_branch() {
+        return Err(GitError::DetachedHead);
+    }
+
+    let head_branch_name = head
+        .shorthand()
+        .ok_or_else(|| GitError::InvalidBranchName {
+            name: "<non-UTF-8 branch ref>".to_string(),
+        })?
+        .to_string();
+    let previous_commit = head
+        .peel_to_commit()
+        .map_err(|e| GitError::from(e).with_operation("peel_to_commit"))?;
+
+    let their_ref = resolve_branch_ref(&repo, branch)?;
+    let their_commit = their_ref
+        .peel_to_commit()
+        .map_err(|e| GitError::from(e).with_operation("peel_to_commit"))?;
+    let their_annotated = repo
+        .reference_to_annotated_commit(&their_ref)
+        .map_err(|e| GitError::from(e).with_operation("reference_to_annotated_commit"))?;
+
+    let (analysis, _preference) = repo
+        .merge_analysis(&[&their_annotated])
+        .map_err(|e| GitError::from(e).with_operation("merge_analysis"))?;
+
+    if analysis.is_up_to_date() {
+        return Err(GitError::NotFastForward {
+            branch: branch.to_string(),
+            reason: "up-to-date".to_string(),
+        });
+    }
+    if !analysis.is_fast_forward() {
+        return Err(GitError::NotFastForward {
+            branch: branch.to_string(),
+            reason: "diverged".to_string(),
+        });
+    }
+
+    // Same policy as checkout_branch_impl: read liminal.checkoutStrategy,
+    // defaulting to "safe" — refusing a destructive checkout is the safer
+    // failure for anything unrecognised too.
+    let strategy =
+        crate::repository_ops::get_config_impl(repo_path, "liminal.checkoutStrategy", false)?
+            .unwrap_or_else(|| "safe".to_string());
+    let force = strategy.to_lowercase() == "force";
+
+    let target_tree = their_ref
+        .peel_to_tree()
+        .map_err(|e| GitError::from(e).with_operation("peel_to_tree"))?;
+
+    if force {
+        info!("fast_forward: using force strategy (from config)");
+        let mut checkout_builder = git2::build::CheckoutBuilder::new();
+        checkout_builder.force();
+        repo.checkout_tree(target_tree.as_object(), Some(&mut checkout_builder))
+            .map_err(|e| GitError::from(e).with_operation("checkout_tree"))?;
+    } else {
+        info!("fast_forward: using safe strategy");
+        let mut checkout_builder = git2::build::CheckoutBuilder::new();
+        checkout_builder.safe();
+        if let Err(e) = repo.checkout_tree(target_tree.as_object(), Some(&mut checkout_builder)) {
+            // Same conflict detection as checkout_branch_internal_impl: safe
+            // mode's error alone doesn't say which files would be
+            // overwritten, so re-derive that list rather than surface the
+            // raw libgit2 error.
+            let is_conflict_error = e.code() == git2::ErrorCode::Uncommitted
+                || e.code() == git2::ErrorCode::Modified
+                || e.message().contains("conflict");
+
+            if is_conflict_error {
+                let conflicting_files = collect_actual_conflicts(&repo, &target_tree)?;
+                if !conflicting_files.is_empty() {
+                    info!(
+                        "fast_forward: safe mode blocked - {} actual conflicting files",
+                        conflicting_files.len()
+                    );
+                    return Err(GitError::UnstagedChangesWouldBeLost {
+                        files: conflicting_files,
+                    });
+                }
+                return Err(GitError::from(e).with_operation("checkout_tree"));
+            }
+            return Err(GitError::from(e).with_operation("checkout_tree"));
+        }
+    }
+
+    // Move the branch ref itself forward. Unlike checkout_branch, HEAD stays
+    // on the same branch throughout — only the commit that branch points to
+    // changes.
+    head.set_target(
+        their_commit.id(),
+        &format!(
+            "fast-forward: {} -> {}",
+            previous_commit.id(),
+            their_commit.id()
+        ),
+    )
+    .map_err(|e| GitError::from(e).with_operation("set_target"))?;
+
+    // Finalise the working tree and index against the now-updated HEAD,
+    // mirroring checkout_branch_internal_impl's final materialisation step.
+    let mut final_builder = git2::build::CheckoutBuilder::new();
+    if force {
+        final_builder.force();
+    } else {
+        final_builder.safe();
+    }
+    repo.checkout_head(Some(&mut final_builder))
+        .map_err(|e| GitError::from(e).with_operation("checkout_head"))?;
+
+    info!(
+        "fast_forward: {} moved {} -> {} in {}ms",
+        head_branch_name,
+        previous_commit.id(),
+        their_commit.id(),
+        start.elapsed().as_millis()
+    );
+
+    Ok(FastForwardResult {
+        branch: head_branch_name,
+        previous_commit_hash: previous_commit.id().to_string(),
+        commit_hash: their_commit.id().to_string(),
+    })
+}
+
 // ===== NAPI WRAPPERS (only compiled with napi-binding feature) =====
 
 #[cfg(feature = "napi-binding")]
@@ -662,6 +917,30 @@ pub async fn delete_branch(
     crate::utils::run_blocking(structured, move || {
         let _guard = crate::utils::lock_repo(&repo_path)?;
         delete_branch_impl(&repo_path, &branch_name, force)
+    })
+    .await
+}
+
+#[cfg(feature = "napi-binding")]
+pub async fn merge_analysis(
+    service: &GitService,
+    repo_path: String,
+    branch: String,
+) -> Result<MergeAnalysis> {
+    let structured = service.feature_flags().structured_errors;
+    crate::utils::run_blocking(structured, move || merge_analysis_impl(&repo_path, &branch)).await
+}
+
+#[cfg(feature = "napi-binding")]
+pub async fn fast_forward(
+    service: &GitService,
+    repo_path: String,
+    branch: String,
+) -> Result<FastForwardResult> {
+    let structured = service.feature_flags().structured_errors;
+    crate::utils::run_blocking(structured, move || {
+        let _guard = crate::utils::lock_repo(&repo_path)?;
+        fast_forward_impl(&repo_path, &branch)
     })
     .await
 }

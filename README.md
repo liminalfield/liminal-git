@@ -94,7 +94,14 @@ a commit run from a terminal knows nothing about `.git/liminal-git.lock`.
 Remote operations are supported: `listRemotes`, `addRemote`, `removeRemote`,
 `setRemoteUrl`, `fetch`, `push` and `getUpstreamStatus`.
 
-**Not** supported, deliberately: `clone`, and `pull` or `merge`. Merging is not
+`mergeAnalysis` and `fastForward` are supported: the first reports, without
+changing anything, whether merging a branch into HEAD would be a no-op, a
+fast-forward, or a real merge; the second performs the fast-forward case,
+moving the current branch's ref, its working tree and its index together.
+
+**Not** supported, deliberately: `clone`, and a full three-way `merge` (so
+`pull` is only native when the local side is simply behind — a caller composes
+`fetch` → `mergeAnalysis` → `fastForward` for that case). A real merge is not
 a missing binding — it is a design problem about conflict resolution, and doing
 it badly is worse than not doing it.
 
@@ -159,7 +166,7 @@ The codes are stable:
 - **Repository** — `REPOSITORY_NOT_FOUND`, `REPOSITORY_CORRUPTED`, `INVALID_REPOSITORY`, `REPOSITORY_LOCKED`
 - **Files** — `FILE_NOT_FOUND`, `FILE_NOT_IN_REPOSITORY`, `PATH_TRAVERSAL`
 - **Operations** — `NOTHING_TO_COMMIT`, `MERGE_CONFLICT`, `UNCOMMITTED_CHANGES`, `UNSTAGED_CHANGES_WOULD_BE_LOST`, `DETACHED_HEAD`, `CONFIG_MISSING`
-- **Branches** — `BRANCH_NOT_FOUND`, `BRANCH_ALREADY_EXISTS`, `CANNOT_DELETE_CURRENT_BRANCH`, `BRANCH_NOT_MERGED`
+- **Branches** — `BRANCH_NOT_FOUND`, `BRANCH_ALREADY_EXISTS`, `CANNOT_DELETE_CURRENT_BRANCH`, `BRANCH_NOT_MERGED`, `NOT_FAST_FORWARD`
 - **Tags** — `TAG_NOT_FOUND`, `TAG_ALREADY_EXISTS`
 - **Validation** — `INVALID_PATH`, `INVALID_ARGUMENT`, `INVALID_COMMIT_HASH`, `INVALID_BRANCH_NAME`, `INVALID_TAG_NAME`
 - **System** — `IO_ERROR`, `GIT_OPERATION_FAILURE`
@@ -194,7 +201,9 @@ git config liminal.checkoutStrategy force   # overwrite local changes
 ```
 
 In `safe` mode, `checkoutBranch` blocks only when a file would actually be
-overwritten, and reports exactly which — not every dirty file.
+overwritten, and reports exactly which — not every dirty file. `fastForward`
+honours the same setting the same way, since it also has to move the working
+tree.
 
 ## Logging
 

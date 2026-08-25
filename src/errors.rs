@@ -97,6 +97,15 @@ pub enum GitError {
         name: String,
         commits_ahead: u32,
     },
+    /// `fastForward` was asked to move a branch to `branch`, but that is not
+    /// a strict fast-forward: HEAD is either already up to date with it or
+    /// has diverged from it. `reason` is `"up-to-date"` or `"diverged"`.
+    /// Moving the ref anyway would be a merge, not a fast-forward, so this
+    /// refuses rather than silently doing something else.
+    NotFastForward {
+        branch: String,
+        reason: String,
+    },
     TagNotFound {
         name: String,
     },
@@ -199,6 +208,9 @@ impl fmt::Display for GitError {
                 "Branch '{}' not merged ({} commits ahead)",
                 name, commits_ahead
             ),
+            GitError::NotFastForward { branch, reason } => {
+                write!(f, "Cannot fast-forward to '{}': {}", branch, reason)
+            }
 
             GitError::TagNotFound { name } => write!(f, "Tag not found: {}", name),
             GitError::TagAlreadyExists { name } => write!(f, "Tag already exists: {}", name),
@@ -350,6 +362,7 @@ impl GitError {
             GitError::BranchAlreadyExists { .. } => "BRANCH_ALREADY_EXISTS",
             GitError::CannotDeleteCurrentBranch { .. } => "CANNOT_DELETE_CURRENT_BRANCH",
             GitError::BranchNotMerged { .. } => "BRANCH_NOT_MERGED",
+            GitError::NotFastForward { .. } => "NOT_FAST_FORWARD",
             GitError::TagNotFound { .. } => "TAG_NOT_FOUND",
             GitError::TagAlreadyExists { .. } => "TAG_ALREADY_EXISTS",
             GitError::InvalidPath { .. } => "INVALID_PATH",
@@ -456,6 +469,10 @@ impl GitError {
             } => {
                 details.set("name", name.as_str())?;
                 details.set("commitsAhead", *commits_ahead)?;
+            }
+            GitError::NotFastForward { branch, reason } => {
+                details.set("branch", branch.as_str())?;
+                details.set("reason", reason.as_str())?;
             }
             GitError::TagNotFound { name } => {
                 details.set("name", name.as_str())?;
@@ -618,6 +635,16 @@ impl GitError {
                 details.insert(
                     "commitsAhead".to_string(),
                     serde_json::Value::Number((*commits_ahead as u64).into()),
+                );
+            }
+            GitError::NotFastForward { branch, reason } => {
+                details.insert(
+                    "branch".to_string(),
+                    serde_json::Value::String(branch.clone()),
+                );
+                details.insert(
+                    "reason".to_string(),
+                    serde_json::Value::String(reason.clone()),
                 );
             }
             GitError::TagNotFound { name } => {
@@ -784,6 +811,28 @@ mod tests {
         assert_eq!(
             serialized.details.get("commitsAhead").unwrap(),
             &serde_json::Value::Number(5u64.into())
+        );
+    }
+
+    #[test]
+    fn test_serialization_not_fast_forward() {
+        let err = GitError::NotFastForward {
+            branch: "origin/main".to_string(),
+            reason: "diverged".to_string(),
+        };
+        let serialized = err.to_serializable();
+
+        assert_eq!(serialized.code, "NOT_FAST_FORWARD");
+        assert!(serialized.message.contains("origin/main"));
+        assert!(!serialized.retriable);
+        assert_eq!(serialized.details.len(), 2);
+        assert_eq!(
+            serialized.details.get("branch").unwrap(),
+            &serde_json::Value::String("origin/main".to_string())
+        );
+        assert_eq!(
+            serialized.details.get("reason").unwrap(),
+            &serde_json::Value::String("diverged".to_string())
         );
     }
 
