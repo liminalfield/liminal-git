@@ -250,6 +250,21 @@ mod repository_ops_tests {
         assert!(head.trim().starts_with("ref: refs/heads/"));
     }
 
+    /// The existing-directory path takes the same option, and honours it.
+    #[test]
+    fn test_init_repository_in_existing_dir_impl_honours_the_branch() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().to_string_lossy().to_string();
+        // "Existing" is the point: content is copied into place, then git is
+        // initialised over it.
+        fs::write(temp_dir.path().join("chapter-one.md"), "# Chapter One").unwrap();
+
+        assert!(init_repository_in_existing_dir_impl(&path, Some("manuscript")).unwrap());
+
+        let head = fs::read_to_string(temp_dir.path().join(".git").join("HEAD")).unwrap();
+        assert_eq!(head.trim(), "ref: refs/heads/manuscript");
+    }
+
     /// A named branch that is not the default, so the test cannot pass by
     /// accident on a machine whose git already defaults to `main`.
     #[test]

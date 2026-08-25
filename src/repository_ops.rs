@@ -295,12 +295,26 @@ pub fn init_repository_impl(path: &str) -> Result<bool, GitError> {
 /// For duplicating an existing project: content is copied into place first,
 /// then git is initialised over it.
 /// Unlike init_repository_impl, this does NOT check if directory is empty.
-pub fn init_repository_in_existing_dir_impl(path: &str) -> Result<bool, GitError> {
+pub fn init_repository_in_existing_dir_impl(
+    path: &str,
+    default_branch: Option<&str>,
+) -> Result<bool, GitError> {
     info!("init_repository_in_existing_dir: path={}", path);
     let start = std::time::Instant::now();
 
-    Repository::init(path)
-        .map_err(|e| GitError::from(e).with_operation("init_repository_in_existing_dir"))?;
+    // Same option as init_repository_with_config, for the same reason: a caller
+    // that wants a named initial branch wants it whichever way the repository
+    // is created, and there is no way to set it afterwards without rewriting
+    // HEAD by hand.
+    match default_branch {
+        Some(branch) => {
+            let mut opts = RepositoryInitOptions::new();
+            opts.initial_head(branch);
+            Repository::init_opts(path, &opts)
+        }
+        None => Repository::init(path),
+    }
+    .map_err(|e| GitError::from(e).with_operation("init_repository_in_existing_dir"))?;
 
     info!(
         "init_repository_in_existing_dir: success in {}ms",

@@ -296,13 +296,24 @@ impl GitService {
     /// For duplicating an existing project: copy the content into place first,
     /// then initialise git over it.
     #[napi]
-    pub async fn init_repository_in_existing_dir(&self, path: String) -> Result<bool> {
+    pub async fn init_repository_in_existing_dir(
+        &self,
+        path: String,
+        default_branch: Option<String>,
+    ) -> Result<bool> {
         validate_repo_path(&path)?;
+        if let Some(ref branch) = default_branch {
+            validate_repository_config(&RepositoryConfig {
+                description: None,
+                default_branch: Some(branch.clone()),
+                line_ending: None,
+            })?;
+        }
         let structured = self.feature_flags().structured_errors;
         // Unlocked for the same reason as `init_repository`: no .git yet, so
         // nowhere to put the lock file and no repository state to protect.
         utils::run_blocking(structured, move || {
-            init_repository_in_existing_dir_impl(&path)
+            init_repository_in_existing_dir_impl(&path, default_branch.as_deref())
         })
         .await
     }
