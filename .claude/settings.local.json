@@ -1,0 +1,31 @@
+{
+  "autoMode": {
+    "environment": [
+      "$defaults",
+      "### Repo-specific — liminalfield/liminal-git",
+      "**Organization**: liminalfield (personal). NOT dgxc-digital — never move code, issues, secrets, or client material between the two orgs.",
+      "**Repository visibility**: **PUBLIC** (per gh); GitHub `liminalfield/liminal-git`, default branch `main`. Anything committed or pushed here is world-readable and cannot be un-published — treat every commit as a publication.",
+      "**Project**: `liminal-git` v1.1.0 — native git operations for Node.js, built on libgit2 via napi-rs. Rust (`Cargo.toml`) compiled to a `.node` addon, distributed as an npm package.",
+      "**Package manager**: npm (`package-lock.json`); no `packageManager` pin",
+      "**Publishing**: the package declares a `files` allowlist (`index.js`, `index.d.ts`, `*.node`, `THIRD-PARTY-NOTICES.md`) and is not marked private, so `npm publish` would push to the public npm registry. Publishing a version is irreversible — npm unpublish is heavily restricted.",
+      "**Secrets management**: no CI secrets referenced in `.github/workflows/ci.yml`",
+      "**CI/CD**: GitHub Actions `ci.yml` (build/test only — no publish step; releases are manual)",
+      "**Deploy targets**: none — the artifact is an npm package, not a deployed service",
+      "**Sensitive data locations**: none declared; no env files are gitignored, which is another reason not to write secrets into this tree",
+      "**Routine operations**: `cargo build`, `cargo test`, `cargo clippy`, `cargo fmt`, `npm test`, `npm run build` are routine here"
+    ],
+    "allow": [
+      "$defaults",
+      "Bash(cargo test:*) in liminalfield/liminal-git",
+      "Bash(cargo clippy:*) in liminalfield/liminal-git",
+      "Bash(cargo build:*) in liminalfield/liminal-git",
+      "Bash(npm test:*) in liminalfield/liminal-git"
+    ],
+    "soft_deny": [
+      "$defaults",
+      "Bash(npm publish:*) — publishes to the PUBLIC npm registry and cannot be undone; always confirm explicitly",
+      "Bash(cargo publish:*) — publishes to crates.io and cannot be undone; always confirm explicitly",
+      "Bash(git push:*) — this repo is public; pushing makes content world-readable, so confirm when pushing anything beyond routine branch work"
+    ]
+  }
+}

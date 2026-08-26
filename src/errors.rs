@@ -84,6 +84,26 @@ pub enum GitError {
         expected: String,
         actual: String,
     },
+    /// A conflict resolution was submitted while some contested pages were
+    /// still unresolved.
+    ///
+    /// Separate from `InvalidArgument` because this is not caller misuse: it
+    /// is the ordinary state of a resolution in progress, and the caller is
+    /// expected to route on it — showing the writer which pages still want
+    /// their attention, not an error.
+    UnresolvedConflicts {
+        files: Vec<String>,
+    },
+    /// A conflict resolution was submitted for a merge that no longer
+    /// conflicts.
+    ///
+    /// HEAD is where the caller left it, so something else moved: the merged
+    /// branch, or a config that affects merging. Committing would record a
+    /// tree nobody reviewed. The caller re-runs the merge; the resolution in
+    /// hand is stale, not wrong.
+    MergeNoLongerConflicts {
+        branch: String,
+    },
     /// Another holder of the repository lock did not release it in time.
     ///
     /// Unlike every other variant here, nothing is actually wrong: the
@@ -204,6 +224,14 @@ impl fmt::Display for GitError {
                 f,
                 "HEAD moved: expected {} but the repository is at {}",
                 expected, actual
+            ),
+            GitError::UnresolvedConflicts { files } => {
+                write!(f, "{} contested page(s) are still unresolved", files.len())
+            }
+            GitError::MergeNoLongerConflicts { branch } => write!(
+                f,
+                "Merging '{}' no longer conflicts; re-run the merge and review the result",
+                branch
             ),
             GitError::RepositoryLocked { path, waited_ms } => write!(
                 f,
@@ -384,6 +412,8 @@ impl GitError {
             GitError::UnstagedChangesWouldBeLost { .. } => "UNSTAGED_CHANGES_WOULD_BE_LOST",
             GitError::DetachedHead => "DETACHED_HEAD",
             GitError::HeadMoved { .. } => "HEAD_MOVED",
+            GitError::UnresolvedConflicts { .. } => "UNRESOLVED_CONFLICTS",
+            GitError::MergeNoLongerConflicts { .. } => "MERGE_NO_LONGER_CONFLICTS",
             GitError::RepositoryLocked { .. } => "REPOSITORY_LOCKED",
             GitError::ConfigMissing { .. } => "CONFIG_MISSING",
             GitError::BranchNotFound { .. } => "BRANCH_NOT_FOUND",
@@ -474,6 +504,15 @@ impl GitError {
             GitError::HeadMoved { expected, actual } => {
                 details.set("expected", expected.as_str())?;
                 details.set("actual", actual.as_str())?;
+            }
+            GitError::UnresolvedConflicts { files } => {
+                let files_strs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
+                let files_array = Array::from_vec(env, files_strs)?;
+                details.set("files", files_array)?;
+                details.set("count", files.len() as u32)?;
+            }
+            GitError::MergeNoLongerConflicts { branch } => {
+                details.set("branch", branch.as_str())?;
             }
             GitError::RepositoryLocked { path, waited_ms } => {
                 details.set("path", path.as_str())?;
@@ -643,6 +682,23 @@ impl GitError {
                 details.insert(
                     "actual".to_string(),
                     serde_json::Value::String(actual.clone()),
+                );
+            }
+            GitError::UnresolvedConflicts { files } => {
+                let files_array: Vec<serde_json::Value> = files
+                    .iter()
+                    .map(|f| serde_json::Value::String(f.clone()))
+                    .collect();
+                details.insert("files".to_string(), serde_json::Value::Array(files_array));
+                details.insert(
+                    "count".to_string(),
+                    serde_json::Value::Number((files.len() as u64).into()),
+                );
+            }
+            GitError::MergeNoLongerConflicts { branch } => {
+                details.insert(
+                    "branch".to_string(),
+                    serde_json::Value::String(branch.clone()),
                 );
             }
             GitError::RepositoryLocked { path, waited_ms } => {

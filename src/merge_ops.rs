@@ -249,12 +249,8 @@ pub fn commit_merge_impl(
         // other input changed — the merged branch moved, or a config that
         // affects merging did. Committing would produce a tree nobody
         // reviewed, so refuse and make the caller re-run the merge.
-        return Err(GitError::InvalidArgument {
-            argument: "resolvedFiles".to_string(),
-            reason: format!(
-                "merging '{}' no longer conflicts; re-run the merge and review the result before committing a resolution",
-                their_ref
-            ),
+        return Err(GitError::MergeNoLongerConflicts {
+            branch: their_ref.to_string(),
         });
     }
 
@@ -439,12 +435,8 @@ fn validate_resolution_set(
 
     let missing: Vec<&String> = conflicted.difference(&seen).collect();
     if !missing.is_empty() {
-        return Err(GitError::InvalidArgument {
-            argument: "resolvedFiles".to_string(),
-            reason: format!(
-                "conflicted paths left unresolved: {}",
-                join_paths(missing.into_iter())
-            ),
+        return Err(GitError::UnresolvedConflicts {
+            files: missing.into_iter().cloned().collect(),
         });
     }
 

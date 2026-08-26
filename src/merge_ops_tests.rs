@@ -759,21 +759,70 @@ fn test_commit_merge_refuses_a_conflicted_path_left_unresolved() {
         None,
         None,
     ) {
-        Err(GitError::InvalidArgument { argument, reason }) => {
-            assert_eq!(argument, "resolvedFiles");
-            assert!(
-                reason.contains("other.md"),
-                "the refusal must name the unresolved path, got: {}",
-                reason
-            );
+        Err(GitError::UnresolvedConflicts { files }) => {
+            // A distinct variant, not InvalidArgument: a resolution in
+            // progress is the ordinary state, and the caller shows the writer
+            // these pages rather than an error. Routing on it must not mean
+            // parsing prose.
+            assert_eq!(files, vec!["other.md".to_string()]);
         }
-        other => panic!("expected InvalidArgument, got {:?}", other),
+        other => panic!("expected UnresolvedConflicts, got {:?}", other),
     }
 
     assert_eq!(
         head_hash(&repo_path),
         ours,
         "a partial resolution must not commit"
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn test_commit_merge_refuses_when_the_merge_no_longer_conflicts() {
+    let (_tmp, repo_path) = setup_test_repo();
+    conflicted_with_clean_neighbours(&repo_path);
+    let ours = head_hash(&repo_path);
+
+    // The writer sees the conflict and starts resolving page.md.
+    let outcome = merge_impl(repo_path.to_str().unwrap(), "feature", None, None)
+        .expect("merge should succeed");
+    assert_eq!(outcome.kind, "conflicted");
+
+    // While the resolution sits open, the other side settles the same page to
+    // our text. HEAD has not moved, so the expectedHead guard cannot catch
+    // this — but the merge the resolution was built against no longer exists.
+    checkout_branch_impl(repo_path.to_str().unwrap(), "feature").expect("checkout feature");
+    write_and_commit(&repo_path, "page.md", "ours\n", "settle page.md our way");
+    checkout_default(&repo_path);
+    assert_eq!(head_hash(&repo_path), ours, "HEAD must be untouched");
+
+    match commit_merge_impl(
+        repo_path.to_str().unwrap(),
+        "feature",
+        &ours,
+        &[ResolvedFile {
+            path: "page.md".to_string(),
+            content: Some("reconciled\n".to_string()),
+        }],
+        "Merge branch 'feature'",
+        None,
+        None,
+    ) {
+        Err(GitError::MergeNoLongerConflicts { branch }) => {
+            assert_eq!(branch, "feature");
+        }
+        other => panic!("expected MergeNoLongerConflicts, got {:?}", other),
+    }
+
+    assert_eq!(
+        head_hash(&repo_path),
+        ours,
+        "a stale resolution must not commit"
+    );
+    assert_eq!(
+        read_file(&repo_path, "page.md"),
+        "ours\n",
+        "and must not write its resolved content over the working tree"
     );
 }
 

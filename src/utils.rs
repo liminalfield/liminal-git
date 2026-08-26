@@ -261,6 +261,12 @@ pub fn git_error_to_napi_with_flags(error: GitError, structured: bool) -> NapiEr
         GitError::MergeConflict { .. } => Status::GenericFailure,
         GitError::DetachedHead => Status::GenericFailure,
         GitError::HeadMoved { .. } => Status::GenericFailure,
+        // Neither is a malformed argument: unresolved pages are the ordinary
+        // state of a resolution in progress, and a merge that settled itself
+        // makes the caller's input stale rather than wrong. Callers route on
+        // the structured code, not the status.
+        GitError::UnresolvedConflicts { .. } => Status::GenericFailure,
+        GitError::MergeNoLongerConflicts { .. } => Status::GenericFailure,
         // No napi status means "try again shortly", so this rides on
         // GenericFailure. Callers distinguish it by the structured error's
         // code (REPOSITORY_LOCKED) and its retriable flag, which is the only
