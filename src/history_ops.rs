@@ -239,6 +239,31 @@ fn check_file_in_commit_with_rename(
     Ok((file_touched, old_path, insertions, deletions))
 }
 
+/// Build the `CommitInfo` this crate hands back for a commit, without diff
+/// statistics — `file_changes`, `insertions` and `deletions` are left at zero
+/// because computing them costs a diff per commit and most callers do not
+/// look at them.
+///
+/// `get_file_history_impl` deliberately does not use this: it already has the
+/// per-file counts in hand and reports a 7-character short hash for
+/// historical reasons. Everything else that returns a `CommitInfo` should
+/// come through here rather than restating the eleven fields.
+pub(crate) fn commit_info_from(commit: &git2::Commit) -> CommitInfo {
+    let hash = commit.id().to_string();
+    CommitInfo {
+        short_hash: hash[..8.min(hash.len())].to_string(),
+        hash,
+        message: commit.message().unwrap_or("").to_string(),
+        author_name: commit.author().name().unwrap_or("").to_string(),
+        author_email: commit.author().email().unwrap_or("").to_string(),
+        timestamp: commit.time().seconds().to_string(),
+        parent_hashes: commit.parent_ids().map(|id| id.to_string()).collect(),
+        file_changes: 0,
+        insertions: 0,
+        deletions: 0,
+    }
+}
+
 pub fn get_commit_history_impl(
     repo_path: &str,
     limit: Option<usize>,
@@ -290,20 +315,7 @@ pub fn get_commit_history_impl(
             .find_commit(oid)
             .map_err(|e| GitError::from(e).with_operation("find_commit"))?;
 
-        let commit_info = CommitInfo {
-            hash: commit.id().to_string(),
-            short_hash: commit.id().to_string()[..8].to_string(),
-            message: commit.message().unwrap_or("").to_string(),
-            author_name: commit.author().name().unwrap_or("").to_string(),
-            author_email: commit.author().email().unwrap_or("").to_string(),
-            timestamp: commit.time().seconds().to_string(),
-            parent_hashes: commit.parent_ids().map(|id| id.to_string()).collect(),
-            file_changes: 0, // Will calculate in diff if needed
-            insertions: 0,
-            deletions: 0,
-        };
-
-        commits.push(commit_info);
+        commits.push(commit_info_from(&commit));
         collected += 1;
         total_processed += 1;
     }

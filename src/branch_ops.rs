@@ -435,7 +435,7 @@ fn checkout_branch_internal_impl(
 /// Only reports files where:
 /// - The file has local modifications (staged or unstaged)
 /// - AND the target tree has a different version of that file
-fn collect_actual_conflicts(
+pub(crate) fn collect_actual_conflicts(
     repo: &Repository,
     target_tree: &git2::Tree,
 ) -> std::result::Result<Vec<String>, GitError> {
@@ -601,7 +601,7 @@ fn calculate_ahead_behind_impl(
 /// `"origin/main"`, or any other short ref name libgit2 recognises — to its
 /// reference. Anything that doesn't resolve is reported the same way
 /// `checkout_branch_impl` reports a missing branch.
-fn resolve_branch_ref<'repo>(
+pub(crate) fn resolve_branch_ref<'repo>(
     repo: &'repo Repository,
     branch: &str,
 ) -> std::result::Result<Reference<'repo>, GitError> {

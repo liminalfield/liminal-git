@@ -4,6 +4,7 @@ use crate::branch_ops;
 use crate::feature_flags::FeatureFlags;
 use crate::file_ops::*;
 use crate::history_ops::*;
+use crate::merge_ops;
 use crate::remote_ops;
 use crate::repository_ops::*;
 use crate::tag_ops;
@@ -11,9 +12,12 @@ use crate::types::GitStatus;
 use crate::types::{
     BranchInfo, CreateBranchOptions, CreateTagOptions, FastForwardResult, MergeAnalysis, TagInfo,
 };
-use crate::types::{CommitDiff, CommitHistory, DeletedFileEntry, FileAtCommit, FileDiff};
+use crate::types::{
+    CommitDiff, CommitHistory, CommitInfo, DeletedFileEntry, FileAtCommit, FileDiff,
+};
 use crate::types::{FetchResult, PushResult, RemoteCredentials, RemoteInfo, UpstreamStatus};
 use crate::types::{GitConfig, RepositoryConfig, RepositoryHealth, RepositoryInfo};
+use crate::types::{MergeOutcome, ResolvedFile};
 use crate::utils;
 use crate::validation::*;
 use log::info;
@@ -696,6 +700,67 @@ impl GitService {
         branch: String,
     ) -> Result<FastForwardResult> {
         branch_ops::fast_forward(self, repo_path, branch).await
+    }
+
+    /// Merge `branch` into HEAD, entirely in memory.
+    ///
+    /// Never leaves an in-progress merge behind: a `"conflicted"` outcome
+    /// reports the three sides of each contested path and writes nothing at
+    /// all — no `MERGE_HEAD`, no conflict markers, no conflicted index — so a
+    /// caller who abandons the resolution is left with the repository it
+    /// started with. Refuses with `UNSTAGED_CHANGES_WOULD_BE_LOST` when a file
+    /// the merge would change has unsaved edits on disk.
+    #[napi]
+    pub async fn merge(
+        &self,
+        repo_path: String,
+        branch: String,
+        user_name: Option<String>,
+        user_email: Option<String>,
+    ) -> Result<MergeOutcome> {
+        merge_ops::merge(self, repo_path, branch, user_name, user_email).await
+    }
+
+    /// Read a blob by oid as text — one side of a contested file.
+    ///
+    /// Fails with `BLOB_NOT_UTF8` rather than converting lossily, because
+    /// silently replacing a byte with U+FFFD corrupts a manuscript in a way
+    /// nobody notices until much later.
+    #[napi]
+    pub async fn read_blob(&self, repo_path: String, oid: String) -> Result<String> {
+        merge_ops::read_blob(self, repo_path, oid).await
+    }
+
+    /// Commit a merge the user resolved by hand.
+    ///
+    /// Takes only the resolved pages: the merge is re-run in memory and the
+    /// resolutions laid over it, so the caller never reproduces libgit2's
+    /// merge of the pages that merged cleanly. Refuses with `HEAD_MOVED` when
+    /// HEAD is no longer `expected_head_hash`, and with `INVALID_ARGUMENT`
+    /// when the resolved set does not match the conflict set exactly.
+    #[napi]
+    #[allow(clippy::too_many_arguments)]
+    pub async fn commit_merge(
+        &self,
+        repo_path: String,
+        their_ref: String,
+        expected_head_hash: String,
+        resolved_files: Vec<ResolvedFile>,
+        message: String,
+        user_name: Option<String>,
+        user_email: Option<String>,
+    ) -> Result<CommitInfo> {
+        merge_ops::commit_merge(
+            self,
+            repo_path,
+            their_ref,
+            expected_head_hash,
+            resolved_files,
+            message,
+            user_name,
+            user_email,
+        )
+        .await
     }
 
     /// List all tags in the repository

@@ -344,3 +344,54 @@ pub struct UpstreamStatus {
     /// as up to date when they simply do not know.
     pub no_upstream: bool,
 }
+
+// ===== MERGE OPERATIONS =====
+
+/// What `merge` did. Exactly one of the four kinds, and the library never
+/// leaves an in-progress merge behind for any of them: a `"conflicted"`
+/// outcome is a *report*, not a state — nothing was written, there is no
+/// `MERGE_HEAD`, and the caller is free to walk away.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "napi-binding", napi(object))]
+pub struct MergeOutcome {
+    /// `"merged"` — a real merge commit was created.
+    /// `"fast-forwarded"` — the branch ref moved; no merge commit exists.
+    /// `"up-to-date"` — HEAD already contained everything; nothing was written.
+    /// `"conflicted"` — nothing was written; see `conflicts`.
+    pub kind: String,
+    /// The commit HEAD points at after the operation. `None` — and only
+    /// `None` — when `kind` is `"conflicted"`.
+    pub commit_hash: Option<String>,
+    /// The contested paths, sorted by path. Empty unless `kind` is
+    /// `"conflicted"`.
+    pub conflicts: Vec<ConflictedFile>,
+}
+
+/// One path libgit2 could not merge on its own, with the three blobs needed
+/// to show the writer what happened. Each side is `None` when that side has
+/// no version of the page: no ancestor means the page is new on both sides,
+/// and a missing `ours`/`theirs` means that side deleted it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "napi-binding", napi(object))]
+pub struct ConflictedFile {
+    /// Repo-relative path of the contested file.
+    pub path: String,
+    /// Blob oid of the common ancestor's version, if there is one.
+    pub ancestor_oid: Option<String>,
+    /// Blob oid of HEAD's version, if our side still has the file.
+    pub ours_oid: Option<String>,
+    /// Blob oid of the merged branch's version, if their side still has it.
+    pub theirs_oid: Option<String>,
+}
+
+/// A writer's decision about one contested page, handed back to `commitMerge`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "napi-binding", napi(object))]
+pub struct ResolvedFile {
+    /// Repo-relative path. Must be one of the paths `merge` reported as
+    /// conflicted.
+    pub path: String,
+    /// The resolved text of the page. `None` resolves the conflict as a
+    /// deletion — the page is not in the merge commit's tree.
+    pub content: Option<String>,
+}

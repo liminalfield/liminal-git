@@ -50,6 +50,16 @@ pub enum GitError {
     FileNotInRepository {
         path: String,
     },
+    /// A blob was read for display but its bytes are not valid UTF-8.
+    ///
+    /// Deliberately a refusal rather than a lossy conversion: this library
+    /// backs a manuscript editor, and silently substituting U+FFFD for a byte
+    /// the writer typed corrupts the text at exactly the moment the writer is
+    /// least able to notice. The caller is told which blob, and can decide
+    /// whether to offer a binary-safe path.
+    BlobNotUtf8 {
+        oid: String,
+    },
     PathTraversal {
         attempted_path: String,
     },
@@ -66,6 +76,14 @@ pub enum GitError {
         files: Vec<String>,
     },
     DetachedHead,
+    /// A conflict resolution was submitted against a HEAD that has since
+    /// moved — another window committed, or a merge was completed elsewhere,
+    /// while the resolution sat open. Committing anyway would silently build
+    /// on a history the user never saw, so this refuses instead of guessing.
+    HeadMoved {
+        expected: String,
+        actual: String,
+    },
     /// Another holder of the repository lock did not release it in time.
     ///
     /// Unlike every other variant here, nothing is actually wrong: the
@@ -162,6 +180,9 @@ impl fmt::Display for GitError {
 
             GitError::FileNotFound { path } => write!(f, "File not found: {}", path),
             GitError::FileNotInRepository { path } => write!(f, "File not in repository: {}", path),
+            GitError::BlobNotUtf8 { oid } => {
+                write!(f, "Blob {} is not valid UTF-8 text", oid)
+            }
             GitError::PathTraversal { attempted_path } => {
                 write!(f, "Path traversal attempt: {}", attempted_path)
             }
@@ -179,6 +200,11 @@ impl fmt::Display for GitError {
                 files.len()
             ),
             GitError::DetachedHead => write!(f, "Detached HEAD state"),
+            GitError::HeadMoved { expected, actual } => write!(
+                f,
+                "HEAD moved: expected {} but the repository is at {}",
+                expected, actual
+            ),
             GitError::RepositoryLocked { path, waited_ms } => write!(
                 f,
                 "Repository is locked by another process: {} (waited {}ms)",
@@ -350,12 +376,14 @@ impl GitError {
             GitError::InvalidRepository { .. } => "INVALID_REPOSITORY",
             GitError::FileNotFound { .. } => "FILE_NOT_FOUND",
             GitError::FileNotInRepository { .. } => "FILE_NOT_IN_REPOSITORY",
+            GitError::BlobNotUtf8 { .. } => "BLOB_NOT_UTF8",
             GitError::PathTraversal { .. } => "PATH_TRAVERSAL",
             GitError::NothingToCommit => "NOTHING_TO_COMMIT",
             GitError::MergeConflict { .. } => "MERGE_CONFLICT",
             GitError::UncommittedChanges { .. } => "UNCOMMITTED_CHANGES",
             GitError::UnstagedChangesWouldBeLost { .. } => "UNSTAGED_CHANGES_WOULD_BE_LOST",
             GitError::DetachedHead => "DETACHED_HEAD",
+            GitError::HeadMoved { .. } => "HEAD_MOVED",
             GitError::RepositoryLocked { .. } => "REPOSITORY_LOCKED",
             GitError::ConfigMissing { .. } => "CONFIG_MISSING",
             GitError::BranchNotFound { .. } => "BRANCH_NOT_FOUND",
@@ -417,6 +445,9 @@ impl GitError {
             GitError::FileNotInRepository { path } => {
                 details.set("path", path.as_str())?;
             }
+            GitError::BlobNotUtf8 { oid } => {
+                details.set("oid", oid.as_str())?;
+            }
             GitError::PathTraversal { attempted_path } => {
                 details.set("attemptedPath", attempted_path.as_str())?;
             }
@@ -439,6 +470,10 @@ impl GitError {
             }
             GitError::DetachedHead => {
                 // No additional details for this variant
+            }
+            GitError::HeadMoved { expected, actual } => {
+                details.set("expected", expected.as_str())?;
+                details.set("actual", actual.as_str())?;
             }
             GitError::RepositoryLocked { path, waited_ms } => {
                 details.set("path", path.as_str())?;
@@ -558,6 +593,9 @@ impl GitError {
             GitError::FileNotInRepository { path } => {
                 details.insert("path".to_string(), serde_json::Value::String(path.clone()));
             }
+            GitError::BlobNotUtf8 { oid } => {
+                details.insert("oid".to_string(), serde_json::Value::String(oid.clone()));
+            }
             GitError::PathTraversal { attempted_path } => {
                 details.insert(
                     "attemptedPath".to_string(),
@@ -596,6 +634,16 @@ impl GitError {
             }
             GitError::DetachedHead => {
                 // No additional details
+            }
+            GitError::HeadMoved { expected, actual } => {
+                details.insert(
+                    "expected".to_string(),
+                    serde_json::Value::String(expected.clone()),
+                );
+                details.insert(
+                    "actual".to_string(),
+                    serde_json::Value::String(actual.clone()),
+                );
             }
             GitError::RepositoryLocked { path, waited_ms } => {
                 details.insert("path".to_string(), serde_json::Value::String(path.clone()));

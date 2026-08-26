@@ -254,9 +254,13 @@ pub fn git_error_to_napi_with_flags(error: GitError, structured: bool) -> NapiEr
         GitError::RepositoryCorrupted { .. } => Status::GenericFailure,
         GitError::InvalidRepository { .. } => Status::InvalidArg,
         GitError::FileNotInRepository { .. } => Status::InvalidArg,
+        // Not InvalidArg: the oid the caller passed was perfectly valid, the
+        // blob simply is not text. Nothing about the request needs fixing.
+        GitError::BlobNotUtf8 { .. } => Status::GenericFailure,
         GitError::NothingToCommit => Status::GenericFailure,
         GitError::MergeConflict { .. } => Status::GenericFailure,
         GitError::DetachedHead => Status::GenericFailure,
+        GitError::HeadMoved { .. } => Status::GenericFailure,
         // No napi status means "try again shortly", so this rides on
         // GenericFailure. Callers distinguish it by the structured error's
         // code (REPOSITORY_LOCKED) and its retriable flag, which is the only
