@@ -1,6 +1,6 @@
 use crate::errors::GitError;
 use crate::types::{
-    CommitDiff, CommitHistory, CommitInfo, DeletedFileEntry, FileAtCommit, FileDiff,
+    CommitDiff, CommitHistory, CommitInfo, DeletedFileEntry, FileAtCommit, FileDiff, TreeEntry,
 };
 use crate::utils::normalize_git_path;
 use git2::{DiffFindOptions, DiffOptions, Repository};
@@ -394,6 +394,132 @@ pub fn get_file_at_commit_impl(
         start.elapsed().as_millis()
     );
     Ok(result)
+}
+
+/// List the paths present at a commit.
+///
+/// The paired half of `get_file_at_commit_impl`. That one answers "what is in
+/// this file at this commit"; this one answers "which files are there at
+/// all", and calling both with the same hash gives a reader a
+/// snapshot-consistent view of a whole repository with no lock held and no
+/// writer blocked.
+///
+/// Ref resolution is deliberately identical to `get_file_at_commit_impl`: a
+/// raw commit hash and nothing else. Not a branch, not a tag, not `"HEAD"`.
+/// A caller wanting the repository as of a tag resolves the tag with
+/// `get_tag_impl` first, which is the same thing it must already do to call
+/// `get_file_at_commit_impl`. Accepting anything wider here would break the
+/// one property the pair depends on, which is that both calls name the same
+/// object.
+///
+/// `path_prefix` is a **literal string prefix** on the repository-relative
+/// path, not a directory match. `Some("src")` therefore matches `src/main.rs`
+/// and would also match a sibling file named `srcfile.txt`; a caller
+/// filtering to a directory passes the trailing slash. A prefix matching
+/// nothing yields an empty listing rather than an error, because "no files
+/// under this directory at this commit" is an answer and not a failure.
+///
+/// Read-only. Takes no lock.
+pub fn get_tree_at_commit_impl(
+    repo_path: &str,
+    commit_hash: &str,
+    path_prefix: Option<&str>,
+) -> Result<Vec<TreeEntry>, GitError> {
+    info!(
+        "get_tree_at_commit: commit={} prefix={:?}",
+        commit_hash, path_prefix
+    );
+    let start = std::time::Instant::now();
+
+    let repo = Repository::open(repo_path)
+        .map_err(|e| GitError::from(e).with_operation("get_tree_at_commit"))?;
+
+    let oid = git2::Oid::from_str(commit_hash).map_err(|_| GitError::InvalidCommitHash {
+        hash: commit_hash.to_string(),
+    })?;
+    let commit = repo
+        .find_commit(oid)
+        .map_err(|e| GitError::from(e).with_operation("find_commit"))?;
+    let tree = commit
+        .tree()
+        .map_err(|e| GitError::from(e).with_operation("get_tree"))?;
+
+    let prefix = path_prefix.unwrap_or("");
+    let mut entries: Vec<TreeEntry> = Vec::new();
+
+    // A blob lookup inside the callback can fail, and the callback has no way
+    // to carry a Result out. Recording the first failure and checking it after
+    // the walk keeps the error rather than swallowing it.
+    let mut failure: Option<GitError> = None;
+
+    tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
+        // libgit2 gives the directory with its trailing slash already on it,
+        // and "" at the top level, so this concatenation is the full path.
+        let name = match entry.name() {
+            Some(name) => name,
+            // A name that is not valid UTF-8 cannot cross the N-API boundary.
+            // Skipping the entry matches how every other operation here
+            // handles a non-UTF-8 value, rather than failing the listing
+            // around it.
+            None => return git2::TreeWalkResult::Ok,
+        };
+        let path = format!("{}{}", root, name);
+
+        let kind = match entry.filemode() {
+            // A directory is implied by the paths of the files inside it.
+            // Returning Ok rather than Skip is what descends into it.
+            0o040000 => return git2::TreeWalkResult::Ok,
+            0o120000 => "symlink",
+            0o160000 => "submodule",
+            _ => "file",
+        };
+
+        if !path.starts_with(prefix) {
+            return git2::TreeWalkResult::Ok;
+        }
+
+        // A submodule's entry id is a commit in the submodule's own object
+        // database, which this repository does not have. There is no blob to
+        // size.
+        let size = if kind == "submodule" {
+            0
+        } else {
+            match repo.find_blob(entry.id()) {
+                Ok(blob) => blob.size() as i64,
+                Err(e) => {
+                    failure = Some(GitError::from(e).with_operation("find_blob"));
+                    return git2::TreeWalkResult::Abort;
+                }
+            }
+        };
+
+        entries.push(TreeEntry {
+            path,
+            kind: kind.to_string(),
+            size,
+            blob_hash: entry.id().to_string(),
+        });
+        git2::TreeWalkResult::Ok
+    })
+    .map_err(|e| GitError::from(e).with_operation("tree_walk"))?;
+
+    if let Some(error) = failure {
+        return Err(error);
+    }
+
+    // Sorted explicitly rather than relying on libgit2's walk order. Git sorts
+    // tree entries as though every directory carried a trailing slash, which
+    // happens to agree with a plain sort of the full paths, but the callers
+    // this exists for zip the result against other listings and the guarantee
+    // is worth stating in code rather than deriving.
+    entries.sort_by(|a, b| a.path.cmp(&b.path));
+
+    info!(
+        "get_tree_at_commit: {} entries in {}ms",
+        entries.len(),
+        start.elapsed().as_millis()
+    );
+    Ok(entries)
 }
 
 // Get deleted files from commit history (with caching)

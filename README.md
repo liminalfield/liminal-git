@@ -5,7 +5,7 @@ Git operations for Node.js, built on [libgit2](https://libgit2.org/) via
 the library talks to the repository directly and returns typed data.
 
 It was extracted from [Nocturne Writer](https://github.com/liminalfield/nocturne-writer),
-where it provides version control for a writing application, so its 57
+where it provides version control for a writing application, so its 58
 operations lean towards the things a content tool needs: file history, a file's
 contents at a commit, restoring a deleted file, structured diffs. Branch and tag
 management are complete, remotes and merging are supported, and what is left out
@@ -35,7 +35,7 @@ that a rebuild cannot silently change what you depend on.
 
 ## Usage
 
-Every operation except the constructor is asynchronous — 57 of them return a
+Every operation except the constructor is asynchronous — 58 of them return a
 Promise. Paths are absolute for the repository and repository-relative for files
 within it.
 
@@ -88,6 +88,53 @@ If a lock cannot be acquired within ten seconds the call fails with
 
 This excludes other users of *this library*. It does not exclude `git` itself —
 a commit run from a terminal knows nothing about `.git/liminal-git.lock`.
+
+## Reading at a commit
+
+`getFileAtCommit` and `getTreeAtCommit` are a pair, and the point is calling
+both with the same commit hash. The first answers what is in a file at that
+commit; the second answers which files are there at all. Together they give a
+read-only consumer a snapshot-consistent view of a whole repository **with no
+lock held and no writer blocked**:
+
+```js
+const { headCommit } = await git.getRepositoryInfo(repo);
+
+const entries = await git.getTreeAtCommit(repo, headCommit);
+for (const entry of entries) {
+  const { content } = await git.getFileAtCommit(repo, entry.path, headCommit);
+  // every file as it stood at one instant, even while a writer commits
+}
+```
+
+Reading the working tree instead is what this replaces. A concurrent write can
+expose file A updated and file B not yet, and a computation over that set is
+reading a state that never existed.
+
+Directories are not entries. They are implied by the paths of the files inside
+them, and paths come back sorted, so the listing zips directly against the
+per-file calls. An entry carries its `kind` (`"file"`, `"symlink"` or
+`"submodule"`), the blob `size` in bytes, and the `blobHash`.
+
+The optional third argument filters by path:
+
+```js
+await git.getTreeAtCommit(repo, headCommit, 'effort/');
+```
+
+It is a **literal string prefix** on the repository-relative path rather than a
+directory match, so `'effort'` without the slash would also match a file named
+`effortless.yaml`. Pass the trailing slash to mean a directory. A prefix that
+matches nothing returns an empty array, which is an answer rather than a
+failure.
+
+Both calls take a **raw commit hash and nothing else** — not a branch, not a
+tag, not `"HEAD"`. That is deliberate rather than a missing feature: the single
+property the pair depends on is that both calls name the same object, and
+accepting a symbolic ref would let two calls in one snapshot resolve
+differently if a writer moved the ref in between. Resolve first, with
+`getRepositoryInfo().headCommit` for the current state or `getTag` for a
+baseline, then pass that hash to everything in the snapshot.
 
 ## Scope
 
@@ -245,7 +292,7 @@ npm run build                        # the Node addon (napi build --release)
 cargo test --no-default-features
 ```
 
-275 tests across ten targets. `--no-default-features` is required rather than
+286 tests across ten targets. `--no-default-features` is required rather than
 preferred: with the `napi-binding` feature on, a test binary fails at the
 **linker**, because napi resolves its symbols from the host Node process at run
 time and those symbols do not exist in a test executable. Disabling the feature

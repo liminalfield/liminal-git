@@ -104,6 +104,28 @@ pub struct FileAtCommit {
     pub commit_hash: String,
 }
 
+/// One path present in a commit's tree, as reported by `getTreeAtCommit`.
+///
+/// Directories are not entries. They are implied by the paths of the files
+/// inside them, which is what lets the result be zipped directly with
+/// `getFileAtCommit` calls against the same commit.
+#[cfg_attr(feature = "napi-binding", napi(object))]
+#[derive(Debug, Clone)]
+pub struct TreeEntry {
+    /// Repository-relative path, using forward slashes on every platform.
+    pub path: String,
+    /// `"file"`, `"symlink"` or `"submodule"`.
+    pub kind: String,
+    /// Size of the underlying blob in bytes. For a `"symlink"` this is the
+    /// length of the target path, since that is what the blob holds. For a
+    /// `"submodule"` there is no blob and this is `0`.
+    pub size: i64,
+    /// Full oid of the blob at this path. For a `"submodule"` there is no
+    /// blob, and this is the commit oid the parent repository has recorded
+    /// for it.
+    pub blob_hash: String,
+}
+
 #[cfg_attr(feature = "napi-binding", napi(object))]
 #[derive(Debug, Clone)]
 pub struct DeletedFileEntry {

@@ -68,6 +68,29 @@ export declare class GitService {
    */
   getFileHistory(repoPath: string, filePath: string, limit?: number | undefined | null): Promise<CommitHistory>
   getFileAtCommit(repoPath: string, filePath: string, commitHash: string): Promise<FileAtCommit>
+  /**
+   * List the paths present at a commit.
+   *
+   * The paired half of `getFileAtCommit`. Calling both with the same
+   * commit hash gives a snapshot-consistent view of a whole repository
+   * with no lock held and no writer blocked: resolve a commit once, list
+   * its tree, then fetch each file at that same commit.
+   *
+   * Directories are not entries. They are implied by the paths of the
+   * files inside them, and paths come back sorted.
+   *
+   * Takes a raw commit hash and nothing else, exactly as `getFileAtCommit`
+   * does. Not a branch, not a tag, not `"HEAD"`. Resolve those first, with
+   * `getRepositoryInfo().headCommit` or `getTag`, which is what the
+   * snapshot pattern does anyway.
+   *
+   * `pathPrefix` is a literal string prefix on the repository-relative
+   * path rather than a directory match, so `"effort"` also matches a file
+   * named `effortless.yaml`; pass the trailing slash to filter to a
+   * directory. A prefix matching nothing returns an empty array, not an
+   * error.
+   */
+  getTreeAtCommit(repoPath: string, commitHash: string, pathPrefix?: string | undefined | null): Promise<Array<TreeEntry>>
   restoreFileFromCommit(repoPath: string, filePath: string, commitHash: string): Promise<boolean>
   /**
    * Discard uncommitted changes in a file (restore to HEAD state)
@@ -509,6 +532,32 @@ export interface TagInfo {
   created: string
   /** Whether this is an annotated tag (vs lightweight tag) */
   isAnnotated: boolean
+}
+
+/**
+ * One path present in a commit's tree, as reported by `getTreeAtCommit`.
+ *
+ * Directories are not entries. They are implied by the paths of the files
+ * inside them, which is what lets the result be zipped directly with
+ * `getFileAtCommit` calls against the same commit.
+ */
+export interface TreeEntry {
+  /** Repository-relative path, using forward slashes on every platform. */
+  path: string
+  /** `"file"`, `"symlink"` or `"submodule"`. */
+  kind: string
+  /**
+   * Size of the underlying blob in bytes. For a `"symlink"` this is the
+   * length of the target path, since that is what the blob holds. For a
+   * `"submodule"` there is no blob and this is `0`.
+   */
+  size: number
+  /**
+   * Full oid of the blob at this path. For a `"submodule"` there is no
+   * blob, and this is the commit oid the parent repository has recorded
+   * for it.
+   */
+  blobHash: string
 }
 
 /**

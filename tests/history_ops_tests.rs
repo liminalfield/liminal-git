@@ -269,4 +269,224 @@ mod history_ops_tests {
         let result = get_commit_diff_impl(&path, "invalid_hash");
         assert!(result.is_err());
     }
+
+    // ===== get_tree_at_commit =====
+    //
+    // The paired half of get_file_at_commit: which paths exist at a commit,
+    // so a reader can take a snapshot-consistent view of a whole repository
+    // without holding a lock. Both calls name the same object by raw hash.
+
+    /// A repository whose first commit holds a nested tree, and whose second
+    /// commit both deletes a path and adds one. Listing at the first commit
+    /// therefore has to show what was there then, not what is there now.
+    fn create_test_repo_with_tree() -> (TempDir, String, String) {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().to_string_lossy().to_string();
+        init_repository_impl(&path).unwrap();
+
+        let write = |rel: &str, content: &str| -> String {
+            let full = temp_dir.path().join(rel);
+            fs::create_dir_all(full.parent().unwrap()).unwrap();
+            fs::write(&full, content).unwrap();
+            full.to_string_lossy().to_string()
+        };
+
+        let files = vec![
+            write("README.md", "readme\n"),
+            write("docs/guide.md", "guide\n"),
+            write("src/main.rs", "main\n"),
+            write("src/util/helper.rs", "helper\n"),
+        ];
+        let first = commit_files_impl(
+            &path,
+            &files,
+            "Initial tree",
+            "Test User",
+            "test@example.com",
+        )
+        .unwrap();
+
+        // Second commit: docs/guide.md goes away and notes.txt arrives. Both
+        // land in one commit, because commit_file_impl commits the whole
+        // index rather than only the path it was handed.
+        fs::remove_file(temp_dir.path().join("docs/guide.md")).unwrap();
+        stage_deletion_impl(
+            &path,
+            &temp_dir.path().join("docs/guide.md").to_string_lossy(),
+        )
+        .unwrap();
+        let notes = write("notes.txt", "notes\n");
+        commit_file_impl(
+            &path,
+            &notes,
+            "Drop the guide, add notes",
+            "Test User",
+            "test@example.com",
+        )
+        .unwrap();
+
+        (temp_dir, path, first)
+    }
+
+    #[test]
+    fn test_get_tree_at_commit_lists_every_path_recursively_and_sorted() {
+        let (_temp_dir, path, first) = create_test_repo_with_tree();
+
+        let entries = get_tree_at_commit_impl(&path, &first, None).unwrap();
+
+        let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                "README.md",
+                "docs/guide.md",
+                "src/main.rs",
+                "src/util/helper.rs",
+            ],
+            "paths must be repository-relative, recursive and sorted"
+        );
+    }
+
+    #[test]
+    fn test_get_tree_at_commit_omits_directories_as_entries() {
+        let (_temp_dir, path, first) = create_test_repo_with_tree();
+
+        let entries = get_tree_at_commit_impl(&path, &first, None).unwrap();
+
+        // "src" and "src/util" are directories. They are implied by the paths
+        // of the files inside them and must never appear as entries of their
+        // own, which is what makes the result directly zippable with
+        // get_file_at_commit.
+        assert!(
+            !entries
+                .iter()
+                .any(|e| e.path == "src" || e.path == "src/util"),
+            "directories must be implied by paths, not returned as entries"
+        );
+    }
+
+    #[test]
+    fn test_get_tree_at_commit_reports_kind_size_and_blob_hash() {
+        let (_temp_dir, path, first) = create_test_repo_with_tree();
+
+        let entries = get_tree_at_commit_impl(&path, &first, None).unwrap();
+        let readme = entries.iter().find(|e| e.path == "README.md").unwrap();
+
+        assert_eq!(readme.kind, "file");
+        assert_eq!(readme.size, "readme\n".len() as i64);
+        assert_eq!(readme.blob_hash.len(), 40, "blob hash is a full oid");
+
+        // The hash has to name the blob this library would hand back for the
+        // same path at the same commit, or the pair does not compose.
+        let content = read_blob_impl(&path, &readme.blob_hash).unwrap();
+        assert_eq!(content, "readme\n");
+    }
+
+    #[test]
+    fn test_get_tree_at_commit_reads_the_named_commit_not_head() {
+        let (_temp_dir, path, first) = create_test_repo_with_tree();
+
+        let entries = get_tree_at_commit_impl(&path, &first, None).unwrap();
+        let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+
+        assert!(
+            paths.contains(&"docs/guide.md"),
+            "a path deleted after the named commit must still be listed at it"
+        );
+        assert!(
+            !paths.contains(&"notes.txt"),
+            "a path added after the named commit must not be listed at it"
+        );
+    }
+
+    #[test]
+    fn test_get_tree_at_commit_filters_by_path_prefix() {
+        let (_temp_dir, path, first) = create_test_repo_with_tree();
+
+        let entries = get_tree_at_commit_impl(&path, &first, Some("src/")).unwrap();
+
+        let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(paths, vec!["src/main.rs", "src/util/helper.rs"]);
+    }
+
+    #[test]
+    fn test_get_tree_at_commit_prefix_matching_nothing_is_empty_not_an_error() {
+        let (_temp_dir, path, first) = create_test_repo_with_tree();
+
+        let entries = get_tree_at_commit_impl(&path, &first, Some("effort/")).unwrap();
+
+        assert!(
+            entries.is_empty(),
+            "a prefix that matches nothing is an empty listing, not a failure"
+        );
+    }
+
+    #[test]
+    fn test_get_tree_at_commit_prefix_is_a_literal_string_prefix() {
+        let (_temp_dir, path, first) = create_test_repo_with_tree();
+
+        // "src" without the trailing slash is a string prefix, so it matches
+        // the files under src/ and would also match a sibling named
+        // "srcfile.txt". Callers filtering to a directory pass the slash.
+        let entries = get_tree_at_commit_impl(&path, &first, Some("src")).unwrap();
+
+        let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(paths, vec!["src/main.rs", "src/util/helper.rs"]);
+    }
+
+    #[test]
+    fn test_get_tree_at_commit_empty_prefix_lists_everything() {
+        let (_temp_dir, path, first) = create_test_repo_with_tree();
+
+        let all = get_tree_at_commit_impl(&path, &first, None).unwrap();
+        let empty_prefix = get_tree_at_commit_impl(&path, &first, Some("")).unwrap();
+
+        assert_eq!(all.len(), empty_prefix.len());
+    }
+
+    #[test]
+    fn test_get_tree_at_commit_rejects_an_unparseable_hash() {
+        let (_temp_dir, path, _first) = create_test_repo_with_tree();
+
+        let result = get_tree_at_commit_impl(&path, "not-a-hash", None);
+
+        assert!(matches!(result, Err(GitError::InvalidCommitHash { .. })));
+    }
+
+    #[test]
+    fn test_get_tree_at_commit_rejects_a_hash_that_names_nothing() {
+        let (_temp_dir, path, _first) = create_test_repo_with_tree();
+
+        // Well-formed and absent. get_file_at_commit surfaces this as a
+        // GitOperationFailure from find_commit rather than as an invalid
+        // hash, and the pair must agree.
+        let result = get_tree_at_commit_impl(&path, &"0".repeat(40), None);
+
+        assert!(matches!(result, Err(GitError::GitOperationFailure { .. })));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_get_tree_at_commit_reports_a_symlink_as_a_symlink() {
+        let (temp_dir, path, _first) = create_test_repo_with_tree();
+
+        let link = temp_dir.path().join("latest.md");
+        std::os::unix::fs::symlink("docs/guide.md", &link).unwrap();
+        let commit = commit_file_impl(
+            &path,
+            &link.to_string_lossy(),
+            "Add a symlink",
+            "Test User",
+            "test@example.com",
+        )
+        .unwrap();
+
+        let entries = get_tree_at_commit_impl(&path, &commit, None).unwrap();
+        let entry = entries.iter().find(|e| e.path == "latest.md").unwrap();
+
+        // A symlink's blob is its target path, so the size is the target's
+        // length rather than the length of whatever it points at.
+        assert_eq!(entry.kind, "symlink");
+        assert_eq!(entry.size, "docs/guide.md".len() as i64);
+    }
 }

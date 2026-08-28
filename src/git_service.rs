@@ -13,7 +13,7 @@ use crate::types::{
     BranchInfo, CreateBranchOptions, CreateTagOptions, FastForwardResult, MergeAnalysis, TagInfo,
 };
 use crate::types::{
-    CommitDiff, CommitHistory, CommitInfo, DeletedFileEntry, FileAtCommit, FileDiff,
+    CommitDiff, CommitHistory, CommitInfo, DeletedFileEntry, FileAtCommit, FileDiff, TreeEntry,
 };
 use crate::types::{FetchResult, PushResult, RemoteCredentials, RemoteInfo, UpstreamStatus};
 use crate::types::{GitConfig, RepositoryConfig, RepositoryHealth, RepositoryInfo};
@@ -504,6 +504,42 @@ impl GitService {
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
             get_file_at_commit_impl(&repo_path, &file_path, &commit_hash)
+        })
+        .await
+    }
+
+    /// List the paths present at a commit.
+    ///
+    /// The paired half of `getFileAtCommit`. Calling both with the same
+    /// commit hash gives a snapshot-consistent view of a whole repository
+    /// with no lock held and no writer blocked: resolve a commit once, list
+    /// its tree, then fetch each file at that same commit.
+    ///
+    /// Directories are not entries. They are implied by the paths of the
+    /// files inside them, and paths come back sorted.
+    ///
+    /// Takes a raw commit hash and nothing else, exactly as `getFileAtCommit`
+    /// does. Not a branch, not a tag, not `"HEAD"`. Resolve those first, with
+    /// `getRepositoryInfo().headCommit` or `getTag`, which is what the
+    /// snapshot pattern does anyway.
+    ///
+    /// `pathPrefix` is a literal string prefix on the repository-relative
+    /// path rather than a directory match, so `"effort"` also matches a file
+    /// named `effortless.yaml`; pass the trailing slash to filter to a
+    /// directory. A prefix matching nothing returns an empty array, not an
+    /// error.
+    #[napi]
+    pub async fn get_tree_at_commit(
+        &self,
+        repo_path: String,
+        commit_hash: String,
+        path_prefix: Option<String>,
+    ) -> Result<Vec<TreeEntry>> {
+        validate_repo_path(&repo_path)?;
+        validate_commit_hash(&commit_hash)?;
+        let structured = self.feature_flags().structured_errors;
+        utils::run_blocking(structured, move || {
+            get_tree_at_commit_impl(&repo_path, &commit_hash, path_prefix.as_deref())
         })
         .await
     }
