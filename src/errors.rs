@@ -233,11 +233,9 @@ impl fmt::Display for GitError {
                 "Merging '{}' no longer conflicts; re-run the merge and review the result",
                 branch
             ),
-            GitError::RepositoryLocked { path, waited_ms } => write!(
-                f,
-                "Repository is locked by another process: {} (waited {}ms)",
-                path, waited_ms
-            ),
+            GitError::RepositoryLocked { path, waited_ms } => {
+                write!(f, "Repository is locked: {} (waited {}ms)", path, waited_ms)
+            }
 
             GitError::ConfigMissing {
                 key,

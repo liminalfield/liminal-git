@@ -320,7 +320,7 @@ JSON:
 ```json
 {
   "code": "REPOSITORY_LOCKED",
-  "message": "Repository is locked by another process: /srv/projects/my-repo (waited 10003ms)",
+  "message": "Repository is locked: /srv/projects/my-repo (waited 10003ms)",
   "retriable": true,
   "details": { "path": "/srv/projects/my-repo", "waitedMs": 10003 }
 }
