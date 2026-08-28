@@ -5,7 +5,7 @@ Git operations for Node.js, built on [libgit2](https://libgit2.org/) via
 the library talks to the repository directly and returns typed data.
 
 It was extracted from [Nocturne Writer](https://github.com/liminalfield/nocturne-writer),
-where it provides version control for a writing application, so its 58
+where it provides version control for a writing application, so its 59
 operations lean towards the things a content tool needs: file history, a file's
 contents at a commit, restoring a deleted file, structured diffs. Branch and tag
 management are complete, remotes and merging are supported, and what is left out
@@ -27,7 +27,7 @@ release mode. npm does not cache the result between installs.
 ## Install
 
 ```bash
-npm install github:liminalfield/liminal-git#v1.2.0
+npm install github:liminalfield/liminal-git#v1.3.0
 ```
 
 Not published to npm. Pinning a tag or a commit is recommended over a branch, so
@@ -35,7 +35,7 @@ that a rebuild cannot silently change what you depend on.
 
 ## Usage
 
-Every operation except the constructor is asynchronous — 58 of them return a
+Every operation except the constructor is asynchronous — 59 of them return a
 Promise. Paths are absolute for the repository and repository-relative for files
 within it.
 
@@ -134,6 +134,61 @@ If a lock cannot be acquired within ten seconds the call fails with
 
 This excludes other users of *this library*. It does not exclude `git` itself —
 a commit run from a terminal knows nothing about `.git/liminal-git.lock`.
+
+### Holding the lock across a sequence
+
+A per-operation lock makes each operation safe. It cannot make a **sequence**
+safe, and a host application's core write path is usually a sequence:
+
+1. write one or more files to the working tree
+2. run a validator over the whole tree — often an external process this
+   library knows nothing about
+3. commit if it passes, restore if it does not
+
+Between steps 1 and 3 another process using this library can legally
+interleave. Its edit can land mid-validation, be judged by the wrong validator
+run, or be undone by step 3's restore. `acquireRepositoryLock` closes that
+window:
+
+```js
+const lock = await git.acquireRepositoryLock(repo);
+try {
+  await writeFiles();
+  if (await runValidator()) {
+    await git.commitFiles(repo, paths, message, name, email);
+  }
+} finally {
+  await lock.release();
+}
+```
+
+`release()` is idempotent, so a `finally` that also runs on the success path is
+safe. There is no `withRepositoryLock`: the four lines above are the whole of
+it, and a wrapper would mean a hand-written JavaScript layer over the generated
+binding for no gain a caller cannot get here.
+
+Three behaviours are worth knowing exactly, because a caller builds on them.
+
+**Operations issued while this process holds the lock proceed.** They do not
+deadlock and do not wait. They skip the advisory lock, which the held scope
+already owns, and still take the in-process mutex, so operations continue to
+exclude each other within the process. Skipping both would have been simpler
+and wrong: two threads of the holding process could then run operations
+concurrently and corrupt the index, which the per-operation lock had been
+preventing.
+
+**A second `acquireRepositoryLock` on the same repository is refused**, with
+`REPOSITORY_LOCKED` after the timeout, whether the current holder is this
+process or another one. It is not handed back as a reentrant handle, because
+nested scopes hide bugs about who owns what.
+
+**A crash cannot wedge a repository.** The handle owns the file descriptor and
+the kernel drops the advisory lock when the process dies, exactly as for a
+per-operation lock. A handle leaked inside a *live* process is the caller's
+bug, which is what the `finally` is for.
+
+`timeoutMs` is an optional second argument and defaults to the same ten seconds
+every other operation waits.
 
 ## Reading at a commit
 
@@ -338,7 +393,7 @@ npm run build                        # the Node addon (napi build --release)
 cargo test --no-default-features
 ```
 
-293 tests across ten targets. `--no-default-features` is required rather than
+305 tests across ten targets. `--no-default-features` is required rather than
 preferred: with the `napi-binding` feature on, a test binary fails at the
 **linker**, because napi resolves its symbols from the host Node process at run
 time and those symbols do not exist in a test executable. Disabling the feature

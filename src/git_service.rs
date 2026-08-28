@@ -23,6 +23,48 @@ use crate::validation::*;
 use log::info;
 use napi::Result;
 use napi_derive::napi;
+use std::sync::Mutex;
+
+/// A repository lock held across a sequence of operations the caller defines.
+///
+/// Returned by `acquireRepositoryLock`. Not constructible from JavaScript:
+/// a lock exists only because it was acquired.
+#[napi]
+pub struct RepositoryLock {
+    scope: Mutex<Option<utils::RepositoryScope>>,
+    structured_errors: bool,
+}
+
+#[napi]
+impl RepositoryLock {
+    /// Release the lock. Idempotent, so calling it from a `finally` that also
+    /// runs on the success path is safe.
+    ///
+    /// Releasing waits for any operation already running inside the scope to
+    /// finish, because such an operation skipped the advisory lock on the
+    /// strength of this scope holding it.
+    #[napi]
+    pub async fn release(&self) -> Result<()> {
+        let taken = self.scope.lock().unwrap_or_else(|p| p.into_inner()).take();
+        let structured = self.structured_errors;
+        utils::run_blocking(structured, move || {
+            if let Some(mut scope) = taken {
+                scope.release();
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    /// Whether this lock is still held. False once `release` has run.
+    #[napi(getter)]
+    pub fn held(&self) -> bool {
+        self.scope
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .is_some()
+    }
+}
 
 #[napi]
 pub struct GitService {
@@ -363,6 +405,68 @@ impl GitService {
     }
 
     // Repository health and repair
+    /// Take an explicit lock on a repository, held until `release`.
+    ///
+    /// Every mutating operation already takes this lock for its own duration,
+    /// which makes each operation safe and cannot make a **sequence** safe. A
+    /// host that writes files, runs an external validator over the working
+    /// tree, then commits or restores, has a window between the write and the
+    /// commit in which another process using this library can legally
+    /// interleave: its edit can land mid-validation, be judged by the wrong
+    /// validator run, or be undone by the first host's restore. Holding a lock
+    /// across the whole sequence closes that window.
+    ///
+    /// ```js
+    /// const lock = await git.acquireRepositoryLock(repo);
+    /// try {
+    ///   await writeFiles();
+    ///   if (await validate()) {
+    ///     await git.commitFiles(repo, paths, message, name, email);
+    ///   }
+    /// } finally {
+    ///   await lock.release();
+    /// }
+    /// ```
+    ///
+    /// Operations issued while this process holds the lock proceed rather than
+    /// deadlocking. They skip the advisory lock, which this scope already
+    /// holds, and still take the in-process mutex, so they continue to exclude
+    /// each other.
+    ///
+    /// A second `acquireRepositoryLock` on the same repository is refused with
+    /// `REPOSITORY_LOCKED` rather than handed back as a reentrant handle,
+    /// whether the holder is this process or another one. Nested scopes hide
+    /// bugs about who owns what.
+    ///
+    /// `timeoutMs` defaults to the same ten seconds every other operation
+    /// waits. As everywhere else, the advisory lock is released by the kernel
+    /// if the process dies, so a crash cannot wedge a repository; a handle
+    /// leaked inside a live process is the caller's bug, which is what the
+    /// `finally` above is for.
+    ///
+    /// This excludes other users of **this library**. It does not exclude
+    /// `git` run from a terminal.
+    #[napi]
+    pub async fn acquire_repository_lock(
+        &self,
+        repo_path: String,
+        timeout_ms: Option<u32>,
+    ) -> Result<RepositoryLock> {
+        validate_repo_path(&repo_path)?;
+        let structured = self.feature_flags().structured_errors;
+        let timeout = timeout_ms.map_or(utils::LOCK_TIMEOUT, |ms| {
+            std::time::Duration::from_millis(u64::from(ms))
+        });
+        let scope = utils::run_blocking(structured, move || {
+            utils::acquire_scope(&repo_path, timeout)
+        })
+        .await?;
+        Ok(RepositoryLock {
+            scope: Mutex::new(Some(scope)),
+            structured_errors: structured,
+        })
+    }
+
     #[napi]
     pub async fn is_repository_healthy(&self, repo_path: String) -> Result<RepositoryHealth> {
         validate_repo_path(&repo_path)?;

@@ -73,6 +73,50 @@ export declare class GitService {
    * accidentally push to the original's remotes.
    */
   removeAllRemotes(repoPath: string): Promise<Array<string>>
+  /**
+   * Take an explicit lock on a repository, held until `release`.
+   *
+   * Every mutating operation already takes this lock for its own duration,
+   * which makes each operation safe and cannot make a **sequence** safe. A
+   * host that writes files, runs an external validator over the working
+   * tree, then commits or restores, has a window between the write and the
+   * commit in which another process using this library can legally
+   * interleave: its edit can land mid-validation, be judged by the wrong
+   * validator run, or be undone by the first host's restore. Holding a lock
+   * across the whole sequence closes that window.
+   *
+   * ```js
+   * const lock = await git.acquireRepositoryLock(repo);
+   * try {
+   *   await writeFiles();
+   *   if (await validate()) {
+   *     await git.commitFiles(repo, paths, message, name, email);
+   *   }
+   * } finally {
+   *   await lock.release();
+   * }
+   * ```
+   *
+   * Operations issued while this process holds the lock proceed rather than
+   * deadlocking. They skip the advisory lock, which this scope already
+   * holds, and still take the in-process mutex, so they continue to exclude
+   * each other.
+   *
+   * A second `acquireRepositoryLock` on the same repository is refused with
+   * `REPOSITORY_LOCKED` rather than handed back as a reentrant handle,
+   * whether the holder is this process or another one. Nested scopes hide
+   * bugs about who owns what.
+   *
+   * `timeoutMs` defaults to the same ten seconds every other operation
+   * waits. As everywhere else, the advisory lock is released by the kernel
+   * if the process dies, so a crash cannot wedge a repository; a handle
+   * leaked inside a live process is the caller's bug, which is what the
+   * `finally` above is for.
+   *
+   * This excludes other users of **this library**. It does not exclude
+   * `git` run from a terminal.
+   */
+  acquireRepositoryLock(repoPath: string, timeoutMs?: number | undefined | null): Promise<RepositoryLock>
   isRepositoryHealthy(repoPath: string): Promise<RepositoryHealth>
   repairRepository(repoPath: string): Promise<boolean>
   configureRepository(repoPath: string, config: GitConfig): Promise<boolean>
@@ -234,6 +278,26 @@ export declare class GitService {
    * as the last fetch. Call `fetch` first for current information.
    */
   getUpstreamStatus(repoPath: string, branch: string): Promise<UpstreamStatus>
+}
+
+/**
+ * A repository lock held across a sequence of operations the caller defines.
+ *
+ * Returned by `acquireRepositoryLock`. Not constructible from JavaScript:
+ * a lock exists only because it was acquired.
+ */
+export declare class RepositoryLock {
+  /**
+   * Release the lock. Idempotent, so calling it from a `finally` that also
+   * runs on the success path is safe.
+   *
+   * Releasing waits for any operation already running inside the scope to
+   * finish, because such an operation skipped the advisory lock on the
+   * strength of this scope holding it.
+   */
+  release(): Promise<void>
+  /** Whether this lock is still held. False once `release` has run. */
+  get held(): boolean
 }
 
 /** Tracking information relative to upstream branch */

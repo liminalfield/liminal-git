@@ -18,7 +18,7 @@ use napi::Status;
 /// `RepositoryLocked` naming the path and the time spent. Ten seconds is far
 /// longer than any operation here takes and short enough that a person notices
 /// an error rather than a freeze.
-const LOCK_TIMEOUT: Duration = Duration::from_secs(10);
+pub const LOCK_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Poll interval while waiting. Deliberately not a blocking `flock` call — see
 /// `lock_repo`, which needs a deadline that a blocking acquire cannot give it.
@@ -37,11 +37,173 @@ static REPO_LOCKS: Mutex<BTreeMap<String, &'static Mutex<()>>> = Mutex::new(BTre
 /// Fields drop in declaration order: the file lock is released first, then the
 /// in-process mutex. Either order is correct; this one is stated so a later
 /// reordering is a visible decision rather than an accident.
+///
+/// `_file` is `None` when the operation is running inside an explicit scope
+/// this process holds. The advisory lock is already held by the scope, and
+/// taking it again on a second descriptor would deadlock. See `lock_repo`.
 #[must_use = "the lock is released as soon as the guard is dropped, so binding \
               it to `_` protects nothing"]
 pub struct RepoLock {
-    _file: File,
+    _file: Option<File>,
     _process: MutexGuard<'static, ()>,
+}
+
+/// Repositories this process holds through an explicit scope, keyed by
+/// canonicalised path.
+///
+/// The value owns the locked descriptor, so the advisory lock lives exactly as
+/// long as the entry and the kernel drops it if the process dies. This map is
+/// what an operation consults to discover that the lock it is about to take is
+/// already its own process's.
+static HELD_SCOPES: Mutex<BTreeMap<String, File>> = Mutex::new(BTreeMap::new());
+
+/// The in-process mutex for a repository, created on first use.
+fn process_mutex_for(key: &str) -> &'static Mutex<()> {
+    let mut locks = REPO_LOCKS.lock().unwrap_or_else(|p| p.into_inner());
+    locks
+        .entry(key.to_owned())
+        .or_insert_with(|| Box::leak(Box::new(Mutex::new(()))))
+}
+
+/// Take the in-process mutex without blocking, recovering from poisoning.
+fn try_process_mutex(mutex: &'static Mutex<()>) -> Option<MutexGuard<'static, ()>> {
+    match mutex.try_lock() {
+        Ok(guard) => Some(guard),
+        Err(std::sync::TryLockError::Poisoned(p)) => Some(p.into_inner()),
+        Err(std::sync::TryLockError::WouldBlock) => None,
+    }
+}
+
+/// A repository lock held across a sequence of operations the caller defines.
+///
+/// The per-operation lock makes each operation safe and cannot make a
+/// *sequence* safe. A host that writes files, runs an external validator over
+/// the working tree, then commits or restores, has a window between the write
+/// and the commit in which another process using this library can legally
+/// interleave: its edit can land mid-validation, be judged by the wrong
+/// validator run, or be undone by the first host's restore. A scope closes
+/// that window for as long as it is held.
+///
+/// Released by `release`, which is idempotent, and on drop. As with the
+/// per-operation lock, the kernel releases the advisory lock if the process
+/// dies, so a crash can never wedge a repository.
+///
+/// Two behaviours are worth stating exactly, because callers build on them:
+///
+/// * **Operations issued while this process holds a scope proceed.** They
+///   skip the advisory lock, which the scope already holds, and still take
+///   the in-process mutex, so they continue to exclude each other.
+/// * **A second scope on the same repository is refused**, with
+///   `RepositoryLocked` after the timeout, rather than handed back as a
+///   reentrant handle. Nested scopes hide bugs about who owns what.
+///
+/// The exclusion is the same one the per-operation lock offers: other users of
+/// *this library*, not `git` run from a terminal.
+#[must_use = "a scope released immediately protects nothing"]
+#[derive(Debug)]
+pub struct RepositoryScope {
+    key: String,
+    released: bool,
+}
+
+impl RepositoryScope {
+    /// The repository this scope holds, as a canonicalised path.
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// Release the scope. Idempotent, so a `finally` that runs twice, or a
+    /// release followed by a drop, is not an error.
+    pub fn release(&mut self) {
+        if self.released {
+            return;
+        }
+        self.released = true;
+
+        // The in-process mutex is taken first so that a release cannot land
+        // while an operation issued inside this scope is still running. Such
+        // an operation skipped the advisory lock on the strength of this scope
+        // holding it, and dropping the descriptor underneath it would leave it
+        // running with no lock at all.
+        let mutex = process_mutex_for(&self.key);
+        let _guard = mutex.lock().unwrap_or_else(|p| p.into_inner());
+
+        HELD_SCOPES
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&self.key);
+    }
+}
+
+impl Drop for RepositoryScope {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+/// Take an explicit lock scope on a repository.
+///
+/// Waits up to `timeout` for the repository to become free, then fails with
+/// `RepositoryLocked`, matching the per-operation lock's behaviour and
+/// retriable flag.
+///
+/// The poll loop takes the in-process mutex with `try_lock` rather than
+/// blocking on it. Blocking would be simpler and would overrun the caller's
+/// timeout by however long an in-flight operation takes; more importantly,
+/// holding it across the check of `HELD_SCOPES` and the `try_lock` on the file
+/// is what makes this sequence mutually exclusive with the same sequence in
+/// `lock_repo`. Without that, an operation could check `HELD_SCOPES`, find it
+/// empty, and then lose the file lock to a scope acquired in between, leaving
+/// it to wait out the full timeout and fail against a lock its own process
+/// held.
+pub fn acquire_scope(repo_path: &str, timeout: Duration) -> Result<RepositoryScope, GitError> {
+    let (key, path) = lock_identity(repo_path)?;
+    let process_mutex = process_mutex_for(&key);
+
+    let started = Instant::now();
+    loop {
+        if let Some(_process_guard) = try_process_mutex(process_mutex) {
+            let mut held = HELD_SCOPES.lock().unwrap_or_else(|p| p.into_inner());
+
+            if !held.contains_key(&key) {
+                let file = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create(true)
+                    .truncate(false)
+                    .open(&path)
+                    .map_err(|e| GitError::IoError {
+                        operation: "open_repo_lock_file".to_string(),
+                        error: format!("{}: {}", path.display(), e),
+                    })?;
+
+                match file.try_lock() {
+                    Ok(()) => {
+                        held.insert(key.clone(), file);
+                        return Ok(RepositoryScope {
+                            key,
+                            released: false,
+                        });
+                    }
+                    Err(TryLockError::WouldBlock) => {}
+                    Err(TryLockError::Error(e)) => {
+                        return Err(GitError::IoError {
+                            operation: "lock_repository".to_string(),
+                            error: e.to_string(),
+                        });
+                    }
+                }
+            }
+        }
+
+        if started.elapsed() >= timeout {
+            return Err(GitError::RepositoryLocked {
+                path: key,
+                waited_ms: started.elapsed().as_millis() as u64,
+            });
+        }
+        std::thread::sleep(LOCK_POLL);
+    }
 }
 
 /// Resolve a caller's path string to the two things a lock is identified by:
@@ -126,13 +288,28 @@ fn lock_file_path(repo_path: &Path) -> PathBuf {
 pub fn lock_repo(repo_path: &str) -> Result<RepoLock, GitError> {
     let (key, path) = lock_identity(repo_path)?;
 
-    let process_mutex: &'static Mutex<()> = {
-        let mut locks = REPO_LOCKS.lock().unwrap_or_else(|p| p.into_inner());
-        locks
-            .entry(key.clone())
-            .or_insert_with(|| Box::leak(Box::new(Mutex::new(()))))
-    };
+    let process_mutex = process_mutex_for(&key);
     let process_guard = process_mutex.lock().unwrap_or_else(|p| p.into_inner());
+
+    // If this process already holds the repository through an explicit scope,
+    // the advisory lock is already ours and this operation is running inside
+    // that scope. Taking the file lock again would deadlock rather than
+    // succeed: an `flock` conflicts with itself across two descriptors of one
+    // file even within a single process.
+    //
+    // Only the file lock is skipped. The in-process mutex above is still held,
+    // so operations inside a scope continue to exclude each other, and it
+    // cannot deadlock here because a scope deliberately does not hold it.
+    if HELD_SCOPES
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .contains_key(&key)
+    {
+        return Ok(RepoLock {
+            _file: None,
+            _process: process_guard,
+        });
+    }
 
     let file = OpenOptions::new()
         .read(true)
@@ -152,7 +329,7 @@ pub fn lock_repo(repo_path: &str) -> Result<RepoLock, GitError> {
         match file.try_lock() {
             Ok(()) => {
                 return Ok(RepoLock {
-                    _file: file,
+                    _file: Some(file),
                     _process: process_guard,
                 });
             }
@@ -849,5 +1026,388 @@ mod tests {
         let signature = result.unwrap();
         assert_eq!(signature.name(), Some("Explicit User"));
         assert_eq!(signature.email(), Some("config@example.com"));
+    }
+
+    // ===== Explicit lock scope =====
+    //
+    // The per-operation lock makes each operation safe and cannot make a
+    // *sequence* safe. A host that writes files, runs an external validator
+    // over the tree, then commits, has a window between the write and the
+    // commit where another process can legally interleave. A scope closes it.
+
+    /// The constraint the whole design turns on: an operation issued while
+    /// this process holds a scope must proceed, not deadlock.
+    ///
+    /// It would deadlock on either layer if the scope held them the way a
+    /// per-operation guard does. A second `flock` on a separate descriptor of
+    /// the same file conflicts even within one process, and the in-process
+    /// mutex is not reentrant either.
+    #[test]
+    fn an_operation_inside_a_held_scope_proceeds() {
+        use std::sync::mpsc;
+
+        let (_temp, repo_path) = setup_test_repo();
+        let path = repo_path.to_string_lossy().into_owned();
+
+        let scope = acquire_scope(&path, Duration::from_secs(5)).expect("acquire scope");
+
+        // Run it on another thread so a deadlock fails the test rather than
+        // hanging the whole run.
+        let (tx, rx) = mpsc::channel();
+        let worker = {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                let guard = lock_repo(&path).expect("operation inside the scope");
+                tx.send(()).expect("report");
+                drop(guard);
+            })
+        };
+
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("an operation inside a held scope must not block on the scope's own lock");
+        worker.join().expect("thread join");
+        drop(scope);
+    }
+
+    /// Operations inside a held scope must still serialise against each other.
+    ///
+    /// This is where the implementation is deliberately stricter than the
+    /// issue, which said an operation finding the scope held should take
+    /// "neither lock". Taking neither would let two threads of the holding
+    /// process run operations concurrently and corrupt the index, which the
+    /// per-operation lock had prevented until then. Skipping only the file
+    /// lock is what avoids the deadlock; the in-process mutex is still taken,
+    /// and it cannot deadlock because the scope does not hold it.
+    #[test]
+    fn operations_inside_a_held_scope_still_exclude_each_other() {
+        use std::sync::mpsc;
+
+        let (_temp, repo_path) = setup_test_repo();
+        let path = repo_path.to_string_lossy().into_owned();
+
+        let scope = acquire_scope(&path, Duration::from_secs(5)).expect("acquire scope");
+
+        let first = lock_repo(&path).expect("first operation inside the scope");
+
+        let (tx, rx) = mpsc::channel();
+        let worker = {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                let guard = lock_repo(&path).expect("second operation");
+                tx.send(()).expect("report");
+                drop(guard);
+            })
+        };
+
+        assert!(
+            rx.recv_timeout(Duration::from_millis(250)).is_err(),
+            "two operations ran at once inside one scope — the in-process \
+             layer stopped excluding anything"
+        );
+
+        drop(first);
+        rx.recv_timeout(Duration::from_secs(10))
+            .expect("the second operation should proceed once the first finishes");
+        worker.join().expect("thread join");
+        drop(scope);
+    }
+
+    /// A second scope on the same repository is refused rather than handed
+    /// back as a reentrant handle. Nested scopes hide bugs.
+    #[test]
+    fn a_second_scope_in_the_same_process_is_refused() {
+        let (_temp, repo_path) = setup_test_repo();
+        let path = repo_path.to_string_lossy().into_owned();
+
+        let scope = acquire_scope(&path, Duration::from_secs(5)).expect("first scope");
+
+        let second = acquire_scope(&path, Duration::from_millis(100));
+        assert!(
+            matches!(second, Err(GitError::RepositoryLocked { .. })),
+            "expected REPOSITORY_LOCKED, got {second:?}"
+        );
+
+        drop(scope);
+    }
+
+    /// Releasing must actually release, or a scope is a one-shot wedge.
+    #[test]
+    fn a_released_scope_can_be_acquired_again() {
+        let (_temp, repo_path) = setup_test_repo();
+        let path = repo_path.to_string_lossy().into_owned();
+
+        let mut scope = acquire_scope(&path, Duration::from_secs(5)).expect("first scope");
+        scope.release();
+
+        let second = acquire_scope(&path, Duration::from_millis(500));
+        assert!(second.is_ok(), "expected a fresh scope, got {second:?}");
+    }
+
+    /// Release is idempotent, so a `finally` block that runs twice, or a
+    /// release followed by a drop, is not an error.
+    #[test]
+    fn releasing_twice_is_not_an_error() {
+        let (_temp, repo_path) = setup_test_repo();
+        let path = repo_path.to_string_lossy().into_owned();
+
+        let mut scope = acquire_scope(&path, Duration::from_secs(5)).expect("scope");
+        scope.release();
+        scope.release();
+
+        assert!(acquire_scope(&path, Duration::from_millis(500)).is_ok());
+    }
+
+    /// The point of the whole feature: a scope excludes *other processes* for
+    /// its entire duration, which is what makes a write-validate-commit
+    /// sequence safe rather than merely each of its steps.
+    #[test]
+    fn a_held_scope_excludes_another_process() {
+        if std::env::var("LIMINAL_LOCK_PROBE").is_ok() {
+            return;
+        }
+
+        let (_temp, repo_path) = setup_test_repo();
+        let path = repo_path.to_string_lossy().into_owned();
+        let (_key, lock_path) = lock_identity(&path).unwrap();
+
+        let _scope = acquire_scope(&path, Duration::from_secs(5)).expect("acquire scope");
+
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "utils::tests::lock_file_probe", "--nocapture"])
+            .env("LIMINAL_LOCK_PROBE", &lock_path)
+            .output()
+            .expect("spawn probe process");
+
+        assert!(
+            output.status.success(),
+            "another process took the lock while a scope was held\n{}",
+            String::from_utf8_lossy(&output.stdout),
+        );
+    }
+
+    /// And stops excluding once released, which is the other half of the same
+    /// claim: a released scope must leave no residue behind.
+    #[test]
+    fn a_released_scope_stops_excluding_another_process() {
+        if std::env::var("LIMINAL_LOCK_PROBE").is_ok() {
+            return;
+        }
+
+        let (_temp, repo_path) = setup_test_repo();
+        let path = repo_path.to_string_lossy().into_owned();
+        let (_key, lock_path) = lock_identity(&path).unwrap();
+
+        let mut scope = acquire_scope(&path, Duration::from_secs(5)).expect("acquire scope");
+        scope.release();
+
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "utils::tests::lock_file_probe_expects_free",
+                "--nocapture",
+            ])
+            .env("LIMINAL_LOCK_PROBE", &lock_path)
+            .output()
+            .expect("spawn probe process");
+
+        assert!(
+            output.status.success(),
+            "the lock was still held after release\n{}",
+            String::from_utf8_lossy(&output.stdout),
+        );
+    }
+
+    /// The child half of `a_released_scope_stops_excluding_another_process`.
+    #[test]
+    fn lock_file_probe_expects_free() {
+        let Ok(lock_path) = std::env::var("LIMINAL_LOCK_PROBE") else {
+            return;
+        };
+
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .expect("open the lock file");
+
+        match file.try_lock() {
+            Ok(()) => {} // correct: nobody holds it any more
+            Err(TryLockError::WouldBlock) => {
+                panic!("the lock is still held after the scope was released")
+            }
+            Err(e) => panic!("probing the lock failed: {e}"),
+        }
+    }
+
+    /// A scope on one repository must not touch another.
+    #[test]
+    fn a_scope_is_per_repository() {
+        let (_temp_a, repo_a) = setup_test_repo();
+        let (_temp_b, repo_b) = setup_test_repo();
+        let path_a = repo_a.to_string_lossy().into_owned();
+        let path_b = repo_b.to_string_lossy().into_owned();
+
+        let _scope = acquire_scope(&path_a, Duration::from_secs(5)).expect("scope on a");
+
+        assert!(
+            acquire_scope(&path_b, Duration::from_millis(500)).is_ok(),
+            "a scope on one repository blocked a scope on another"
+        );
+    }
+
+    /// The acceptance test for the whole feature: two *processes* running a
+    /// write-validate-commit sequence against one repository must serialise.
+    ///
+    /// This is the sequence a scope exists for. Each process takes the scope,
+    /// writes a file, spends time in a validator this library knows nothing
+    /// about, commits, and releases.
+    ///
+    /// The asserted property is that the two sequences **do not overlap**.
+    /// Each writer appends `ENTER` and `EXIT` to a shared log around its
+    /// scope, and the log has to read as two complete sequences rather than
+    /// two interleaved ones. That is the property a host depends on and the
+    /// one a per-operation lock cannot give, because the interleaving happens
+    /// between the write and the commit rather than inside either.
+    ///
+    /// Asserting instead that neither commit contains the other's file would
+    /// prove nothing: `commit_files_impl` stages an explicit list, so it
+    /// already cannot pick up a file it was not given. That version of this
+    /// test passed with the scope removed.
+    ///
+    /// The child is a fresh copy of this test binary, which keeps it
+    /// portable. The validator is a sleep long enough that two unserialised
+    /// runs would certainly overlap.
+    #[test]
+    fn two_processes_running_write_validate_commit_serialise() {
+        if std::env::var("LIMINAL_SEQUENCE_REPO").is_ok() {
+            return;
+        }
+
+        let (temp, repo_path) = setup_test_repo();
+        let path = repo_path.to_string_lossy().into_owned();
+        let log = temp.path().join("sequence.log");
+
+        // A first commit, so HEAD exists and each side's commit has a parent.
+        let seed = temp.path().join("seed.txt");
+        std::fs::write(&seed, "seed\n").unwrap();
+        crate::file_ops::commit_file_impl(
+            &path,
+            &seed.to_string_lossy(),
+            "Seed",
+            "Test User",
+            "test@example.com",
+        )
+        .unwrap();
+
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "utils::tests::write_validate_commit_sequence",
+                "--nocapture",
+            ])
+            .env("LIMINAL_SEQUENCE_REPO", &path)
+            .env("LIMINAL_SEQUENCE_FILE", "child.txt")
+            .env("LIMINAL_SEQUENCE_LOG", &log)
+            .spawn()
+            .expect("spawn the second writer");
+
+        run_write_validate_commit(&path, "parent.txt", &log);
+
+        let status = child.wait().expect("child writer finished");
+        assert!(status.success(), "the second writer failed");
+
+        // Two complete sequences, neither opened inside the other.
+        let entries: Vec<String> = std::fs::read_to_string(&log)
+            .expect("read the sequence log")
+            .lines()
+            .map(str::to_owned)
+            .collect();
+
+        assert_eq!(
+            entries.len(),
+            4,
+            "expected two ENTER/EXIT pairs: {entries:?}"
+        );
+        for pair in entries.chunks(2) {
+            let (enter, exit) = (&pair[0], &pair[1]);
+            let who = enter
+                .strip_prefix("ENTER ")
+                .unwrap_or_else(|| panic!("expected an ENTER, got {enter:?} in {entries:?}"));
+            assert_eq!(
+                exit,
+                &format!("EXIT {who}"),
+                "a second writer entered the scope before {who} left it: {entries:?}"
+            );
+        }
+
+        // Both sequences also completed their work.
+        let repo = git2::Repository::open(&path).unwrap();
+        let tree = repo
+            .head()
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .tree()
+            .unwrap();
+        for name in ["parent.txt", "child.txt"] {
+            assert!(
+                tree.get_path(Path::new(name)).is_ok(),
+                "{name} is missing, so one sequence did not complete"
+            );
+        }
+    }
+
+    /// The child half of `two_processes_running_write_validate_commit_serialise`.
+    /// Inert without the environment variables, so a normal run does nothing.
+    #[test]
+    fn write_validate_commit_sequence() {
+        let (Ok(repo_path), Ok(file_name), Ok(log)) = (
+            std::env::var("LIMINAL_SEQUENCE_REPO"),
+            std::env::var("LIMINAL_SEQUENCE_FILE"),
+            std::env::var("LIMINAL_SEQUENCE_LOG"),
+        ) else {
+            return;
+        };
+        run_write_validate_commit(&repo_path, &file_name, Path::new(&log));
+    }
+
+    /// Acquire, write, validate slowly, commit, release, marking the log on
+    /// the way in and on the way out.
+    fn run_write_validate_commit(repo_path: &str, file_name: &str, log: &Path) {
+        let mut scope =
+            acquire_scope(repo_path, Duration::from_secs(30)).expect("acquire the scope");
+        note(log, &format!("ENTER {file_name}"));
+
+        let file = Path::new(repo_path).join(file_name);
+        std::fs::write(&file, format!("{file_name}\n")).expect("write the file");
+
+        // Stand-in for an external validator reading the whole tree. The
+        // window this occupies is exactly what a per-operation lock leaves
+        // open.
+        std::thread::sleep(Duration::from_millis(400));
+
+        crate::file_ops::commit_files_impl(
+            repo_path,
+            &[file.to_string_lossy().into_owned()],
+            &format!("Sequence: {file_name}"),
+            "Test User",
+            "test@example.com",
+        )
+        .expect("commit inside the scope");
+
+        note(log, &format!("EXIT {file_name}"));
+        scope.release();
+    }
+
+    /// Append one line to the shared log. A single small append is atomic
+    /// enough for two processes to share, which is all this needs.
+    fn note(log: &Path, line: &str) {
+        use std::io::Write;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log)
+            .expect("open the sequence log");
+        writeln!(file, "{line}").expect("append to the sequence log");
     }
 }
