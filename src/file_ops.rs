@@ -6,7 +6,8 @@ use log::{error, info};
 use std::fs;
 
 use crate::utils::normalize_git_path;
-use std::path::Path;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 
 pub fn move_file_impl(
     repo_path: &str,
@@ -131,6 +132,99 @@ pub fn move_directory_impl(
     Ok(result)
 }
 
+/// What staging one path will do, decided before the index is touched.
+enum StageAction {
+    /// The path is on disk: stage its current content.
+    Add(PathBuf),
+    /// The path is tracked but no longer on disk: stage its deletion.
+    Remove(PathBuf),
+}
+
+/// Turn a caller's list of paths into a staging plan, touching nothing.
+///
+/// Every path is validated and classified before the index is opened for
+/// writing, which is what makes `commit_files_impl` all-or-nothing by design
+/// rather than by luck. A failure on the last path of a list leaves the index
+/// and HEAD exactly as they were, because nothing has been staged yet when it
+/// is raised.
+///
+/// The classification is the same rule for one path or many: **the state on
+/// disk is what gets staged**. A path present on disk stages its content, a
+/// tracked path absent from disk stages as a deletion, and a path that is
+/// neither on disk nor tracked is `FileNotFound`. Before this, a missing path
+/// of either kind reached `add_path` and came back as an opaque
+/// `GIT_OPERATION_FAILURE` reading "could not find ... to stat", so deleting a
+/// file and editing another could not be one commit.
+///
+/// Paths are de-duplicated after normalisation, so the absolute and
+/// repository-relative spellings of one path collapse to a single action.
+/// Repeats are harmless under `add_path` today; de-duplicating explicitly is
+/// what keeps them harmless under `remove_path`, where staging the same
+/// deletion twice would otherwise depend on `remove_path` tolerating a missing
+/// entry.
+fn plan_staging(
+    repo: &Repository,
+    repo_path: &str,
+    file_paths: &[String],
+) -> Result<Vec<StageAction>, GitError> {
+    let index = repo
+        .index()
+        .map_err(|e| GitError::from(e).with_operation("read_index"))?;
+
+    let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut plan = Vec::with_capacity(file_paths.len());
+
+    for file_path in file_paths {
+        let relative_path = crate::utils::validate_and_normalize_path_git(repo_path, file_path)?;
+        if !seen.insert(relative_path.clone()) {
+            continue;
+        }
+
+        // symlink_metadata rather than exists(): a symlink whose target is
+        // gone is still a path present in the working tree, and git stages
+        // the link itself rather than what it points at.
+        let on_disk = Path::new(repo_path).join(&relative_path);
+        if on_disk.symlink_metadata().is_ok() {
+            plan.push(StageAction::Add(relative_path));
+        } else if index.get_path(&relative_path, 0).is_some() {
+            plan.push(StageAction::Remove(relative_path));
+        } else {
+            return Err(GitError::FileNotFound {
+                path: file_path.to_string(),
+            });
+        }
+    }
+
+    Ok(plan)
+}
+
+/// Apply a staging plan and write the index once.
+///
+/// The index is only written after every action has been applied, so a
+/// failure part-way leaves the on-disk index untouched.
+fn apply_staging(repo: &Repository, plan: &[StageAction]) -> Result<(), GitError> {
+    let mut index = repo
+        .index()
+        .map_err(|e| GitError::from(e).with_operation("read_index"))?;
+
+    for action in plan {
+        match action {
+            StageAction::Add(path) => index
+                .add_path(path)
+                .map_err(|e| GitError::from(e).with_operation("add_path"))?,
+            StageAction::Remove(path) => index
+                .remove_path(path)
+                .map_err(|e| GitError::from(e).with_operation("remove_path"))?,
+        }
+    }
+
+    index
+        .write()
+        .map_err(|e| GitError::from(e).with_operation("write_index"))?;
+
+    Ok(())
+}
+
 pub fn commit_file_impl(
     repo_path: &str,
     file_path: &str,
@@ -143,17 +237,12 @@ pub fn commit_file_impl(
 
     let repo =
         Repository::open(repo_path).map_err(|e| GitError::from(e).with_operation("commit_file"))?;
-    let relative_path = crate::utils::validate_and_normalize_path_git(repo_path, file_path)?;
 
-    let mut index = repo
-        .index()
-        .map_err(|e| GitError::from(e).with_operation("commit_file"))?;
-    index
-        .add_path(&relative_path)
-        .map_err(|e| GitError::from(e).with_operation("add_path"))?;
-    index
-        .write()
-        .map_err(|e| GitError::from(e).with_operation("write_index"))?;
+    // One path takes the same route as many, so the two operations cannot
+    // drift apart on what staging a path means.
+    let paths = [file_path.to_string()];
+    let plan = plan_staging(&repo, repo_path, &paths)?;
+    apply_staging(&repo, &plan)?;
 
     let result = commit_impl(&repo, message, user_name, user_email)?;
 
@@ -161,6 +250,20 @@ pub fn commit_file_impl(
     Ok(result)
 }
 
+/// Stage the listed paths and write one commit.
+///
+/// The whole set lands as a single commit or nothing lands at all. That
+/// matters because a change spanning several files is one decision: as
+/// separate commits the history stops recording decisions, reverting one
+/// becomes a multi-commit operation, and between the commits HEAD holds half a
+/// change that any reader pinned to it can observe.
+///
+/// `NOTHING_TO_COMMIT` is evaluated over the resulting tree, so it is
+/// naturally a whole-set check: a list whose files are all already committed
+/// raises it, rather than raising it per path.
+///
+/// The N-API layer caps the list at 1000 paths and rejects an empty list with
+/// `INVALID_ARGUMENT`.
 pub fn commit_files_impl(
     repo_path: &str,
     file_paths: &[String],
@@ -173,20 +276,10 @@ pub fn commit_files_impl(
 
     let repo = Repository::open(repo_path)
         .map_err(|e| GitError::from(e).with_operation("commit_files"))?;
-    let mut index = repo
-        .index()
-        .map_err(|e| GitError::from(e).with_operation("commit_files"))?;
 
-    for file_path in file_paths {
-        let relative_path = crate::utils::validate_and_normalize_path_git(repo_path, file_path)?;
-        index
-            .add_path(&relative_path)
-            .map_err(|e| GitError::from(e).with_operation("add_path"))?;
-    }
-
-    index
-        .write()
-        .map_err(|e| GitError::from(e).with_operation("write_index"))?;
+    // Planned in full before anything is staged: see plan_staging.
+    let plan = plan_staging(&repo, repo_path, file_paths)?;
+    apply_staging(&repo, &plan)?;
 
     let result = commit_impl(&repo, message, user_name, user_email)?;
 

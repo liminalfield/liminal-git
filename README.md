@@ -74,6 +74,52 @@ for (const commit of history.commits) {
 TypeScript declarations ship with the package and are generated from the Rust
 source, so they cannot drift from it — CI fails if they do.
 
+## Committing a decision
+
+`commitFile` stages one path and commits. `commitFiles` takes a list and
+writes **one** commit for the whole set:
+
+```js
+await git.commitFiles(
+  repo,
+  ['notes/chapter-one.md', 'notes/index.md'],
+  'Rename chapter one and update the index',
+  'Ada Lovelace',
+  'ada@example.com',
+);
+```
+
+The set lands or nothing does. That is the point rather than a nicety: a
+change spanning several files is one decision, and as separate commits the
+history stops recording decisions, reverting it stops being a single
+operation, and between the commits HEAD holds half a change that any reader
+pinned to it can observe.
+
+**The state on disk is what gets staged**, for both operations and for every
+path in the list:
+
+| On disk | Tracked | Result |
+|---|---|---|
+| yes | either | its current content is staged |
+| no | yes | staged as a deletion |
+| no | no | `FILE_NOT_FOUND` |
+
+So deleting one file and editing another is one commit, listing both paths.
+
+Every path is validated and classified before the index is touched, so a
+failure on any path in the list leaves the index and HEAD exactly as they
+were: there is no partially staged set to clean up. Repeated paths are
+de-duplicated, including the absolute and repository-relative spellings of the
+same path.
+
+`NOTHING_TO_COMMIT` is evaluated over the resulting tree, which makes it a
+whole-set check rather than a per-path one. An empty list is
+`INVALID_ARGUMENT`, and so is a list longer than **1000 paths**.
+
+Neither operation takes options for amending or signing, and neither accepts a
+glob or a "commit everything dirty" mode. The argument stays an explicit list
+so that the caller states exactly what the commit contains.
+
 ## Concurrency
 
 Mutating operations take a per-repository lock with two layers: an in-process
@@ -292,7 +338,7 @@ npm run build                        # the Node addon (napi build --release)
 cargo test --no-default-features
 ```
 
-286 tests across ten targets. `--no-default-features` is required rather than
+293 tests across ten targets. `--no-default-features` is required rather than
 preferred: with the `napi-binding` feature on, a test binary fails at the
 **linker**, because napi resolves its symbols from the host Node process at run
 time and those symbols do not exist in a test executable. Disabling the feature

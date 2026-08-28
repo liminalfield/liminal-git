@@ -563,4 +563,248 @@ mod file_ops_tests {
         let result = restore_file_from_commit_impl(&path, "nonexistent.txt", commit_hash);
         assert!(result.is_err());
     }
+
+    // ===== Staging deletions, and the all-or-nothing guarantee =====
+    //
+    // commitFile and commitFiles both stage what is on disk. A tracked path
+    // that is no longer on disk is a deletion, which is the state on disk
+    // just as much as an edit is. Before this, both refused such a path with
+    // an opaque add_path failure, so "delete one file and update another"
+    // could not be one commit through either operation.
+
+    /// A repository holding two committed files, returned with its path.
+    fn create_repo_with_two_files() -> (TempDir, String) {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().to_string_lossy().to_string();
+        init_repository_impl(&path).unwrap();
+
+        let a = temp_dir.path().join("a.txt");
+        let b = temp_dir.path().join("b.txt");
+        fs::write(&a, "a one\n").unwrap();
+        fs::write(&b, "b one\n").unwrap();
+        commit_files_impl(
+            &path,
+            &[
+                a.to_string_lossy().to_string(),
+                b.to_string_lossy().to_string(),
+            ],
+            "Initial",
+            "Test User",
+            "test@example.com",
+        )
+        .unwrap();
+
+        (temp_dir, path)
+    }
+
+    fn head_tree_has(repo_path: &str, rel: &str) -> bool {
+        let repo = Repository::open(repo_path).unwrap();
+        let tree = repo
+            .head()
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .tree()
+            .unwrap();
+        tree.get_path(std::path::Path::new(rel)).is_ok()
+    }
+
+    fn head_hash(repo_path: &str) -> String {
+        let repo = Repository::open(repo_path).unwrap();
+        repo.head()
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .id()
+            .to_string()
+    }
+
+    fn index_blob_of(repo_path: &str, rel: &str) -> Option<String> {
+        let repo = Repository::open(repo_path).unwrap();
+        let index = repo.index().unwrap();
+        index
+            .get_path(std::path::Path::new(rel), 0)
+            .map(|e| e.id.to_string())
+    }
+
+    #[test]
+    fn test_commit_file_stages_a_deletion_for_a_tracked_path_gone_from_disk() {
+        let (temp_dir, path) = create_repo_with_two_files();
+        let a = temp_dir.path().join("a.txt");
+
+        fs::remove_file(&a).unwrap();
+        commit_file_impl(
+            &path,
+            &a.to_string_lossy(),
+            "Delete a",
+            "Test User",
+            "test@example.com",
+        )
+        .unwrap();
+
+        assert!(!head_tree_has(&path, "a.txt"), "a.txt should be deleted");
+        assert!(head_tree_has(&path, "b.txt"), "b.txt is untouched");
+    }
+
+    #[test]
+    fn test_commit_file_rejects_a_path_neither_on_disk_nor_tracked() {
+        let (temp_dir, path) = create_repo_with_two_files();
+        let ghost = temp_dir.path().join("ghost.txt");
+
+        let result = commit_file_impl(
+            &path,
+            &ghost.to_string_lossy(),
+            "Commit a ghost",
+            "Test User",
+            "test@example.com",
+        );
+
+        assert!(
+            matches!(result, Err(GitError::FileNotFound { .. })),
+            "expected FILE_NOT_FOUND, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_commit_files_stages_a_deletion_alongside_an_edit_in_one_commit() {
+        let (temp_dir, path) = create_repo_with_two_files();
+        let a = temp_dir.path().join("a.txt");
+        let b = temp_dir.path().join("b.txt");
+
+        // The motivating shape: one decision that removes one file and
+        // changes another has to be one commit, or the history stops
+        // recording decisions.
+        fs::remove_file(&a).unwrap();
+        fs::write(&b, "b two\n").unwrap();
+
+        let before = head_hash(&path);
+        commit_files_impl(
+            &path,
+            &[
+                a.to_string_lossy().to_string(),
+                b.to_string_lossy().to_string(),
+            ],
+            "Drop a, change b",
+            "Test User",
+            "test@example.com",
+        )
+        .unwrap();
+
+        let repo = Repository::open(&path).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        assert_eq!(head.parent_count(), 1);
+        assert_eq!(
+            head.parent(0).unwrap().id().to_string(),
+            before,
+            "exactly one commit, so the decision reverts as one operation"
+        );
+        assert!(!head_tree_has(&path, "a.txt"));
+        assert!(head_tree_has(&path, "b.txt"));
+    }
+
+    #[test]
+    fn test_commit_files_rejects_a_path_neither_on_disk_nor_tracked() {
+        let (temp_dir, path) = create_repo_with_two_files();
+        let ghost = temp_dir.path().join("ghost.txt");
+
+        let result = commit_files_impl(
+            &path,
+            &[ghost.to_string_lossy().to_string()],
+            "Commit a ghost",
+            "Test User",
+            "test@example.com",
+        );
+
+        assert!(
+            matches!(result, Err(GitError::FileNotFound { .. })),
+            "expected FILE_NOT_FOUND, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_commit_files_leaves_index_and_head_untouched_when_a_later_path_fails() {
+        let (temp_dir, path) = create_repo_with_two_files();
+        let a = temp_dir.path().join("a.txt");
+        let ghost = temp_dir.path().join("ghost.txt");
+
+        fs::write(&a, "a two\n").unwrap();
+        let head_before = head_hash(&path);
+        let index_before = index_blob_of(&path, "a.txt").unwrap();
+
+        // The failing path is last, so a loop that validated as it staged
+        // would already have written a.txt's new content into the index.
+        let result = commit_files_impl(
+            &path,
+            &[
+                a.to_string_lossy().to_string(),
+                ghost.to_string_lossy().to_string(),
+            ],
+            "Should not land",
+            "Test User",
+            "test@example.com",
+        );
+
+        assert!(
+            matches!(result, Err(GitError::FileNotFound { .. })),
+            "expected FILE_NOT_FOUND, got {result:?}"
+        );
+        assert_eq!(head_hash(&path), head_before, "HEAD must not move");
+        assert_eq!(
+            index_blob_of(&path, "a.txt").unwrap(),
+            index_before,
+            "the index must not hold a partially staged set"
+        );
+    }
+
+    #[test]
+    fn test_commit_files_deduplicates_repeated_paths() {
+        let (temp_dir, path) = create_repo_with_two_files();
+        let a = temp_dir.path().join("a.txt");
+
+        fs::write(&a, "a two\n").unwrap();
+        let listed = a.to_string_lossy().to_string();
+
+        commit_files_impl(
+            &path,
+            &[listed.clone(), listed.clone(), listed],
+            "Same path three times",
+            "Test User",
+            "test@example.com",
+        )
+        .unwrap();
+
+        let repo = Repository::open(&path).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        let blob = head
+            .tree()
+            .unwrap()
+            .get_path(std::path::Path::new("a.txt"))
+            .unwrap()
+            .id();
+        assert_eq!(
+            String::from_utf8(repo.find_blob(blob).unwrap().content().to_vec()).unwrap(),
+            "a two\n"
+        );
+    }
+
+    #[test]
+    fn test_commit_files_treats_an_absolute_and_relative_form_as_one_path() {
+        let (temp_dir, path) = create_repo_with_two_files();
+        let a = temp_dir.path().join("a.txt");
+
+        fs::write(&a, "a two\n").unwrap();
+
+        // De-duplication happens after paths are normalised to
+        // repository-relative form, so the two spellings of one path collapse.
+        commit_files_impl(
+            &path,
+            &[a.to_string_lossy().to_string(), "a.txt".to_string()],
+            "One path, two spellings",
+            "Test User",
+            "test@example.com",
+        )
+        .unwrap();
+
+        assert!(head_tree_has(&path, "a.txt"));
+    }
 }

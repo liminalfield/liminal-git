@@ -77,6 +77,12 @@ impl GitService {
         utils::run_blocking(structured, move || get_status_impl(&repo_path)).await
     }
 
+    /// Stage one path and write a commit.
+    ///
+    /// **The state on disk is what gets staged.** A path present on disk
+    /// stages its content; a tracked path that is no longer on disk stages as
+    /// a deletion; a path that is neither on disk nor tracked fails with
+    /// `FILE_NOT_FOUND`.
     #[napi]
     pub async fn commit_file(
         &self,
@@ -98,6 +104,24 @@ impl GitService {
         .await
     }
 
+    /// Stage the listed paths and write **one** commit.
+    ///
+    /// The whole set lands or nothing does. A change spanning several files is
+    /// one decision, and splitting it across commits means the history stops
+    /// recording decisions, reverting it stops being a single operation, and
+    /// between the commits HEAD holds half a change that a reader can observe.
+    ///
+    /// Each path follows the same rule as `commitFile`: the state on disk is
+    /// what gets staged, so a deletion and an edit commit together. Every path
+    /// is validated and classified before the index is touched, so a failure
+    /// on any path leaves the index and HEAD exactly as they were.
+    ///
+    /// Repeated paths are de-duplicated, including the absolute and
+    /// repository-relative spellings of the same path.
+    ///
+    /// `NOTHING_TO_COMMIT` is evaluated over the resulting tree, making it a
+    /// whole-set check rather than a per-path one. An empty list is
+    /// `INVALID_ARGUMENT`, and so is a list longer than 1000 paths.
     #[napi]
     pub async fn commit_files(
         &self,
