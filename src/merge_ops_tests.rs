@@ -36,6 +36,17 @@ fn setup_test_repo() -> (TempDir, PathBuf) {
         .set_str("user.email", "test@example.com")
         .expect("Failed to set user.email");
 
+    // Pinned because these tests assert file *contents* after a checkout, and
+    // the merge operations write the working tree. Git for Windows ships with
+    // core.autocrlf=true globally, which rewrites LF to CRLF on the way out,
+    // so "theirs\n" comes back as "theirs\r\n" and three assertions fail on
+    // Windows alone. That is git doing exactly what it was configured to do;
+    // the tests are about merge semantics, not line-ending translation, so the
+    // repository states what it needs rather than inheriting the machine's.
+    config
+        .set_bool("core.autocrlf", false)
+        .expect("Failed to set core.autocrlf");
+
     (temp_dir, repo_path)
 }
 
