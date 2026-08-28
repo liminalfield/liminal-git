@@ -1234,7 +1234,13 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(target_env = "msvc"), serial_test::serial)]
+    // Serial on every platform. This test swaps GIT_CONFIG_GLOBAL, HOME and
+    // XDG_CONFIG_HOME, which are process-wide, and repository_ops' global-config
+    // tests read the same variables. Excluding msvc left it running
+    // unserialised on the one platform where the race actually showed, as
+    // `left: None, right: Some("global_value")` in a *different* test. e8e7ddf
+    // made the same fix for the repository_ops pair and missed this one.
+    #[serial_test::serial]
     fn test_commit_amend_missing_config() {
         use std::env;
 
