@@ -38,7 +38,7 @@ export declare class GitService {
    * For duplicating an existing project: copy the content into place first,
    * then initialise git over it.
    */
-  initRepositoryInExistingDir(path: string): Promise<boolean>
+  initRepositoryInExistingDir(path: string, defaultBranch?: string | undefined | null): Promise<boolean>
   /**
    * Remove all remotes from a repository.
    * Used when duplicating a repository with its history, so the copy cannot
@@ -110,6 +110,47 @@ export declare class GitService {
   checkoutBranch(repoPath: string, branchName: string): Promise<BranchInfo>
   /** Delete a branch (with safety checks) */
   deleteBranch(repoPath: string, branchName: string, force?: boolean | undefined | null): Promise<boolean>
+  /**
+   * What merging `branch` into HEAD would do — without doing it. Does not
+   * touch the working tree, the index, or any ref.
+   */
+  mergeAnalysis(repoPath: string, branch: string): Promise<MergeAnalysis>
+  /**
+   * Move the current branch forward to `branch` when that is a strict
+   * fast-forward. Refuses with `NOT_FAST_FORWARD` when HEAD is already
+   * up to date with `branch`, or when the two have diverged — either case
+   * needs a real merge, which this does not perform.
+   */
+  fastForward(repoPath: string, branch: string): Promise<FastForwardResult>
+  /**
+   * Merge `branch` into HEAD, entirely in memory.
+   *
+   * Never leaves an in-progress merge behind: a `"conflicted"` outcome
+   * reports the three sides of each contested path and writes nothing at
+   * all — no `MERGE_HEAD`, no conflict markers, no conflicted index — so a
+   * caller who abandons the resolution is left with the repository it
+   * started with. Refuses with `UNSTAGED_CHANGES_WOULD_BE_LOST` when a file
+   * the merge would change has unsaved edits on disk.
+   */
+  merge(repoPath: string, branch: string, userName?: string | undefined | null, userEmail?: string | undefined | null): Promise<MergeOutcome>
+  /**
+   * Read a blob by oid as text — one side of a contested file.
+   *
+   * Fails with `BLOB_NOT_UTF8` rather than converting lossily, because
+   * silently replacing a byte with U+FFFD corrupts a manuscript in a way
+   * nobody notices until much later.
+   */
+  readBlob(repoPath: string, oid: string): Promise<string>
+  /**
+   * Commit a merge the user resolved by hand.
+   *
+   * Takes only the resolved pages: the merge is re-run in memory and the
+   * resolutions laid over it, so the caller never reproduces libgit2's
+   * merge of the pages that merged cleanly. Refuses with `HEAD_MOVED` when
+   * HEAD is no longer `expected_head_hash`, and with `INVALID_ARGUMENT`
+   * when the resolved set does not match the conflict set exactly.
+   */
+  commitMerge(repoPath: string, theirRef: string, expectedHeadHash: string, resolvedFiles: Array<ResolvedFile>, message: string, userName?: string | undefined | null, userEmail?: string | undefined | null): Promise<CommitInfo>
   /** List all tags in the repository */
   listTags(repoPath: string): Promise<Array<TagInfo>>
   /** Create a new tag */
@@ -197,6 +238,23 @@ export interface CommitInfo {
   deletions: number
 }
 
+/**
+ * One path libgit2 could not merge on its own, with the three blobs needed
+ * to show the writer what happened. Each side is `None` when that side has
+ * no version of the page: no ancestor means the page is new on both sides,
+ * and a missing `ours`/`theirs` means that side deleted it.
+ */
+export interface ConflictedFile {
+  /** Repo-relative path of the contested file. */
+  path: string
+  /** Blob oid of the common ancestor's version, if there is one. */
+  ancestorOid?: string
+  /** Blob oid of HEAD's version, if our side still has the file. */
+  oursOid?: string
+  /** Blob oid of the merged branch's version, if their side still has it. */
+  theirsOid?: string
+}
+
 /** Options for creating a new branch */
 export interface CreateBranchOptions {
   /** Name for the new branch */
@@ -249,6 +307,16 @@ export interface DiffLine {
   newLineNumber?: number
 }
 
+/** Result of moving the current branch forward to `branch` via `fastForward`. */
+export interface FastForwardResult {
+  /** Name of the branch that was moved (the branch HEAD was on). */
+  branch: string
+  /** Commit the branch pointed to before the fast-forward. */
+  previousCommitHash: string
+  /** Commit the branch points to now — the same commit `branch` pointed to. */
+  commitHash: string
+}
+
 export interface FetchResult {
   remote: string
   /** Refs whose remote-tracking branch moved, as "refs/heads/main". */
@@ -296,6 +364,53 @@ export interface GitStatus {
   renamedFiles: Array<RenamedStatus>
   isClean: boolean
   currentBranch?: string
+}
+
+/**
+ * What merging `branch` into HEAD would do, without doing it.
+ *
+ * `ahead`/`behind` are always reported relative to `branch`, regardless of
+ * `kind` — even when `kind` is `"up-to-date"` HEAD may be ahead by any
+ * number of commits; `"up-to-date"` only means `behind` is zero.
+ */
+export interface MergeAnalysis {
+  /**
+   * `"up-to-date"` — HEAD already contains everything `branch` has.
+   * `"fast-forward"` — HEAD is an ancestor of `branch`; moving the ref is
+   * sufficient, no merge commit is needed.
+   * `"normal"` — HEAD and `branch` have diverged; a real merge is required.
+   */
+  kind: string
+  /** Commits HEAD has that `branch` does not. */
+  ahead: number
+  /** Commits `branch` has that HEAD does not. */
+  behind: number
+}
+
+/**
+ * What `merge` did. Exactly one of the four kinds, and the library never
+ * leaves an in-progress merge behind for any of them: a `"conflicted"`
+ * outcome is a *report*, not a state — nothing was written, there is no
+ * `MERGE_HEAD`, and the caller is free to walk away.
+ */
+export interface MergeOutcome {
+  /**
+   * `"merged"` — a real merge commit was created.
+   * `"fast-forwarded"` — the branch ref moved; no merge commit exists.
+   * `"up-to-date"` — HEAD already contained everything; nothing was written.
+   * `"conflicted"` — nothing was written; see `conflicts`.
+   */
+  kind: string
+  /**
+   * The commit HEAD points at after the operation. `None` — and only
+   * `None` — when `kind` is `"conflicted"`.
+   */
+  commitHash?: string
+  /**
+   * The contested paths, sorted by path. Empty unless `kind` is
+   * `"conflicted"`.
+   */
+  conflicts: Array<ConflictedFile>
 }
 
 export interface PushResult {
@@ -362,6 +477,20 @@ export interface RepositoryInfo {
   commitCount: number
   hasUncommittedChanges: boolean
   remoteUrls: Array<string>
+}
+
+/** A writer's decision about one contested page, handed back to `commitMerge`. */
+export interface ResolvedFile {
+  /**
+   * Repo-relative path. Must be one of the paths `merge` reported as
+   * conflicted.
+   */
+  path: string
+  /**
+   * The resolved text of the page. `None` resolves the conflict as a
+   * deletion — the page is not in the merge commit's tree.
+   */
+  content?: string
 }
 
 /** Information about a git tag */

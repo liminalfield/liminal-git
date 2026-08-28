@@ -5,11 +5,11 @@ Git operations for Node.js, built on [libgit2](https://libgit2.org/) via
 the library talks to the repository directly and returns typed data.
 
 It was extracted from [Nocturne Writer](https://github.com/liminalfield/nocturne-writer),
-where it provides version control for a writing application, so its 45
+where it provides version control for a writing application, so its 57
 operations lean towards the things a content tool needs: file history, a file's
 contents at a commit, restoring a deleted file, structured diffs. Branch and tag
-management are complete; there are deliberately no network operations (see
-[Scope](#scope)).
+management are complete, remotes and merging are supported, and what is left out
+is left out deliberately (see [Scope](#scope)).
 
 ## Requirements
 
@@ -27,7 +27,7 @@ release mode. npm does not cache the result between installs.
 ## Install
 
 ```bash
-npm install github:liminalfield/liminal-git#v1.0.0
+npm install github:liminalfield/liminal-git#v1.2.0
 ```
 
 Not published to npm. Pinning a tag or a commit is recommended over a branch, so
@@ -35,7 +35,7 @@ that a rebuild cannot silently change what you depend on.
 
 ## Usage
 
-Every operation except the constructor is asynchronous — 45 of them return a
+Every operation except the constructor is asynchronous — 57 of them return a
 Promise. Paths are absolute for the repository and repository-relative for files
 within it.
 
@@ -94,16 +94,33 @@ a commit run from a terminal knows nothing about `.git/liminal-git.lock`.
 Remote operations are supported: `listRemotes`, `addRemote`, `removeRemote`,
 `setRemoteUrl`, `fetch`, `push` and `getUpstreamStatus`.
 
-`mergeAnalysis` and `fastForward` are supported: the first reports, without
-changing anything, whether merging a branch into HEAD would be a no-op, a
-fast-forward, or a real merge; the second performs the fast-forward case,
-moving the current branch's ref, its working tree and its index together.
+Merging is supported, and it is performed entirely in memory. `mergeAnalysis`
+reports, without changing anything, whether merging a branch into HEAD would be
+a no-op, a fast-forward, or a real merge. `fastForward` performs the
+fast-forward case, moving the current branch's ref, its working tree and its
+index together. `merge` performs the general case: a real three-way merge that
+either writes a two-parent commit or reports the three sides of every contested
+path and writes nothing at all.
 
-**Not** supported, deliberately: `clone`, and a full three-way `merge` (so
-`pull` is only native when the local side is simply behind — a caller composes
-`fetch` → `mergeAnalysis` → `fastForward` for that case). A real merge is not
-a missing binding — it is a design problem about conflict resolution, and doing
-it badly is worse than not doing it.
+The rule the merge operations are built around is that **a merge never leaves an
+in-progress state on disk**. There is no `MERGE_HEAD`, no conflicted on-disk
+index, no file rewritten with conflict markers, and no detached HEAD at any
+point. A caller who walks away from a conflict leaves the repository
+byte-for-byte as it was, so an abandoned resolution costs nothing. `pull` is
+therefore composable in full: `fetch` → `merge`.
+
+A conflict is detected and reported, never resolved. `readBlob` fetches either
+side of a contested path by oid, so the host application can show the writer
+what it is choosing between, and `commitMerge` takes back only the paths the
+writer actually decided about. The merge is re-run in memory and those decisions
+are laid over its result, so a caller never has to reproduce libgit2's merge of
+the paths that merged cleanly and cannot get it subtly wrong. If the repository
+moved while the writer was deciding, `commitMerge` refuses with `HEAD_MOVED`
+rather than committing against a stale base.
+
+**Not** supported, deliberately: `clone`, and any automatic conflict resolution
+strategy. Which of two versions of a writer's work survives is not a decision
+this library will make on their behalf.
 
 Credentials are passed **per operation** rather than held by the service. This
 library has no business owning secrets; the host application knows where they
@@ -164,8 +181,9 @@ JSON:
 The codes are stable:
 
 - **Repository** — `REPOSITORY_NOT_FOUND`, `REPOSITORY_CORRUPTED`, `INVALID_REPOSITORY`, `REPOSITORY_LOCKED`
-- **Files** — `FILE_NOT_FOUND`, `FILE_NOT_IN_REPOSITORY`, `PATH_TRAVERSAL`
+- **Files** — `FILE_NOT_FOUND`, `FILE_NOT_IN_REPOSITORY`, `BLOB_NOT_UTF8`, `PATH_TRAVERSAL`
 - **Operations** — `NOTHING_TO_COMMIT`, `MERGE_CONFLICT`, `UNCOMMITTED_CHANGES`, `UNSTAGED_CHANGES_WOULD_BE_LOST`, `DETACHED_HEAD`, `CONFIG_MISSING`
+- **Merge resolution** — `HEAD_MOVED`, `UNRESOLVED_CONFLICTS`, `MERGE_NO_LONGER_CONFLICTS`
 - **Branches** — `BRANCH_NOT_FOUND`, `BRANCH_ALREADY_EXISTS`, `CANNOT_DELETE_CURRENT_BRANCH`, `BRANCH_NOT_MERGED`, `NOT_FAST_FORWARD`
 - **Tags** — `TAG_NOT_FOUND`, `TAG_ALREADY_EXISTS`
 - **Validation** — `INVALID_PATH`, `INVALID_ARGUMENT`, `INVALID_COMMIT_HASH`, `INVALID_BRANCH_NAME`, `INVALID_TAG_NAME`
@@ -227,7 +245,7 @@ npm run build                        # the Node addon (napi build --release)
 cargo test --no-default-features
 ```
 
-228 tests across nine targets. `--no-default-features` is required rather than
+275 tests across ten targets. `--no-default-features` is required rather than
 preferred: with the `napi-binding` feature on, a test binary fails at the
 **linker**, because napi resolves its symbols from the host Node process at run
 time and those symbols do not exist in a test executable. Disabling the feature
@@ -287,6 +305,8 @@ src/
 ├── file_ops.rs         stage, commit, move, restore
 ├── history_ops.rs      history, diffs, file-at-commit
 ├── branch_ops.rs       branch management
+├── merge_ops.rs        in-memory merge, conflict reporting, resolution
+├── remote_ops.rs       remotes, fetch, push, upstream status
 └── tag_ops.rs          tag management
 ```
 
