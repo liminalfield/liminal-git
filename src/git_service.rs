@@ -14,6 +14,7 @@ use crate::types::{
 };
 use crate::types::{
     CommitDiff, CommitHistory, CommitInfo, DeletedFileEntry, FileAtCommit, FileDiff, TreeEntry,
+    TreeFilterOptions,
 };
 use crate::types::{FetchResult, PushResult, RemoteCredentials, RemoteInfo, UpstreamStatus};
 use crate::types::{GitConfig, RepositoryConfig, RepositoryHealth, RepositoryInfo};
@@ -686,22 +687,25 @@ impl GitService {
     /// `resolveRef`, which is what the snapshot pattern does anyway.
     ///
     /// `pathPrefix` is a literal string prefix on the repository-relative
-    /// path rather than a directory match, so `"effort"` also matches a file
-    /// named `effortless.yaml`; pass the trailing slash to filter to a
-    /// directory. A prefix matching nothing returns an empty array, not an
-    /// error.
+    /// path by default, so `"effort"` also matches a file named
+    /// `effortless.yaml`. Pass `{ directory: true }` to match only what is
+    /// under the named directory; it normalises a missing trailing slash, so
+    /// `"effort"` and `"effort/"` mean the same thing under it. A prefix
+    /// matching nothing returns an empty array, not an error.
     #[napi]
     pub async fn get_tree_at_commit(
         &self,
         repo_path: String,
         commit_hash: String,
         path_prefix: Option<String>,
+        options: Option<TreeFilterOptions>,
     ) -> Result<Vec<TreeEntry>> {
         validate_repo_path(&repo_path)?;
         validate_commit_hash(&commit_hash)?;
+        let directory = options.and_then(|o| o.directory).unwrap_or(false);
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
-            get_tree_at_commit_impl(&repo_path, &commit_hash, path_prefix.as_deref())
+            get_tree_at_commit_impl(&repo_path, &commit_hash, path_prefix.as_deref(), directory)
         })
         .await
     }

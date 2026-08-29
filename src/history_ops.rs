@@ -416,21 +416,29 @@ pub fn get_file_at_commit_impl(
 /// same object.
 ///
 /// `path_prefix` is a **literal string prefix** on the repository-relative
-/// path, not a directory match. `Some("src")` therefore matches `src/main.rs`
-/// and would also match a sibling file named `srcfile.txt`; a caller
-/// filtering to a directory passes the trailing slash. A prefix matching
-/// nothing yields an empty listing rather than an error, because "no files
-/// under this directory at this commit" is an answer and not a failure.
+/// path by default, not a directory match. `Some("src")` therefore matches
+/// `src/main.rs` and would also match a sibling file named `srcfile.txt`.
+///
+/// `directory` opts out of that: the prefix names a directory, and only what
+/// lies under it matches. It normalises a missing trailing slash, so
+/// `Some("src")` and `Some("src/")` mean the same thing — requiring both the
+/// flag and the slash would leave the same trap one level up. With no prefix
+/// there is nothing to qualify, so `directory` changes nothing.
+///
+/// A prefix matching nothing yields an empty listing rather than an error,
+/// because "no files under this directory at this commit" is an answer and
+/// not a failure. That holds either way.
 ///
 /// Read-only. Takes no lock.
 pub fn get_tree_at_commit_impl(
     repo_path: &str,
     commit_hash: &str,
     path_prefix: Option<&str>,
+    directory: bool,
 ) -> Result<Vec<TreeEntry>, GitError> {
     info!(
-        "get_tree_at_commit: commit={} prefix={:?}",
-        commit_hash, path_prefix
+        "get_tree_at_commit: commit={} prefix={:?} directory={}",
+        commit_hash, path_prefix, directory
     );
     let start = std::time::Instant::now();
 
@@ -447,7 +455,15 @@ pub fn get_tree_at_commit_impl(
         .tree()
         .map_err(|e| GitError::from(e).with_operation("get_tree"))?;
 
-    let prefix = path_prefix.unwrap_or("");
+    // Under `directory` the prefix names a directory, so it is compared with
+    // exactly one trailing slash however the caller spelled it. An empty
+    // prefix is left alone: there is no directory to name, and "/" would match
+    // nothing.
+    let prefix = match (path_prefix, directory) {
+        (None, _) | (Some(""), _) => String::new(),
+        (Some(p), true) => format!("{}/", p.trim_end_matches('/')),
+        (Some(p), false) => p.to_string(),
+    };
     let mut entries: Vec<TreeEntry> = Vec::new();
 
     // A blob lookup inside the callback can fail, and the callback has no way
@@ -477,7 +493,7 @@ pub fn get_tree_at_commit_impl(
             _ => "file",
         };
 
-        if !path.starts_with(prefix) {
+        if !path.starts_with(&prefix) {
             return git2::TreeWalkResult::Ok;
         }
 

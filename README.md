@@ -244,11 +244,22 @@ The optional third argument filters by path:
 await git.getTreeAtCommit(repo, headCommit, 'effort/');
 ```
 
-It is a **literal string prefix** on the repository-relative path rather than a
-directory match, so `'effort'` without the slash would also match a file named
-`effortless.yaml`. Pass the trailing slash to mean a directory. A prefix that
-matches nothing returns an empty array, which is an answer rather than a
-failure.
+By default it is a **literal string prefix** on the repository-relative path
+rather than a directory match, so `'effort'` without the slash also matches a
+file named `effortless.yaml`. The fourth argument makes it a directory:
+
+```js
+await git.getTreeAtCommit(repo, headCommit, 'effort', { directory: true });
+```
+
+That matches `effort/plan.yaml` and `effort/nested/deep.yaml`, and not
+`effortless.yaml`. It normalises a missing trailing slash, so `'effort'` and
+`'effort/'` mean the same thing under it — needing both the option and the slash
+would leave the same trap one level up.
+
+It is opt-in rather than the default because switching would silently change
+results for anyone relying on prefix matching. A prefix that matches nothing
+returns an empty array either way, which is an answer rather than a failure.
 
 Both calls take a **raw commit hash and nothing else** — not a branch, not a
 tag, not `"HEAD"`. That is deliberate rather than a missing feature: the single
@@ -507,7 +518,7 @@ npm run build                        # the Node addon (napi build --release)
 cargo test --no-default-features
 ```
 
-324 tests across ten targets. `--no-default-features` is required rather than
+330 tests across ten targets. `--no-default-features` is required rather than
 preferred: with the `napi-binding` feature on, a test binary fails at the
 **linker**, because napi resolves its symbols from the host Node process at run
 time and those symbols do not exist in a test executable. Disabling the feature

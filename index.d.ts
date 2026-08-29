@@ -189,12 +189,13 @@ export declare class GitService {
    * `resolveRef`, which is what the snapshot pattern does anyway.
    *
    * `pathPrefix` is a literal string prefix on the repository-relative
-   * path rather than a directory match, so `"effort"` also matches a file
-   * named `effortless.yaml`; pass the trailing slash to filter to a
-   * directory. A prefix matching nothing returns an empty array, not an
-   * error.
+   * path by default, so `"effort"` also matches a file named
+   * `effortless.yaml`. Pass `{ directory: true }` to match only what is
+   * under the named directory; it normalises a missing trailing slash, so
+   * `"effort"` and `"effort/"` mean the same thing under it. A prefix
+   * matching nothing returns an empty array, not an error.
    */
-  getTreeAtCommit(repoPath: string, commitHash: string, pathPrefix?: string | undefined | null): Promise<Array<TreeEntry>>
+  getTreeAtCommit(repoPath: string, commitHash: string, pathPrefix?: string | undefined | null, options?: TreeFilterOptions | undefined | null): Promise<Array<TreeEntry>>
   /**
    * Restore one path to the version held in `commitHash`.
    *
@@ -702,6 +703,24 @@ export interface TreeEntry {
    * for it.
    */
   blobHash: string
+}
+
+/**
+ * How `getTreeAtCommit` interprets `pathPrefix`.
+ *
+ * An options object rather than a bare boolean so that the next thing this
+ * operation needs does not change the arity of a published signature again.
+ */
+export interface TreeFilterOptions {
+  /**
+   * Treat `pathPrefix` as a directory rather than a literal string prefix.
+   *
+   * Off by default, because turning it on by default would silently change
+   * results for anyone relying on prefix matching. On, `"effort"` matches
+   * `effort/plan.yaml` but not `effortless.yaml`, and a missing trailing
+   * slash is normalised rather than being a second thing to remember.
+   */
+  directory?: boolean
 }
 
 /**

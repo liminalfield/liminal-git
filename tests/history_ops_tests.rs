@@ -332,7 +332,7 @@ mod history_ops_tests {
     fn test_get_tree_at_commit_lists_every_path_recursively_and_sorted() {
         let (_temp_dir, path, first) = create_test_repo_with_tree();
 
-        let entries = get_tree_at_commit_impl(&path, &first, None).unwrap();
+        let entries = get_tree_at_commit_impl(&path, &first, None, false).unwrap();
 
         let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
         assert_eq!(
@@ -351,7 +351,7 @@ mod history_ops_tests {
     fn test_get_tree_at_commit_omits_directories_as_entries() {
         let (_temp_dir, path, first) = create_test_repo_with_tree();
 
-        let entries = get_tree_at_commit_impl(&path, &first, None).unwrap();
+        let entries = get_tree_at_commit_impl(&path, &first, None, false).unwrap();
 
         // "src" and "src/util" are directories. They are implied by the paths
         // of the files inside them and must never appear as entries of their
@@ -369,7 +369,7 @@ mod history_ops_tests {
     fn test_get_tree_at_commit_reports_kind_size_and_blob_hash() {
         let (_temp_dir, path, first) = create_test_repo_with_tree();
 
-        let entries = get_tree_at_commit_impl(&path, &first, None).unwrap();
+        let entries = get_tree_at_commit_impl(&path, &first, None, false).unwrap();
         let readme = entries.iter().find(|e| e.path == "README.md").unwrap();
 
         assert_eq!(readme.kind, "file");
@@ -386,7 +386,7 @@ mod history_ops_tests {
     fn test_get_tree_at_commit_reads_the_named_commit_not_head() {
         let (_temp_dir, path, first) = create_test_repo_with_tree();
 
-        let entries = get_tree_at_commit_impl(&path, &first, None).unwrap();
+        let entries = get_tree_at_commit_impl(&path, &first, None, false).unwrap();
         let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
 
         assert!(
@@ -403,7 +403,7 @@ mod history_ops_tests {
     fn test_get_tree_at_commit_filters_by_path_prefix() {
         let (_temp_dir, path, first) = create_test_repo_with_tree();
 
-        let entries = get_tree_at_commit_impl(&path, &first, Some("src/")).unwrap();
+        let entries = get_tree_at_commit_impl(&path, &first, Some("src/"), false).unwrap();
 
         let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
         assert_eq!(paths, vec!["src/main.rs", "src/util/helper.rs"]);
@@ -413,7 +413,7 @@ mod history_ops_tests {
     fn test_get_tree_at_commit_prefix_matching_nothing_is_empty_not_an_error() {
         let (_temp_dir, path, first) = create_test_repo_with_tree();
 
-        let entries = get_tree_at_commit_impl(&path, &first, Some("effort/")).unwrap();
+        let entries = get_tree_at_commit_impl(&path, &first, Some("effort/"), false).unwrap();
 
         assert!(
             entries.is_empty(),
@@ -428,7 +428,7 @@ mod history_ops_tests {
         // "src" without the trailing slash is a string prefix, so it matches
         // the files under src/ and would also match a sibling named
         // "srcfile.txt". Callers filtering to a directory pass the slash.
-        let entries = get_tree_at_commit_impl(&path, &first, Some("src")).unwrap();
+        let entries = get_tree_at_commit_impl(&path, &first, Some("src"), false).unwrap();
 
         let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
         assert_eq!(paths, vec!["src/main.rs", "src/util/helper.rs"]);
@@ -438,8 +438,8 @@ mod history_ops_tests {
     fn test_get_tree_at_commit_empty_prefix_lists_everything() {
         let (_temp_dir, path, first) = create_test_repo_with_tree();
 
-        let all = get_tree_at_commit_impl(&path, &first, None).unwrap();
-        let empty_prefix = get_tree_at_commit_impl(&path, &first, Some("")).unwrap();
+        let all = get_tree_at_commit_impl(&path, &first, None, false).unwrap();
+        let empty_prefix = get_tree_at_commit_impl(&path, &first, Some(""), false).unwrap();
 
         assert_eq!(all.len(), empty_prefix.len());
     }
@@ -448,7 +448,7 @@ mod history_ops_tests {
     fn test_get_tree_at_commit_rejects_an_unparseable_hash() {
         let (_temp_dir, path, _first) = create_test_repo_with_tree();
 
-        let result = get_tree_at_commit_impl(&path, "not-a-hash", None);
+        let result = get_tree_at_commit_impl(&path, "not-a-hash", None, false);
 
         assert!(matches!(result, Err(GitError::InvalidCommitHash { .. })));
     }
@@ -460,7 +460,7 @@ mod history_ops_tests {
         // Well-formed and absent. get_file_at_commit surfaces this as a
         // GitOperationFailure from find_commit rather than as an invalid
         // hash, and the pair must agree.
-        let result = get_tree_at_commit_impl(&path, &"0".repeat(40), None);
+        let result = get_tree_at_commit_impl(&path, &"0".repeat(40), None, false);
 
         assert!(matches!(result, Err(GitError::GitOperationFailure { .. })));
     }
@@ -481,13 +481,132 @@ mod history_ops_tests {
         )
         .unwrap();
 
-        let entries = get_tree_at_commit_impl(&path, &commit, None).unwrap();
+        let entries = get_tree_at_commit_impl(&path, &commit, None, false).unwrap();
         let entry = entries.iter().find(|e| e.path == "latest.md").unwrap();
 
         // A symlink's blob is its target path, so the size is the target's
         // length rather than the length of whatever it points at.
         assert_eq!(entry.kind, "symlink");
         assert_eq!(entry.size, "docs/guide.md".len() as i64);
+    }
+
+    // ===== get_tree_at_commit, directory matching =====
+    //
+    // path_prefix is a literal string prefix, so "effort" also matches
+    // "effortless.yaml". `directory` opts into matching only what is under the
+    // named directory, turning a rule every caller has to remember into one
+    // the library keeps.
+
+    /// A commit holding a directory and a sibling file whose name starts with
+    /// that directory's name — the exact shape the prefix rule gets wrong.
+    fn create_test_repo_with_confusable_names() -> (TempDir, String, String) {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().to_string_lossy().to_string();
+        init_repository_impl(&path).unwrap();
+
+        let write = |rel: &str, content: &str| -> String {
+            let full = temp_dir.path().join(rel);
+            fs::create_dir_all(full.parent().unwrap()).unwrap();
+            fs::write(&full, content).unwrap();
+            full.to_string_lossy().to_string()
+        };
+
+        let files = vec![
+            write("effort/plan.yaml", "plan\n"),
+            write("effort/nested/deep.yaml", "deep\n"),
+            write("effortless.yaml", "not an effort\n"),
+            write("other.yaml", "other\n"),
+        ];
+        let commit = commit_files_impl(
+            &path,
+            &files,
+            "Confusable names",
+            "Test User",
+            "test@example.com",
+        )
+        .unwrap();
+
+        (temp_dir, path, commit)
+    }
+
+    #[test]
+    fn test_get_tree_at_commit_directory_excludes_the_confusable_sibling() {
+        let (_temp_dir, path, commit) = create_test_repo_with_confusable_names();
+
+        let entries = get_tree_at_commit_impl(&path, &commit, Some("effort"), true).unwrap();
+
+        // Without `directory`, "effort" also matches effortless.yaml — which
+        // is the trap, because an oversized result looks like a hit rather
+        // than an error.
+        let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(paths, vec!["effort/nested/deep.yaml", "effort/plan.yaml"]);
+    }
+
+    #[test]
+    fn test_get_tree_at_commit_directory_normalises_a_missing_trailing_slash() {
+        let (_temp_dir, path, commit) = create_test_repo_with_confusable_names();
+
+        // Asking for a directory means the directory whether or not the caller
+        // spelled the slash. Requiring both the option and the slash would
+        // leave the same trap in place one level up.
+        let without = get_tree_at_commit_impl(&path, &commit, Some("effort"), true).unwrap();
+        let with = get_tree_at_commit_impl(&path, &commit, Some("effort/"), true).unwrap();
+
+        let paths = |e: &[TreeEntry]| -> Vec<String> { e.iter().map(|x| x.path.clone()).collect() };
+        assert_eq!(paths(&without), paths(&with));
+    }
+
+    #[test]
+    fn test_get_tree_at_commit_without_directory_keeps_literal_prefix_matching() {
+        let (_temp_dir, path, commit) = create_test_repo_with_confusable_names();
+
+        let entries = get_tree_at_commit_impl(&path, &commit, Some("effort"), false).unwrap();
+
+        // The existing behaviour is documented and depended on, so opting out
+        // must leave it exactly as it was, confusable sibling included.
+        let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                "effort/nested/deep.yaml",
+                "effort/plan.yaml",
+                "effortless.yaml",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_get_tree_at_commit_directory_is_recursive() {
+        let (_temp_dir, path, commit) = create_test_repo_with_confusable_names();
+
+        let entries = get_tree_at_commit_impl(&path, &commit, Some("effort"), true).unwrap();
+
+        assert!(
+            entries.iter().any(|e| e.path == "effort/nested/deep.yaml"),
+            "a directory means everything under it, not just its immediate children"
+        );
+    }
+
+    #[test]
+    fn test_get_tree_at_commit_directory_that_does_not_exist_is_empty_not_an_error() {
+        let (_temp_dir, path, commit) = create_test_repo_with_confusable_names();
+
+        let entries = get_tree_at_commit_impl(&path, &commit, Some("nope"), true).unwrap();
+
+        // Same rule the prefix already follows: "no files under this directory
+        // at this commit" is an answer, not a failure.
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_get_tree_at_commit_directory_without_a_prefix_lists_everything() {
+        let (_temp_dir, path, commit) = create_test_repo_with_confusable_names();
+
+        // `directory` qualifies a prefix; with nothing to qualify it cannot
+        // mean "no files".
+        let entries = get_tree_at_commit_impl(&path, &commit, None, true).unwrap();
+
+        assert_eq!(entries.len(), 4);
     }
 
     // ===== resolve_ref =====
@@ -592,7 +711,7 @@ mod history_ops_tests {
         // straight to get_tree_at_commit.
         assert_eq!(resolved, first);
         assert!(
-            get_tree_at_commit_impl(test_repo.path_str(), &resolved, None).is_ok(),
+            get_tree_at_commit_impl(test_repo.path_str(), &resolved, None, false).is_ok(),
             "the resolved hash must name a commit"
         );
     }
@@ -721,7 +840,7 @@ mod history_ops_tests {
         // The pattern the operation exists for: resolve once, then every read
         // in the snapshot names the same object.
         let commit = resolve_ref_impl(test_repo.path_str(), "v1.0.0").unwrap();
-        let entries = get_tree_at_commit_impl(test_repo.path_str(), &commit, None).unwrap();
+        let entries = get_tree_at_commit_impl(test_repo.path_str(), &commit, None, false).unwrap();
         let file = get_file_at_commit_impl(test_repo.path_str(), "file.txt", &commit).unwrap();
 
         assert_eq!(commit, first);

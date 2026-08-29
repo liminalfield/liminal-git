@@ -274,6 +274,22 @@ pub struct CreateBranchOptions {
     pub checkout: bool,
 }
 
+/// How `getTreeAtCommit` interprets `pathPrefix`.
+///
+/// An options object rather than a bare boolean so that the next thing this
+/// operation needs does not change the arity of a published signature again.
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "napi-binding", napi(object))]
+pub struct TreeFilterOptions {
+    /// Treat `pathPrefix` as a directory rather than a literal string prefix.
+    ///
+    /// Off by default, because turning it on by default would silently change
+    /// results for anyone relying on prefix matching. On, `"effort"` matches
+    /// `effort/plan.yaml` but not `effortless.yaml`, and a missing trailing
+    /// slash is normalised rather than being a second thing to remember.
+    pub directory: Option<bool>,
+}
+
 /// Options for creating a new tag
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "napi-binding", napi(object))]
