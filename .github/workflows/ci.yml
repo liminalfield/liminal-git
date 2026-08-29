@@ -247,9 +247,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # For npm trusted publishing (OIDC). Harmless while the job still
-      # authenticates with NPM_TOKEN, and required the moment it stops — see
-      # the note above the publish steps.
+      # This is the credential. npm trusted publishing exchanges the OIDC
+      # token GitHub mints here for a short-lived registry token, scoped to
+      # this repository and this workflow's filename. There is no npm secret
+      # in this repository any more.
       id-token: write
     steps:
       - uses: actions/checkout@v7
@@ -286,22 +287,33 @@ jobs:
             exit 1
           fi
 
-      # Proves the credential works before anything is published, because
-      # publishing is not atomic across four packages and a version number can
-      # never be reused. The first attempt at 1.6.0 got half-way into `napi
-      # prepublish` before failing on ENEEDAUTH: the secret existed but held
-      # an empty string, and an empty token is indistinguishable from no token
-      # at the point npm gives up. `whoami` turns that into a failure on step
-      # four with a name printed, instead of a partial release.
-      - name: The npm credential works
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # Checked before anything is published, because publishing is not atomic
+      # across four packages and a version number can never be reused. The
+      # first 1.6.0 attempt got half-way into `napi prepublish` before failing
+      # on authentication, and moving that class of failure to the front is
+      # what this step is for.
+      #
+      # There is no `npm whoami` equivalent under trusted publishing: the OIDC
+      # exchange happens inside `npm publish` itself, so there is no session to
+      # ask about beforehand. What can be checked is that the two things it
+      # needs are here — the OIDC token endpoint, which GitHub injects only
+      # when `id-token: write` is granted, and an npm new enough to use it.
+      # 11.5.1 is where npm learned to publish over OIDC; below it the failure
+      # is an authentication error that says nothing about the real cause.
+      - name: The publishing credentials are available
         run: |
-          if [ -z "${NODE_AUTH_TOKEN}" ]; then
-            echo "::error::NPM_TOKEN is unset or empty. A secret can exist with an empty value; check the value, not just that the secret is listed."
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL}" ]; then
+            echo "::error::No OIDC token endpoint. This job needs 'permissions: id-token: write'."
             exit 1
           fi
-          echo "publishing as: $(npm whoami)"
+          echo "npm $(npm --version), OIDC endpoint present"
+          NPM_VERSION="$(npm --version)" node -e "
+            const [maj, min, patch] = process.env.NPM_VERSION.split('.').map(Number);
+            if (!(maj > 11 || (maj === 11 && (min > 5 || (min === 5 && patch >= 1))))) {
+              console.error('::error::npm ' + process.env.NPM_VERSION + ' cannot publish over OIDC; needs 11.5.1 or newer');
+              process.exit(1);
+            }
+          "
 
       - name: Collect the addons the matrix built
         uses: actions/download-artifact@v4
@@ -347,24 +359,20 @@ jobs:
           done
           exit $missing
 
-      # AUTHENTICATION, and how it is meant to change.
+      # AUTHENTICATION.
       #
-      # These steps authenticate with an NPM_TOKEN secret, which npm itself
-      # discourages for CI in favour of trusted publishing (OIDC): no
-      # long-lived credential, and provenance for free.
+      # There is none in this file, and that is the point. All four packages
+      # have GitHub Actions configured as their trusted publisher on npmjs.com,
+      # so `npm publish` exchanges the OIDC token from `id-token: write` for a
+      # short-lived registry token by itself. No secret to leak, to expire, or
+      # to paste in empty — which is exactly how the first 1.6.0 attempt died.
       #
-      # Trusted publishing cannot be used yet, and the reason is not an
-      # oversight. npm requires a package to *exist* before a trusted
-      # publisher can be configured for it, and there is no way to publish a
-      # first version over OIDC — see npm/cli#8544. All four packages here are
-      # new, so the first release has to go out on a token.
+      # The binding is to this repository AND this workflow's filename, which
+      # npm matches exactly and case-sensitively. Renaming this file breaks
+      # publishing until all four npm configurations are updated to match.
       #
-      # Afterwards the switch is small and worth making: configure GitHub
-      # Actions as the trusted publisher for each of the four packages on
-      # npmjs.com (repository, and this workflow's filename, which npm matches
-      # exactly and case-sensitively), then delete the three `env:` blocks
-      # below and revoke the token. Nothing else changes — `id-token: write`
-      # and npm 11 are already in place above for exactly that day.
+      # Provenance is attested automatically under trusted publishing, so it
+      # does not need --provenance.
       #
       # Catches a malformed npm/ layout or a bad config before any package is
       # published for real. Publishing is not atomic across the four packages,
@@ -377,17 +385,11 @@ jobs:
       # and a tool quietly creating a second empty one is not wanted.
       - name: Dry run
         run: npx napi prepublish -t npm --no-gh-release --dry-run
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       # Publishes the three platform packages, then rewrites the main
       # package's optionalDependencies to point at this exact version.
       - name: Publish the platform packages
         run: npx napi prepublish -t npm --no-gh-release
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       # Last, so the main package never exists on npm pointing at platform
       # packages that do not. --ignore-scripts again, for the same reason as
@@ -413,5 +415,3 @@ jobs:
 
       - name: Publish the main package
         run: npm publish --ignore-scripts
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

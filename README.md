@@ -39,7 +39,7 @@ Anywhere else — Intel macOS, musl, ARM Linux — and for working on the librar
 itself, install from a git tag:
 
 ```bash
-npm install github:liminalfield/liminal-git#v1.6.2
+npm install github:liminalfield/liminal-git#v1.6.3
 ```
 
 That route runs the `prepare` script, which compiles the addon on the installing
@@ -553,21 +553,19 @@ verifies each declared target has one, dry-runs, publishes the three platform
 packages, and publishes the main package last — so it never exists on npm
 pointing at platform packages that do not.
 
-It needs an `NPM_TOKEN` repository secret with publish rights — for now. npm
-discourages long-lived tokens in CI and points at trusted publishing (OIDC)
-instead, which is better: no stored credential, and provenance attestation for
-free.
+**There is no npm secret in this repository.** All four packages use npm
+trusted publishing, so `npm publish` exchanges the OIDC token from the job's
+`id-token: write` permission for a short-lived registry token. Nothing to leak,
+to expire, or to paste in empty — which is how the first attempt at 1.6.0 failed.
 
-That switch cannot be made until after the first release. npm requires a package
-to **exist** before a trusted publisher can be configured for it, and there is no
-way to publish a first version over OIDC ([npm/cli#8544][oidc-first]). All four
-packages were new, so the first release went out on a token.
+The trust is bound to this repository **and this workflow's filename**, which npm
+matches exactly and case-sensitively. Renaming `ci.yml` breaks publishing until
+all four package configurations on npmjs.com are updated to match.
 
-The switch afterwards is small: configure GitHub Actions as the trusted publisher
-for each of the four packages on npmjs.com — repository plus this workflow's
-filename, which npm matches exactly and case-sensitively — then delete the three
-`env:` blocks in the publish job and revoke the token. `id-token: write` and
-Node 24 (for npm 11, which is what speaks OIDC) are already in place for that.
+The first release could not work this way: npm requires a package to **exist**
+before a trusted publisher can be configured for it, and there is no way to
+publish a first version over OIDC ([npm/cli#8544][oidc-first]). 1.6.2 went out on
+a token, which was revoked once the packages existed and the trust was configured.
 
 [oidc-first]: https://github.com/npm/cli/issues/8544
 
