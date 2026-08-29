@@ -150,6 +150,14 @@ pub enum GitError {
     TagAlreadyExists {
         name: String,
     },
+    /// `resolveRef` could not turn `ref_name` into a commit. Either no such
+    /// ref exists, or it exists and does not peel to a commit — a tag of a
+    /// blob, or `HEAD` on a branch with no commits yet. Both are the same
+    /// answer to the caller's question, which is "which commit is this", and
+    /// neither is a null.
+    RefNotFound {
+        ref_name: String,
+    },
 
     // Validation errors
     InvalidPath {
@@ -265,6 +273,9 @@ impl fmt::Display for GitError {
             }
 
             GitError::TagNotFound { name } => write!(f, "Tag not found: {}", name),
+            GitError::RefNotFound { ref_name } => {
+                write!(f, "Could not resolve ref to a commit: {}", ref_name)
+            }
             GitError::TagAlreadyExists { name } => write!(f, "Tag already exists: {}", name),
 
             GitError::InvalidPath { path, reason } => {
@@ -421,6 +432,7 @@ impl GitError {
             GitError::NotFastForward { .. } => "NOT_FAST_FORWARD",
             GitError::TagNotFound { .. } => "TAG_NOT_FOUND",
             GitError::TagAlreadyExists { .. } => "TAG_ALREADY_EXISTS",
+            GitError::RefNotFound { .. } => "REF_NOT_FOUND",
             GitError::InvalidPath { .. } => "INVALID_PATH",
             GitError::InvalidArgument { .. } => "INVALID_ARGUMENT",
             GitError::InvalidCommitHash { .. } => "INVALID_COMMIT_HASH",
@@ -551,6 +563,9 @@ impl GitError {
             }
             GitError::TagAlreadyExists { name } => {
                 details.set("name", name.as_str())?;
+            }
+            GitError::RefNotFound { ref_name } => {
+                details.set("refName", ref_name.as_str())?;
             }
             GitError::InvalidPath { path, reason } => {
                 details.set("path", path.as_str())?;
@@ -754,6 +769,12 @@ impl GitError {
             }
             GitError::TagAlreadyExists { name } => {
                 details.insert("name".to_string(), serde_json::Value::String(name.clone()));
+            }
+            GitError::RefNotFound { ref_name } => {
+                details.insert(
+                    "refName".to_string(),
+                    serde_json::Value::String(ref_name.clone()),
+                );
             }
             GitError::InvalidPath { path, reason } => {
                 details.insert("path".to_string(), serde_json::Value::String(path.clone()));

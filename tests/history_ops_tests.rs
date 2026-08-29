@@ -489,4 +489,189 @@ mod history_ops_tests {
         assert_eq!(entry.kind, "symlink");
         assert_eq!(entry.size, "docs/guide.md".len() as i64);
     }
+
+    // ===== resolve_ref =====
+    //
+    // The at-commit pair takes a raw hash and nothing else, which leaves every
+    // consumer writing the same preamble. resolve_ref is that preamble, done
+    // once: one ref in, one commit hash out.
+
+    /// A repository with two commits, a branch pointing at the first, a
+    /// lightweight tag and an annotated tag. Returns the two commit hashes.
+    fn create_test_repo_with_refs() -> (TestRepo, String, String) {
+        let test_repo = TestRepo::new().unwrap();
+
+        let first = test_repo
+            .add_and_commit("file.txt", "first", "First commit")
+            .unwrap()
+            .to_string();
+
+        // Both tags name the first commit, so a test that resolves them
+        // cannot pass by accidentally reporting HEAD.
+        create_tag_impl(
+            test_repo.path_str(),
+            &CreateTagOptions {
+                name: "v1.0.0".to_string(),
+                target_commit: Some(first.clone()),
+                message: None,
+                force: false,
+                user_name: None,
+                user_email: None,
+            },
+        )
+        .unwrap();
+        create_tag_impl(
+            test_repo.path_str(),
+            &CreateTagOptions {
+                name: "v1.0.0-annotated".to_string(),
+                target_commit: Some(first.clone()),
+                message: Some("Release one".to_string()),
+                force: false,
+                user_name: Some("Test User".to_string()),
+                user_email: Some("test@example.com".to_string()),
+            },
+        )
+        .unwrap();
+
+        create_branch_impl(
+            test_repo.path_str(),
+            &CreateBranchOptions {
+                name: "baseline".to_string(),
+                from_commit: Some(first.clone()),
+                checkout: false,
+            },
+        )
+        .unwrap();
+
+        let second = test_repo
+            .add_and_commit("file.txt", "second", "Second commit")
+            .unwrap()
+            .to_string();
+
+        (test_repo, first, second)
+    }
+
+    #[test]
+    fn test_resolve_ref_head_resolves_to_the_current_branch_tip() {
+        let (test_repo, _first, second) = create_test_repo_with_refs();
+
+        let resolved = resolve_ref_impl(test_repo.path_str(), "HEAD").unwrap();
+
+        assert_eq!(resolved, second);
+    }
+
+    #[test]
+    fn test_resolve_ref_branch_name_resolves_to_that_branch_tip() {
+        let (test_repo, first, second) = create_test_repo_with_refs();
+
+        let resolved = resolve_ref_impl(test_repo.path_str(), "baseline").unwrap();
+
+        // The branch was left behind at the first commit, so resolving it must
+        // not report HEAD.
+        assert_eq!(resolved, first);
+        assert_ne!(resolved, second);
+    }
+
+    #[test]
+    fn test_resolve_ref_lightweight_tag_resolves_to_its_commit() {
+        let (test_repo, first, _second) = create_test_repo_with_refs();
+
+        let resolved = resolve_ref_impl(test_repo.path_str(), "v1.0.0").unwrap();
+
+        assert_eq!(resolved, first);
+    }
+
+    #[test]
+    fn test_resolve_ref_annotated_tag_peels_to_the_commit_not_the_tag_object() {
+        let (test_repo, first, _second) = create_test_repo_with_refs();
+
+        let resolved = resolve_ref_impl(test_repo.path_str(), "v1.0.0-annotated").unwrap();
+
+        // An annotated tag is its own object with its own oid. Resolving must
+        // peel through it: the answer is a commit hash a caller can hand
+        // straight to get_tree_at_commit.
+        assert_eq!(resolved, first);
+        assert!(
+            get_tree_at_commit_impl(test_repo.path_str(), &resolved, None).is_ok(),
+            "the resolved hash must name a commit"
+        );
+    }
+
+    #[test]
+    fn test_resolve_ref_full_ref_path_resolves() {
+        let (test_repo, first, _second) = create_test_repo_with_refs();
+
+        let resolved = resolve_ref_impl(test_repo.path_str(), "refs/tags/v1.0.0").unwrap();
+
+        assert_eq!(resolved, first);
+    }
+
+    #[test]
+    fn test_resolve_ref_raw_hash_resolves_to_itself() {
+        let (test_repo, first, _second) = create_test_repo_with_refs();
+
+        let resolved = resolve_ref_impl(test_repo.path_str(), &first).unwrap();
+
+        // So a caller can accept either form without branching on which it got.
+        assert_eq!(resolved, first);
+    }
+
+    #[test]
+    fn test_resolve_ref_missing_ref_errors_naming_the_ref() {
+        let (test_repo, _first, _second) = create_test_repo_with_refs();
+
+        let error = resolve_ref_impl(test_repo.path_str(), "no-such-ref").unwrap_err();
+
+        match error {
+            GitError::RefNotFound { ref_name } => assert_eq!(ref_name, "no-such-ref"),
+            other => panic!("expected RefNotFound, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_resolve_ref_hash_naming_no_object_errors() {
+        let (test_repo, _first, _second) = create_test_repo_with_refs();
+
+        // Well-formed and absent: the shape of a hash is not evidence that the
+        // object is here.
+        let absent = "0123456789abcdef0123456789abcdef01234567";
+        let error = resolve_ref_impl(test_repo.path_str(), absent).unwrap_err();
+
+        match error {
+            GitError::RefNotFound { ref_name } => assert_eq!(ref_name, absent),
+            other => panic!("expected RefNotFound, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_resolve_ref_unborn_head_errors_rather_than_returning_a_null() {
+        let test_repo = TestRepo::new().unwrap();
+
+        // HEAD exists as a symbolic ref before the first commit, but there is
+        // no commit for it to name.
+        let error = resolve_ref_impl(test_repo.path_str(), "HEAD").unwrap_err();
+
+        match error {
+            GitError::RefNotFound { ref_name } => assert_eq!(ref_name, "HEAD"),
+            other => panic!("expected RefNotFound, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_resolve_ref_then_read_gives_a_snapshot_of_that_ref() {
+        let (test_repo, first, _second) = create_test_repo_with_refs();
+
+        // The pattern the operation exists for: resolve once, then every read
+        // in the snapshot names the same object.
+        let commit = resolve_ref_impl(test_repo.path_str(), "v1.0.0").unwrap();
+        let entries = get_tree_at_commit_impl(test_repo.path_str(), &commit, None).unwrap();
+        let file = get_file_at_commit_impl(test_repo.path_str(), "file.txt", &commit).unwrap();
+
+        assert_eq!(commit, first);
+        assert_eq!(
+            entries.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(),
+            vec!["file.txt"]
+        );
+        assert_eq!(file.content, "first");
+    }
 }

@@ -5,7 +5,7 @@ Git operations for Node.js, built on [libgit2](https://libgit2.org/) via
 the library talks to the repository directly and returns typed data.
 
 It was extracted from [Nocturne Writer](https://github.com/liminalfield/nocturne-writer),
-where it provides version control for a writing application, so its 59
+where it provides version control for a writing application, so its 60
 operations lean towards the things a content tool needs: file history, a file's
 contents at a commit, restoring a deleted file, structured diffs. Branch and tag
 management are complete, remotes and merging are supported, and what is left out
@@ -35,7 +35,7 @@ that a rebuild cannot silently change what you depend on.
 
 ## Usage
 
-Every operation except the constructor is asynchronous — 59 of them return a
+Every operation except the constructor is asynchronous — 60 of them return a
 Promise. Paths are absolute for the repository and repository-relative for files
 within it.
 
@@ -233,9 +233,32 @@ Both calls take a **raw commit hash and nothing else** — not a branch, not a
 tag, not `"HEAD"`. That is deliberate rather than a missing feature: the single
 property the pair depends on is that both calls name the same object, and
 accepting a symbolic ref would let two calls in one snapshot resolve
-differently if a writer moved the ref in between. Resolve first, with
-`getRepositoryInfo().headCommit` for the current state or `getTag` for a
-baseline, then pass that hash to everything in the snapshot.
+differently if a writer moved the ref in between.
+
+`resolveRef` is how you get the hash. One ref in, one commit hash out:
+
+```js
+const commit = await git.resolveRef(repo, 'HEAD');
+const entries = await git.getTreeAtCommit(repo, commit, 'effort/');
+const { content } = await git.getFileAtCommit(repo, 'project.yaml', commit);
+```
+
+It takes `"HEAD"`, a branch name, a tag name, or a full ref path such as
+`refs/tags/v1.0.0`. An annotated tag peels through to the commit rather than
+stopping at the tag object. A raw 40-character hash resolves to itself, so a
+caller that accepts either form does not have to branch on which it got.
+
+Anything that does not name a commit **throws, naming the ref** — never a null.
+That covers a ref that does not exist, a tag of a blob, and `"HEAD"` in a
+repository with no commits yet, because all three are the same answer to "which
+commit is this", which is that there isn't one. An abbreviated hash is not
+resolved either: `Oid::from_str` zero-fills a short string into a different,
+well-formed oid rather than rejecting it, and answering about the wrong object
+silently is worse than saying no.
+
+It is not a revparse grammar. `HEAD~3` and `main@{yesterday}` are out of scope;
+the operation names a commit by a ref that exists rather than navigating from
+one.
 
 ## Scope
 
@@ -334,6 +357,7 @@ The codes are stable:
 - **Merge resolution** — `HEAD_MOVED`, `UNRESOLVED_CONFLICTS`, `MERGE_NO_LONGER_CONFLICTS`
 - **Branches** — `BRANCH_NOT_FOUND`, `BRANCH_ALREADY_EXISTS`, `CANNOT_DELETE_CURRENT_BRANCH`, `BRANCH_NOT_MERGED`, `NOT_FAST_FORWARD`
 - **Tags** — `TAG_NOT_FOUND`, `TAG_ALREADY_EXISTS`
+- **Refs** — `REF_NOT_FOUND`
 - **Validation** — `INVALID_PATH`, `INVALID_ARGUMENT`, `INVALID_COMMIT_HASH`, `INVALID_BRANCH_NAME`, `INVALID_TAG_NAME`
 - **System** — `IO_ERROR`, `GIT_OPERATION_FAILURE`
 
@@ -393,7 +417,7 @@ npm run build                        # the Node addon (napi build --release)
 cargo test --no-default-features
 ```
 
-305 tests across ten targets. `--no-default-features` is required rather than
+318 tests across ten targets. `--no-default-features` is required rather than
 preferred: with the `napi-binding` feature on, a test binary fails at the
 **linker**, because napi resolves its symbols from the host Node process at run
 time and those symbols do not exist in a test executable. Disabling the feature

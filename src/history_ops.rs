@@ -334,7 +334,10 @@ pub fn get_commit_history_impl(
     Ok(result)
 }
 
-// Get file content at specific commit
+/// Get file content at a specific commit.
+///
+/// Takes a raw commit hash and nothing else; `resolve_ref_impl` is the
+/// intended way to obtain one from `"HEAD"`, a branch or a tag.
 pub fn get_file_at_commit_impl(
     repo_path: &str,
     file_path: &str,
@@ -406,11 +409,11 @@ pub fn get_file_at_commit_impl(
 ///
 /// Ref resolution is deliberately identical to `get_file_at_commit_impl`: a
 /// raw commit hash and nothing else. Not a branch, not a tag, not `"HEAD"`.
-/// A caller wanting the repository as of a tag resolves the tag with
-/// `get_tag_impl` first, which is the same thing it must already do to call
-/// `get_file_at_commit_impl`. Accepting anything wider here would break the
-/// one property the pair depends on, which is that both calls name the same
-/// object.
+/// A caller wanting the repository as of a tag resolves it with
+/// `resolve_ref_impl` first, which is the same thing it must already do to
+/// call `get_file_at_commit_impl`. Accepting anything wider here would break
+/// the one property the pair depends on, which is that both calls name the
+/// same object.
 ///
 /// `path_prefix` is a **literal string prefix** on the repository-relative
 /// path, not a directory match. `Some("src")` therefore matches `src/main.rs`
@@ -1077,4 +1080,76 @@ pub fn get_commit_diff_impl(repo_path: &str, commit_hash: &str) -> Result<Commit
         start.elapsed().as_millis()
     );
     Ok(result)
+}
+
+/// Resolve a symbolic ref to the commit hash it names, fully peeled.
+///
+/// `ref_name` is `"HEAD"`, a branch name, a tag name, or a full ref path such
+/// as `refs/tags/v1.0.0`. A raw 40-character commit hash resolves to itself,
+/// so a caller can accept either form without branching on which it got.
+///
+/// This is the preamble `get_file_at_commit_impl` and `get_tree_at_commit_impl`
+/// make every consumer write. Those two deliberately take a raw hash and
+/// nothing else, because the property they depend on is that both calls name
+/// the same object — a symbolic ref could resolve differently between them if
+/// a writer moved it in between. Resolving once here and passing the result to
+/// every read in a snapshot keeps that property by construction.
+///
+/// Refs are tried before hashes: an exact ref path first, then the short-name
+/// lookup that turns `main` into `refs/heads/main` and `v1.0.0` into
+/// `refs/tags/v1.0.0`. So a branch improbably named as 40 hex characters wins
+/// over the object of that name.
+///
+/// Only a full 40-character hash is accepted as a hash. An abbreviated one is
+/// not resolved, because `Oid::from_str` zero-fills a short string into a
+/// different, well-formed oid rather than rejecting it, and silently answering
+/// about the wrong object is worse than saying no.
+///
+/// Anything else is an error naming the ref, never a null: no such ref, or a
+/// ref that peels to something other than a commit (a tag of a blob, `HEAD`
+/// before the first commit). Both are the same answer to "which commit is
+/// this", which is that there isn't one.
+///
+/// Not a revparse grammar. `HEAD~3` and `main@{yesterday}` are out of scope:
+/// the need is naming a commit by a ref that exists, not navigating from one.
+///
+/// Read-only. Takes no lock.
+pub fn resolve_ref_impl(repo_path: &str, ref_name: &str) -> Result<String, GitError> {
+    info!("resolve_ref: ref={}", ref_name);
+    let start = std::time::Instant::now();
+
+    let repo =
+        Repository::open(repo_path).map_err(|e| GitError::from(e).with_operation("resolve_ref"))?;
+
+    let not_found = || GitError::RefNotFound {
+        ref_name: ref_name.to_string(),
+    };
+
+    let object = match repo
+        .find_reference(ref_name)
+        .or_else(|_| repo.resolve_reference_from_short_name(ref_name))
+    {
+        Ok(reference) => reference
+            .peel(git2::ObjectType::Commit)
+            .map_err(|_| not_found())?,
+        Err(_) => {
+            if ref_name.len() != 40 || !ref_name.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Err(not_found());
+            }
+            let oid = git2::Oid::from_str(ref_name).map_err(|_| not_found())?;
+            repo.find_object(oid, None)
+                .map_err(|_| not_found())?
+                .peel(git2::ObjectType::Commit)
+                .map_err(|_| not_found())?
+        }
+    };
+
+    let commit_hash = object.id().to_string();
+    info!(
+        "resolve_ref: {} -> {} in {}ms",
+        ref_name,
+        commit_hash,
+        start.elapsed().as_millis()
+    );
+    Ok(commit_hash)
 }

@@ -618,7 +618,37 @@ impl GitService {
         .await
     }
 
-    // File content at commit
+    /// Resolve a symbolic ref to the commit hash it names, fully peeled.
+    ///
+    /// `refName` is `"HEAD"`, a branch name, a tag name, or a full ref path
+    /// such as `refs/tags/v1.0.0`. An annotated tag peels through to the
+    /// commit. A raw 40-character commit hash resolves to itself, so a caller
+    /// can accept either form without branching on which it got.
+    ///
+    /// This is the intended way to obtain the hash that `getFileAtCommit` and
+    /// `getTreeAtCommit` require: resolve once, then pass the result to every
+    /// read in the snapshot, so all of them name the same object.
+    ///
+    /// Anything that does not name a commit is an error naming the ref, never
+    /// a null — no such ref, a tag of a blob, or `"HEAD"` before the first
+    /// commit. An abbreviated hash is not resolved.
+    ///
+    /// Not a revparse grammar: `HEAD~3` and `main@{yesterday}` are out of
+    /// scope. One ref in, one hash out.
+    ///
+    /// Read-only. Takes no lock.
+    #[napi]
+    pub async fn resolve_ref(&self, repo_path: String, ref_name: String) -> Result<String> {
+        validate_repo_path(&repo_path)?;
+        validate_ref_name(&ref_name)?;
+        let structured = self.feature_flags().structured_errors;
+        utils::run_blocking(structured, move || resolve_ref_impl(&repo_path, &ref_name)).await
+    }
+
+    /// File content at a commit.
+    ///
+    /// Takes a raw commit hash and nothing else. `resolveRef` is the intended
+    /// way to obtain one from `"HEAD"`, a branch or a tag.
     #[napi]
     pub async fn get_file_at_commit(
         &self,
@@ -647,9 +677,8 @@ impl GitService {
     /// files inside them, and paths come back sorted.
     ///
     /// Takes a raw commit hash and nothing else, exactly as `getFileAtCommit`
-    /// does. Not a branch, not a tag, not `"HEAD"`. Resolve those first, with
-    /// `getRepositoryInfo().headCommit` or `getTag`, which is what the
-    /// snapshot pattern does anyway.
+    /// does. Not a branch, not a tag, not `"HEAD"`. Resolve those first with
+    /// `resolveRef`, which is what the snapshot pattern does anyway.
     ///
     /// `pathPrefix` is a literal string prefix on the repository-relative
     /// path rather than a directory match, so `"effort"` also matches a file

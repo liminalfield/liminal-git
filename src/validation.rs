@@ -549,11 +549,60 @@ pub fn validate_deleted_files_limit(limit: Option<usize>) -> Result<(), GitError
     Ok(())
 }
 
+/// A ref name on its way to `resolve_ref`.
+///
+/// Deliberately thin. `resolveRef` accepts `"HEAD"`, short branch and tag
+/// names, full ref paths and raw hashes, and libgit2 is the authority on which
+/// of those exist — so a name that is merely absent is answered by the
+/// operation, not refused here. This rejects only what cannot be a question:
+/// an empty name, and a NUL that would be silently truncated on the way into
+/// libgit2 and resolved against a shorter name than the caller passed.
+pub fn validate_ref_name(ref_name: &str) -> Result<(), GitError> {
+    if ref_name.is_empty() {
+        return Err(GitError::InvalidArgument {
+            argument: "ref".to_string(),
+            reason: "Ref cannot be empty".to_string(),
+        });
+    }
+
+    if ref_name.contains('\0') {
+        return Err(GitError::InvalidArgument {
+            argument: "ref".to_string(),
+            reason: "Ref cannot contain null bytes".to_string(),
+        });
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn test_validate_ref_name_accepts_the_forms_resolve_ref_takes() {
+        for name in ["HEAD", "main", "v1.0.0", "refs/tags/v1.0.0", "origin/main"] {
+            assert!(validate_ref_name(name).is_ok(), "{} should validate", name);
+        }
+    }
+
+    #[test]
+    fn test_validate_ref_name_rejects_empty() {
+        let result = validate_ref_name("");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("empty"));
+    }
+
+    #[test]
+    fn test_validate_ref_name_rejects_null_bytes() {
+        // A NUL would be truncated silently on the way into libgit2, so it is
+        // refused at the boundary rather than resolved against a shorter name.
+        let result = validate_ref_name("main\0extra");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("null bytes"));
+    }
 
     #[test]
     fn test_validate_repo_path_valid() {

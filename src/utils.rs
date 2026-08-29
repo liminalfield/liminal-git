@@ -421,6 +421,9 @@ pub fn git_error_to_napi_with_flags(error: GitError, structured: bool) -> NapiEr
         GitError::BranchAlreadyExists { .. } => Status::GenericFailure,
         GitError::TagNotFound { .. } => Status::GenericFailure,
         GitError::TagAlreadyExists { .. } => Status::GenericFailure,
+        // Not InvalidArg: a ref name that names nothing is a question about
+        // the repository that came back "no", not a malformed argument.
+        GitError::RefNotFound { .. } => Status::GenericFailure,
         GitError::UncommittedChanges { .. } => Status::GenericFailure,
         GitError::UnstagedChangesWouldBeLost { .. } => Status::GenericFailure,
         GitError::ConfigMissing { .. } => Status::GenericFailure,
