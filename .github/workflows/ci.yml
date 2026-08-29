@@ -396,6 +396,40 @@ jobs:
       # the install: `prepare` would compile a binary this package does not
       # ship. The addon reaches consumers through the optionalDependencies
       # above, and index.js falls back to requiring them by name.
+      # npm's exit code is not proof the registry took it. Publishing 1.6.3
+      # printed "+ liminal-git-win32-x64-msvc@1.6.3" and exited 0 while the
+      # registry kept no record of it, so the main package went out depending
+      # on a platform package that did not exist — and because these are
+      # optionalDependencies, npm installs that quietly and fails at require
+      # time on Windows only.
+      #
+      # So the registry is asked directly, before the main package is
+      # published. A short retry covers ordinary propagation; anything longer
+      # is a real failure, and failing here leaves three platform packages
+      # published without a main package pointing at them, which is
+      # recoverable. The other order is not.
+      - name: The registry actually has every platform package
+        run: |
+          version=$(node -p "require('./package.json').version")
+          failed=0
+          for dir in npm/*/; do
+            name=$(node -p "require('./${dir}package.json').name")
+            url="https://registry.npmjs.org/${name}/-/${name}-${version}.tgz"
+            for attempt in 1 2 3 4 5 6; do
+              code=$(curl -s -o /dev/null -w '%{http_code}' "$url")
+              [ "$code" = "200" ] && break
+              echo "  $name@$version -> $code (attempt $attempt)"
+              sleep 10
+            done
+            if [ "$code" = "200" ]; then
+              echo "ok: $name@$version"
+            else
+              echo "::error::$name@$version is not on the registry (HTTP $code) despite npm reporting success"
+              failed=1
+            fi
+          done
+          exit $failed
+
       # Last line of defence for the above. A 25MB main package installs and
       # works, which is exactly why it went unnoticed: nothing fails, everyone
       # just pays for it on every install forever, and the version cannot be
