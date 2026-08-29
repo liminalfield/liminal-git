@@ -553,8 +553,23 @@ verifies each declared target has one, dry-runs, publishes the three platform
 packages, and publishes the main package last — so it never exists on npm
 pointing at platform packages that do not.
 
-It needs an `NPM_TOKEN` repository secret: an npm **automation** token, which is
-the type that publishes without a 2FA prompt.
+It needs an `NPM_TOKEN` repository secret with publish rights — for now. npm
+discourages long-lived tokens in CI and points at trusted publishing (OIDC)
+instead, which is better: no stored credential, and provenance attestation for
+free.
+
+That switch cannot be made until after the first release. npm requires a package
+to **exist** before a trusted publisher can be configured for it, and there is no
+way to publish a first version over OIDC ([npm/cli#8544][oidc-first]). All four
+packages were new, so the first release went out on a token.
+
+The switch afterwards is small: configure GitHub Actions as the trusted publisher
+for each of the four packages on npmjs.com — repository plus this workflow's
+filename, which npm matches exactly and case-sensitively — then delete the three
+`env:` blocks in the publish job and revoke the token. `id-token: write` and
+Node 24 (for npm 11, which is what speaks OIDC) are already in place for that.
+
+[oidc-first]: https://github.com/npm/cli/issues/8544
 
 The binaries published are the artifacts the matrix built and tested, not a
 later recompilation of the same source that nobody exercised.

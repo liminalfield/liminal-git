@@ -247,12 +247,19 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # For npm trusted publishing (OIDC). Harmless while the job still
+      # authenticates with NPM_TOKEN, and required the moment it stops — see
+      # the note above the publish steps.
+      id-token: write
     steps:
       - uses: actions/checkout@v7
 
+      # Node 24 for npm 11, which is what speaks OIDC. Node 22 ships npm 10,
+      # which does not, so trusted publishing would fail on it with an
+      # authentication error that says nothing about the real cause.
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           registry-url: https://registry.npmjs.org
 
@@ -309,6 +316,25 @@ jobs:
           done
           exit $missing
 
+      # AUTHENTICATION, and how it is meant to change.
+      #
+      # These steps authenticate with an NPM_TOKEN secret, which npm itself
+      # discourages for CI in favour of trusted publishing (OIDC): no
+      # long-lived credential, and provenance for free.
+      #
+      # Trusted publishing cannot be used yet, and the reason is not an
+      # oversight. npm requires a package to *exist* before a trusted
+      # publisher can be configured for it, and there is no way to publish a
+      # first version over OIDC — see npm/cli#8544. All four packages here are
+      # new, so the first release has to go out on a token.
+      #
+      # Afterwards the switch is small and worth making: configure GitHub
+      # Actions as the trusted publisher for each of the four packages on
+      # npmjs.com (repository, and this workflow's filename, which npm matches
+      # exactly and case-sensitively), then delete the three `env:` blocks
+      # below and revoke the token. Nothing else changes — `id-token: write`
+      # and npm 11 are already in place above for exactly that day.
+      #
       # Catches a malformed npm/ layout or a bad config before any package is
       # published for real. Publishing is not atomic across the four packages,
       # and a version number can never be reused, so a failure discovered
