@@ -315,6 +315,20 @@ jobs:
       - name: Place each addon in its platform package
         run: npx napi artifacts --output-dir artifacts
 
+      # `napi artifacts` writes each binary to the repository root as well as
+      # into its platform package, and package.json's `files` allowlist
+      # includes *.node — so without this the main package ships all three
+      # binaries on top of the platform packages that already carry them. That
+      # is what 1.6.1 did: 25MB where ~85KB was needed, downloaded by every
+      # consumer on every platform, two thirds of it for machines they are not.
+      #
+      # `files` cannot simply drop *.node, because the git-tag install route
+      # depends on it: there `prepare` compiles into this same root and npm
+      # packs the result. So the entry stays and the publish job cleans up
+      # after the tool instead.
+      - name: The main package ships no binaries of its own
+        run: rm -f ./*.node
+
       # One binary per declared target, or the release is incomplete. napi
       # would otherwise publish a platform package containing no addon, which
       # installs cleanly and fails at require time on the consumer's machine —
@@ -380,6 +394,23 @@ jobs:
       # the install: `prepare` would compile a binary this package does not
       # ship. The addon reaches consumers through the optionalDependencies
       # above, and index.js falls back to requiring them by name.
+      # Last line of defence for the above. A 25MB main package installs and
+      # works, which is exactly why it went unnoticed: nothing fails, everyone
+      # just pays for it on every install forever, and the version cannot be
+      # corrected in place.
+      - name: The packed main package carries no addon
+        run: |
+          packed=$(npm pack --dry-run --json --ignore-scripts | node -e "
+            const p = JSON.parse(require('fs').readFileSync(0, 'utf8'))[0];
+            const nodes = p.files.filter(f => f.path.endsWith('.node'));
+            console.log('files: ' + p.entryCount + ', unpacked: ' + p.unpackedSize + ' bytes');
+            if (nodes.length) {
+              console.error('::error::main package contains ' + nodes.map(f => f.path).join(', '));
+              process.exit(1);
+            }
+          ")
+          echo "$packed"
+
       - name: Publish the main package
         run: npm publish --ignore-scripts
         env:
