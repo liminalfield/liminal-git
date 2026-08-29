@@ -517,7 +517,7 @@ mod file_ops_tests {
         // file1.txt matches HEAD here, so restoring an older revision of it
         // destroys no uncommitted work and the guard below does not fire.
         let file_path = temp_dir.path().join("file1.txt");
-        let restored = restore_file_from_commit_impl(&path, "file1.txt", &initial)
+        let restored = restore_file_from_commit_impl(&path, "file1.txt", &initial, false)
             .expect("restoring over a clean working file should succeed");
         assert!(restored);
 
@@ -532,9 +532,8 @@ mod file_ops_tests {
     /// broken: it modified the file first and then expected the restore to
     /// succeed, which is exactly the case the guard now refuses.
     ///
-    /// Note there is no way to override this — restore has no `force`
-    /// parameter — so a caller that wants "discard my changes and restore"
-    /// cannot express it yet.
+    /// `force` is how a caller says "discard my changes and restore" out
+    /// loud; the default refuses, which is what this pins.
     #[test]
     fn test_restore_file_from_commit_impl_refuses_to_discard_uncommitted_changes() {
         let (temp_dir, path) = create_test_repo_with_history();
@@ -543,7 +542,7 @@ mod file_ops_tests {
         let file_path = temp_dir.path().join("file1.txt");
         fs::write(&file_path, "Unsaved work").unwrap();
 
-        let result = restore_file_from_commit_impl(&path, "file1.txt", &initial);
+        let result = restore_file_from_commit_impl(&path, "file1.txt", &initial, false);
         assert!(
             matches!(result, Err(GitError::UnstagedChangesWouldBeLost { .. })),
             "expected the guard to fire, got {result:?}"
@@ -553,6 +552,72 @@ mod file_ops_tests {
         assert_eq!(fs::read_to_string(&file_path).unwrap(), "Unsaved work");
     }
 
+    /// The state restore exists for.
+    ///
+    /// A write sequence that dies partway leaves a half-written file in the
+    /// working tree. Putting the bytes back is the recovery, and the default
+    /// guard refuses it precisely because the write died. `force` is the
+    /// deliberate override.
+    #[test]
+    fn test_restore_file_from_commit_impl_force_overwrites_uncommitted_changes() {
+        let (temp_dir, path) = create_test_repo_with_history();
+        let initial = commit_hash_by_message(&path, "Initial commit");
+
+        let file_path = temp_dir.path().join("file1.txt");
+        fs::write(&file_path, "half-written garbage").unwrap();
+
+        let restored = restore_file_from_commit_impl(&path, "file1.txt", &initial, true)
+            .expect("force must restore over a dirty working file");
+
+        assert!(restored);
+        assert_eq!(fs::read_to_string(&file_path).unwrap(), "Initial content");
+    }
+
+    /// The other half of the guard: a path in the working tree that HEAD has
+    /// never heard of. Untracked work is still work, so the default refuses
+    /// it too, and force still overrides.
+    #[test]
+    fn test_restore_file_from_commit_impl_force_overwrites_an_untracked_file() {
+        let (temp_dir, path) = create_test_repo_with_history();
+        let initial = commit_hash_by_message(&path, "Initial commit");
+
+        // file2.txt arrives after the initial commit, so at `initial` it does
+        // not exist. Delete it, restore an older commit that lacks it...
+        let deleted = temp_dir.path().join("file1.txt");
+        fs::remove_file(&deleted).unwrap();
+        fs::write(&deleted, "untracked replacement").unwrap();
+
+        let refused = restore_file_from_commit_impl(&path, "file1.txt", &initial, false);
+        assert!(
+            matches!(refused, Err(GitError::UnstagedChangesWouldBeLost { .. })),
+            "expected the guard to fire, got {refused:?}"
+        );
+
+        restore_file_from_commit_impl(&path, "file1.txt", &initial, true)
+            .expect("force must overwrite");
+        assert_eq!(fs::read_to_string(&deleted).unwrap(), "Initial content");
+    }
+
+    /// Force overrides the guard, not the rest of the operation. A path that
+    /// is not in the commit is still FILE_NOT_FOUND, and nothing on disk
+    /// moves.
+    #[test]
+    fn test_restore_file_from_commit_impl_force_still_requires_the_path_in_the_commit() {
+        let (temp_dir, path) = create_test_repo_with_history();
+        let initial = commit_hash_by_message(&path, "Initial commit");
+
+        let stray = temp_dir.path().join("stray.txt");
+        fs::write(&stray, "not in any commit").unwrap();
+
+        let result = restore_file_from_commit_impl(&path, "stray.txt", &initial, true);
+
+        assert!(
+            matches!(result, Err(GitError::FileNotFound { .. })),
+            "expected FileNotFound, got {result:?}"
+        );
+        assert_eq!(fs::read_to_string(&stray).unwrap(), "not in any commit");
+    }
+
     #[test]
     fn test_restore_nonexistent_file() {
         let (_temp_dir, path) = create_test_repo_with_history();
@@ -560,7 +625,7 @@ mod file_ops_tests {
         let history = get_commit_history_impl(&path, None, None).unwrap();
         let commit_hash = &history.commits[0].hash;
 
-        let result = restore_file_from_commit_impl(&path, "nonexistent.txt", commit_hash);
+        let result = restore_file_from_commit_impl(&path, "nonexistent.txt", commit_hash, false);
         assert!(result.is_err());
     }
 

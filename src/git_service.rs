@@ -630,8 +630,13 @@ impl GitService {
     /// read in the snapshot, so all of them name the same object.
     ///
     /// Anything that does not name a commit is an error naming the ref, never
-    /// a null — no such ref, a tag of a blob, or `"HEAD"` before the first
-    /// commit. An abbreviated hash is not resolved.
+    /// a null. `REF_NOT_FOUND` for no such ref or a ref that peels to a
+    /// non-commit such as a tag of a blob; `UNBORN_HEAD` for a symbolic ref
+    /// whose target does not exist yet, which is `"HEAD"` in a repository
+    /// with no commits or on a freshly orphaned branch. Those are separate
+    /// because a caller does different things with them: one branch has no
+    /// commits *yet*, the other names something that was never going to
+    /// resolve. An abbreviated hash is not resolved.
     ///
     /// Not a revparse grammar: `HEAD~3` and `main@{yesterday}` are out of
     /// scope. One ref in, one hash out.
@@ -701,19 +706,38 @@ impl GitService {
         .await
     }
 
-    // File restoration
+    /// Restore one path to the version held in `commitHash`.
+    ///
+    /// Refuses with `UNSTAGED_CHANGES_WOULD_BE_LOST` when the working copy of
+    /// **that path** differs from HEAD, or exists while HEAD has never heard
+    /// of it. The check is per-path, not repository-wide: an unrelated dirty
+    /// file does not block a restore.
+    ///
+    /// `force` overrides that refusal, which is the point of it. A write
+    /// sequence that dies partway leaves a half-written file, and putting the
+    /// bytes back is the recovery the default guard would otherwise refuse
+    /// precisely because the write died. It overrides the guard and nothing
+    /// else: a path absent from the commit is still `FILE_NOT_FOUND`, and
+    /// nothing on disk moves. Defaults to `false`.
+    ///
+    /// For restoring to HEAD specifically, `discardChanges` is the better
+    /// tool: it force-checks-out the one path through libgit2, so it also
+    /// updates the index and preserves symlinks, executable bits and CRLF
+    /// filters, where this operation writes the blob's bytes.
     #[napi]
     pub async fn restore_file_from_commit(
         &self,
         repo_path: String,
         file_path: String,
         commit_hash: String,
+        force: Option<bool>,
     ) -> Result<bool> {
         validate_restore_operation(&repo_path, &file_path, &commit_hash)?;
+        let force = force.unwrap_or(false);
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
             let _guard = utils::lock_repo(&repo_path)?;
-            restore_file_from_commit_impl(&repo_path, &file_path, &commit_hash)
+            restore_file_from_commit_impl(&repo_path, &file_path, &commit_hash, force)
         })
         .await
     }

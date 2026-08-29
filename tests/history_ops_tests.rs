@@ -652,8 +652,62 @@ mod history_ops_tests {
         let error = resolve_ref_impl(test_repo.path_str(), "HEAD").unwrap_err();
 
         match error {
-            GitError::RefNotFound { ref_name } => assert_eq!(ref_name, "HEAD"),
-            other => panic!("expected RefNotFound, got {:?}", other),
+            GitError::UnbornHead { ref_name } => assert_eq!(ref_name, "HEAD"),
+            other => panic!("expected UnbornHead, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_resolve_ref_separates_an_unborn_head_from_a_missing_ref() {
+        let test_repo = TestRepo::new().unwrap();
+
+        // The distinction the codes exist for: "this repository has no commits
+        // yet, initialise it" and "you misspelled that name" are different
+        // situations with different answers, and a consumer must not have to
+        // string-match a message to tell them apart.
+        let unborn = resolve_ref_impl(test_repo.path_str(), "HEAD").unwrap_err();
+        let missing = resolve_ref_impl(test_repo.path_str(), "v9.9.9-nope").unwrap_err();
+
+        assert_eq!(unborn.error_code(), "UNBORN_HEAD");
+        assert_eq!(missing.error_code(), "REF_NOT_FOUND");
+    }
+
+    #[test]
+    fn test_resolve_ref_unborn_head_becomes_resolvable_after_the_first_commit() {
+        let test_repo = TestRepo::new().unwrap();
+
+        assert!(matches!(
+            resolve_ref_impl(test_repo.path_str(), "HEAD"),
+            Err(GitError::UnbornHead { .. })
+        ));
+
+        let commit = test_repo
+            .add_and_commit("file.txt", "content", "First commit")
+            .unwrap()
+            .to_string();
+
+        // UNBORN_HEAD is a state that ends, which is what makes it worth
+        // telling apart from a name that was never going to resolve.
+        assert_eq!(
+            resolve_ref_impl(test_repo.path_str(), "HEAD").unwrap(),
+            commit
+        );
+    }
+
+    #[test]
+    fn test_resolve_ref_orphan_branch_is_unborn_not_missing() {
+        let (test_repo, _first, _second) = create_test_repo_with_refs();
+
+        // A repository with commits can still have an unborn HEAD, which is
+        // why the code names the branch state rather than the repository.
+        let repo = Repository::open(test_repo.path_str()).unwrap();
+        repo.set_head("refs/heads/orphan").unwrap();
+
+        let error = resolve_ref_impl(test_repo.path_str(), "HEAD").unwrap_err();
+
+        match error {
+            GitError::UnbornHead { ref_name } => assert_eq!(ref_name, "HEAD"),
+            other => panic!("expected UnbornHead, got {:?}", other),
         }
     }
 

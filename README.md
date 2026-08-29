@@ -249,16 +249,57 @@ stopping at the tag object. A raw 40-character hash resolves to itself, so a
 caller that accepts either form does not have to branch on which it got.
 
 Anything that does not name a commit **throws, naming the ref** — never a null.
-That covers a ref that does not exist, a tag of a blob, and `"HEAD"` in a
-repository with no commits yet, because all three are the same answer to "which
-commit is this", which is that there isn't one. An abbreviated hash is not
-resolved either: `Oid::from_str` zero-fills a short string into a different,
-well-formed oid rather than rejecting it, and answering about the wrong object
-silently is worse than saying no.
+`REF_NOT_FOUND` covers a ref that does not exist and a ref that peels to
+something other than a commit, such as a tag of a blob. `UNBORN_HEAD` covers a
+symbolic ref whose target does not exist yet: `"HEAD"` in a repository with no
+commits, or on a freshly orphaned branch. Those are two codes rather than one
+because a caller does different things with them — one branch has no commits
+*yet*, which is a state that ends, and the other names something that was never
+going to resolve. An abbreviated hash is not resolved either: `Oid::from_str`
+zero-fills a short string into a different, well-formed oid rather than
+rejecting it, and answering about the wrong object silently is worse than
+saying no.
 
 It is not a revparse grammar. `HEAD~3` and `main@{yesterday}` are out of scope;
 the operation names a commit by a ref that exists rather than navigating from
 one.
+
+## Putting a file back
+
+Two operations, and the difference is which version you want back.
+
+`discardChanges` restores one path to **HEAD**, discarding whatever is in the
+working tree:
+
+```js
+await git.discardChanges(repo, 'notes/draft.md');
+```
+
+It goes through a libgit2 checkout, so the index is updated to match and
+symlinks, executable bits and CRLF filters are preserved. This is the recovery
+for a write sequence that died partway and left a file half-written.
+
+`restoreFileFromCommit` restores one path to **any commit**:
+
+```js
+await git.restoreFileFromCommit(repo, 'notes/draft.md', commit);
+```
+
+It refuses with `UNSTAGED_CHANGES_WOULD_BE_LOST` when the working copy of that
+path differs from HEAD, or exists while HEAD has never heard of it. The check is
+**per-path, not repository-wide** — an unrelated dirty file does not block a
+restore.
+
+The fourth argument overrides that refusal:
+
+```js
+await git.restoreFileFromCommit(repo, 'notes/draft.md', commit, true);
+```
+
+Which is the point of it: a dirty working copy is often exactly why you are
+restoring. `force` overrides the guard and nothing else — a path absent from the
+commit is still `FILE_NOT_FOUND`, and nothing on disk moves. It defaults to
+`false`, so no existing call changes behaviour.
 
 ## Scope
 
@@ -349,6 +390,12 @@ JSON:
 }
 ```
 
+**Without the flag the codes do not cross the boundary at all.** Every error
+arrives as a `GenericFailure` carrying the plain message, and two different
+codes become indistinguishable without string-matching that message — which is
+what the codes exist to prevent. A consumer that routes on error type wants
+`LIMINAL_FEATURE_FLAGS=structured_errors` set.
+
 The codes are stable:
 
 - **Repository** — `REPOSITORY_NOT_FOUND`, `REPOSITORY_CORRUPTED`, `INVALID_REPOSITORY`, `REPOSITORY_LOCKED`
@@ -357,7 +404,7 @@ The codes are stable:
 - **Merge resolution** — `HEAD_MOVED`, `UNRESOLVED_CONFLICTS`, `MERGE_NO_LONGER_CONFLICTS`
 - **Branches** — `BRANCH_NOT_FOUND`, `BRANCH_ALREADY_EXISTS`, `CANNOT_DELETE_CURRENT_BRANCH`, `BRANCH_NOT_MERGED`, `NOT_FAST_FORWARD`
 - **Tags** — `TAG_NOT_FOUND`, `TAG_ALREADY_EXISTS`
-- **Refs** — `REF_NOT_FOUND`
+- **Refs** — `REF_NOT_FOUND`, `UNBORN_HEAD`
 - **Validation** — `INVALID_PATH`, `INVALID_ARGUMENT`, `INVALID_COMMIT_HASH`, `INVALID_BRANCH_NAME`, `INVALID_TAG_NAME`
 - **System** — `IO_ERROR`, `GIT_OPERATION_FAILURE`
 
@@ -417,7 +464,7 @@ npm run build                        # the Node addon (napi build --release)
 cargo test --no-default-features
 ```
 
-318 tests across ten targets. `--no-default-features` is required rather than
+324 tests across ten targets. `--no-default-features` is required rather than
 preferred: with the `napi-binding` feature on, a test binary fails at the
 **linker**, because napi resolves its symbols from the host Node process at run
 time and those symbols do not exist in a test executable. Disabling the feature

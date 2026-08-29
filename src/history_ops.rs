@@ -1105,10 +1105,13 @@ pub fn get_commit_diff_impl(repo_path: &str, commit_hash: &str) -> Result<Commit
 /// different, well-formed oid rather than rejecting it, and silently answering
 /// about the wrong object is worse than saying no.
 ///
-/// Anything else is an error naming the ref, never a null: no such ref, or a
-/// ref that peels to something other than a commit (a tag of a blob, `HEAD`
-/// before the first commit). Both are the same answer to "which commit is
-/// this", which is that there isn't one.
+/// Anything else is an error naming the ref, never a null. `RefNotFound` for
+/// no such ref, or a ref that peels to something other than a commit such as
+/// a tag of a blob. `UnbornHead` for a symbolic ref whose target does not
+/// exist yet — `HEAD` in a repository with no commits, or on a freshly
+/// orphaned branch. The two are separate because a caller does different
+/// things with them: one branch has no commits *yet*, the other names
+/// something that was never going to resolve.
 ///
 /// Not a revparse grammar. `HEAD~3` and `main@{yesterday}` are out of scope:
 /// the need is naming a commit by a ref that exists, not navigating from one.
@@ -1129,9 +1132,20 @@ pub fn resolve_ref_impl(repo_path: &str, ref_name: &str) -> Result<String, GitEr
         .find_reference(ref_name)
         .or_else(|_| repo.resolve_reference_from_short_name(ref_name))
     {
-        Ok(reference) => reference
-            .peel(git2::ObjectType::Commit)
-            .map_err(|_| not_found())?,
+        Ok(reference) => match reference.peel(git2::ObjectType::Commit) {
+            Ok(object) => object,
+            // A symbolic ref whose target does not exist is unborn, not
+            // absent: the branch has no commits yet. Told apart from a
+            // missing ref because the two call for different things from a
+            // caller — one is a state that ends, the other a name that was
+            // never going to resolve.
+            Err(_) if reference.symbolic_target().is_some() && reference.resolve().is_err() => {
+                return Err(GitError::UnbornHead {
+                    ref_name: ref_name.to_string(),
+                });
+            }
+            Err(_) => return Err(not_found()),
+        },
         Err(_) => {
             if ref_name.len() != 40 || !ref_name.chars().all(|c| c.is_ascii_hexdigit()) {
                 return Err(not_found());

@@ -158,6 +158,20 @@ pub enum GitError {
     RefNotFound {
         ref_name: String,
     },
+    /// `resolveRef` was given a ref that resolves to a symbolic reference
+    /// whose target does not exist yet — `HEAD` in a repository with no
+    /// commits, or on a freshly orphaned branch. Distinct from
+    /// [`GitError::RefNotFound`] because the two call for different things
+    /// from a caller: this one says the branch has no commits *yet*, which is
+    /// a state that ends, where a missing ref is a name that was never going
+    /// to resolve.
+    ///
+    /// Names the branch state rather than the repository, because a
+    /// repository with plenty of commits still has an unborn HEAD after
+    /// `git checkout --orphan`.
+    UnbornHead {
+        ref_name: String,
+    },
 
     // Validation errors
     InvalidPath {
@@ -275,6 +289,9 @@ impl fmt::Display for GitError {
             GitError::TagNotFound { name } => write!(f, "Tag not found: {}", name),
             GitError::RefNotFound { ref_name } => {
                 write!(f, "Could not resolve ref to a commit: {}", ref_name)
+            }
+            GitError::UnbornHead { ref_name } => {
+                write!(f, "Ref has no commits yet: {}", ref_name)
             }
             GitError::TagAlreadyExists { name } => write!(f, "Tag already exists: {}", name),
 
@@ -433,6 +450,7 @@ impl GitError {
             GitError::TagNotFound { .. } => "TAG_NOT_FOUND",
             GitError::TagAlreadyExists { .. } => "TAG_ALREADY_EXISTS",
             GitError::RefNotFound { .. } => "REF_NOT_FOUND",
+            GitError::UnbornHead { .. } => "UNBORN_HEAD",
             GitError::InvalidPath { .. } => "INVALID_PATH",
             GitError::InvalidArgument { .. } => "INVALID_ARGUMENT",
             GitError::InvalidCommitHash { .. } => "INVALID_COMMIT_HASH",
@@ -565,6 +583,9 @@ impl GitError {
                 details.set("name", name.as_str())?;
             }
             GitError::RefNotFound { ref_name } => {
+                details.set("refName", ref_name.as_str())?;
+            }
+            GitError::UnbornHead { ref_name } => {
                 details.set("refName", ref_name.as_str())?;
             }
             GitError::InvalidPath { path, reason } => {
@@ -771,6 +792,12 @@ impl GitError {
                 details.insert("name".to_string(), serde_json::Value::String(name.clone()));
             }
             GitError::RefNotFound { ref_name } => {
+                details.insert(
+                    "refName".to_string(),
+                    serde_json::Value::String(ref_name.clone()),
+                );
+            }
+            GitError::UnbornHead { ref_name } => {
                 details.insert(
                     "refName".to_string(),
                     serde_json::Value::String(ref_name.clone()),

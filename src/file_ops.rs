@@ -637,11 +637,29 @@ pub fn get_staged_files_impl(repo_path: &str) -> Result<Vec<String>, GitError> {
     Ok(staged_files)
 }
 
-// Restore file from commit
+/// Restore one path to the version held in `commit_hash`.
+///
+/// Refuses with [`GitError::UnstagedChangesWouldBeLost`] when the working
+/// copy of **that path** differs from HEAD, or exists while HEAD has never
+/// heard of it. The check is per-path, not repository-wide: an unrelated
+/// dirty file does not block a restore.
+///
+/// `force` overrides that refusal, which is the point of it — a write
+/// sequence that dies partway leaves a half-written file, and putting the
+/// bytes back is the recovery the default guard would otherwise refuse
+/// precisely because the write died. It overrides the guard and nothing
+/// else: a path absent from the commit is still `FileNotFound`, and nothing
+/// on disk moves.
+///
+/// For restoring to HEAD specifically, `discard_changes_impl` is the better
+/// tool. It force-checks-out the one path through libgit2, so it also
+/// updates the index and preserves symlinks, executable bits and CRLF
+/// filters; this operation writes the blob's bytes.
 pub fn restore_file_from_commit_impl(
     repo_path: &str,
     file_path: &str,
     commit_hash: &str,
+    force: bool,
 ) -> Result<bool, GitError> {
     info!(
         "restore_file_from_commit: path={} commit={}",
@@ -671,8 +689,9 @@ pub fn restore_file_from_commit_impl(
                 .find_blob(tree_entry.id())
                 .map_err(|e| GitError::from(e).with_operation("find_blob"))?;
 
-            // Check for conflict: file exists with uncommitted changes
-            if absolute_path.exists() {
+            // Check for conflict: file exists with uncommitted changes.
+            // Skipped under force, where losing them is what was asked for.
+            if !force && absolute_path.exists() {
                 // Check if file has uncommitted changes by comparing with HEAD
                 let head = repo
                     .head()
