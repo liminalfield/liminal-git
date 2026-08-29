@@ -39,7 +39,7 @@ Anywhere else — Intel macOS, musl, ARM Linux — and for working on the librar
 itself, install from a git tag:
 
 ```bash
-npm install github:liminalfield/liminal-git#v1.6.0
+npm install github:liminalfield/liminal-git#v1.6.1
 ```
 
 That route runs the `prepare` script, which compiles the addon on the installing

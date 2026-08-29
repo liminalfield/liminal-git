@@ -286,6 +286,23 @@ jobs:
             exit 1
           fi
 
+      # Proves the credential works before anything is published, because
+      # publishing is not atomic across four packages and a version number can
+      # never be reused. The first attempt at 1.6.0 got half-way into `napi
+      # prepublish` before failing on ENEEDAUTH: the secret existed but held
+      # an empty string, and an empty token is indistinguishable from no token
+      # at the point npm gives up. `whoami` turns that into a failure on step
+      # four with a name printed, instead of a partial release.
+      - name: The npm credential works
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "::error::NPM_TOKEN is unset or empty. A secret can exist with an empty value; check the value, not just that the secret is listed."
+            exit 1
+          fi
+          echo "publishing as: $(npm whoami)"
+
       - name: Collect the addons the matrix built
         uses: actions/download-artifact@v4
         with:
@@ -339,8 +356,13 @@ jobs:
       # published for real. Publishing is not atomic across the four packages,
       # and a version number can never be reused, so a failure discovered
       # half-way costs a version bump.
+      # --no-gh-release because the option defaults to *true*: without it napi
+      # POSTs to the GitHub releases API and 401s, since this job holds no
+      # GitHub token. It catches the error and carries on, so it never broke
+      # anything — but releases here are written by hand with their own notes,
+      # and a tool quietly creating a second empty one is not wanted.
       - name: Dry run
-        run: npx napi prepublish -t npm --dry-run
+        run: npx napi prepublish -t npm --no-gh-release --dry-run
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -348,7 +370,7 @@ jobs:
       # Publishes the three platform packages, then rewrites the main
       # package's optionalDependencies to point at this exact version.
       - name: Publish the platform packages
-        run: npx napi prepublish -t npm
+        run: npx napi prepublish -t npm --no-gh-release
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
