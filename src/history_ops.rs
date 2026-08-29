@@ -1107,11 +1107,12 @@ pub fn get_commit_diff_impl(repo_path: &str, commit_hash: &str) -> Result<Commit
 ///
 /// Anything else is an error naming the ref, never a null. `RefNotFound` for
 /// no such ref, or a ref that peels to something other than a commit such as
-/// a tag of a blob. `UnbornHead` for a symbolic ref whose target does not
-/// exist yet — `HEAD` in a repository with no commits, or on a freshly
-/// orphaned branch. The two are separate because a caller does different
-/// things with them: one branch has no commits *yet*, the other names
-/// something that was never going to resolve.
+/// a tag of a blob. `EmptyRepository` for a symbolic ref whose target does
+/// not exist yet — `HEAD` before the first commit, and also a branch freshly
+/// orphaned in a repository that has plenty. The two are separate because a
+/// caller does different things with them: one has no commits *yet* and is
+/// answered by making one, the other names something that was never going to
+/// resolve and is answered by fixing the name.
 ///
 /// Not a revparse grammar. `HEAD~3` and `main@{yesterday}` are out of scope:
 /// the need is naming a commit by a ref that exists, not navigating from one.
@@ -1135,12 +1136,12 @@ pub fn resolve_ref_impl(repo_path: &str, ref_name: &str) -> Result<String, GitEr
         Ok(reference) => match reference.peel(git2::ObjectType::Commit) {
             Ok(object) => object,
             // A symbolic ref whose target does not exist is unborn, not
-            // absent: the branch has no commits yet. Told apart from a
+            // absent: there are no commits here yet. Told apart from a
             // missing ref because the two call for different things from a
             // caller — one is a state that ends, the other a name that was
             // never going to resolve.
             Err(_) if reference.symbolic_target().is_some() && reference.resolve().is_err() => {
-                return Err(GitError::UnbornHead {
+                return Err(GitError::EmptyRepository {
                     ref_name: ref_name.to_string(),
                 });
             }

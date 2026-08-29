@@ -1,0 +1,21 @@
+{
+  "name": "liminal-git-win32-x64-msvc",
+  "version": "1.6.0",
+  "cpu": [
+    "x64"
+  ],
+  "main": "liminal-git.win32-x64-msvc.node",
+  "files": [
+    "liminal-git.win32-x64-msvc.node"
+  ],
+  "description": "Native git operations for Node.js, built on libgit2 via napi-rs.",
+  "author": "Oluf Andrews <oluf@oandrews.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/liminalfield/liminal-git.git"
+  },
+  "os": [
+    "win32"
+  ]
+}

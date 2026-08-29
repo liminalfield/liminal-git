@@ -1,0 +1,24 @@
+{
+  "name": "liminal-git-linux-x64-gnu",
+  "version": "1.6.0",
+  "cpu": [
+    "x64"
+  ],
+  "main": "liminal-git.linux-x64-gnu.node",
+  "files": [
+    "liminal-git.linux-x64-gnu.node"
+  ],
+  "description": "Native git operations for Node.js, built on libgit2 via napi-rs.",
+  "author": "Oluf Andrews <oluf@oandrews.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/liminalfield/liminal-git.git"
+  },
+  "os": [
+    "linux"
+  ],
+  "libc": [
+    "glibc"
+  ]
+}

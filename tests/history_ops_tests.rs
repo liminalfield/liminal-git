@@ -644,7 +644,7 @@ mod history_ops_tests {
     }
 
     #[test]
-    fn test_resolve_ref_unborn_head_errors_rather_than_returning_a_null() {
+    fn test_resolve_ref_empty_repository_errors_rather_than_returning_a_null() {
         let test_repo = TestRepo::new().unwrap();
 
         // HEAD exists as a symbolic ref before the first commit, but there is
@@ -652,13 +652,13 @@ mod history_ops_tests {
         let error = resolve_ref_impl(test_repo.path_str(), "HEAD").unwrap_err();
 
         match error {
-            GitError::UnbornHead { ref_name } => assert_eq!(ref_name, "HEAD"),
-            other => panic!("expected UnbornHead, got {:?}", other),
+            GitError::EmptyRepository { ref_name } => assert_eq!(ref_name, "HEAD"),
+            other => panic!("expected EmptyRepository, got {:?}", other),
         }
     }
 
     #[test]
-    fn test_resolve_ref_separates_an_unborn_head_from_a_missing_ref() {
+    fn test_resolve_ref_separates_an_empty_repository_from_a_missing_ref() {
         let test_repo = TestRepo::new().unwrap();
 
         // The distinction the codes exist for: "this repository has no commits
@@ -668,17 +668,17 @@ mod history_ops_tests {
         let unborn = resolve_ref_impl(test_repo.path_str(), "HEAD").unwrap_err();
         let missing = resolve_ref_impl(test_repo.path_str(), "v9.9.9-nope").unwrap_err();
 
-        assert_eq!(unborn.error_code(), "UNBORN_HEAD");
+        assert_eq!(unborn.error_code(), "EMPTY_REPOSITORY");
         assert_eq!(missing.error_code(), "REF_NOT_FOUND");
     }
 
     #[test]
-    fn test_resolve_ref_unborn_head_becomes_resolvable_after_the_first_commit() {
+    fn test_resolve_ref_empty_repository_becomes_resolvable_after_the_first_commit() {
         let test_repo = TestRepo::new().unwrap();
 
         assert!(matches!(
             resolve_ref_impl(test_repo.path_str(), "HEAD"),
-            Err(GitError::UnbornHead { .. })
+            Err(GitError::EmptyRepository { .. })
         ));
 
         let commit = test_repo
@@ -686,7 +686,7 @@ mod history_ops_tests {
             .unwrap()
             .to_string();
 
-        // UNBORN_HEAD is a state that ends, which is what makes it worth
+        // EMPTY_REPOSITORY is a state that ends, which is what makes it worth
         // telling apart from a name that was never going to resolve.
         assert_eq!(
             resolve_ref_impl(test_repo.path_str(), "HEAD").unwrap(),
@@ -695,19 +695,22 @@ mod history_ops_tests {
     }
 
     #[test]
-    fn test_resolve_ref_orphan_branch_is_unborn_not_missing() {
+    fn test_resolve_ref_orphan_branch_reports_empty_repository_not_missing() {
         let (test_repo, _first, _second) = create_test_repo_with_refs();
 
-        // A repository with commits can still have an unborn HEAD, which is
-        // why the code names the branch state rather than the repository.
+        // The one place the code's name is looser than the condition it
+        // reports: after `git checkout --orphan` a repository with plenty of
+        // commits still has a HEAD with none. EMPTY_REPOSITORY covers it,
+        // because what a caller does about it is the same either way — there
+        // is no commit here yet, so make one.
         let repo = Repository::open(test_repo.path_str()).unwrap();
         repo.set_head("refs/heads/orphan").unwrap();
 
         let error = resolve_ref_impl(test_repo.path_str(), "HEAD").unwrap_err();
 
         match error {
-            GitError::UnbornHead { ref_name } => assert_eq!(ref_name, "HEAD"),
-            other => panic!("expected UnbornHead, got {:?}", other),
+            GitError::EmptyRepository { ref_name } => assert_eq!(ref_name, "HEAD"),
+            other => panic!("expected EmptyRepository, got {:?}", other),
         }
     }
 

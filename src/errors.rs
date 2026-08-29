@@ -159,17 +159,19 @@ pub enum GitError {
         ref_name: String,
     },
     /// `resolveRef` was given a ref that resolves to a symbolic reference
-    /// whose target does not exist yet — `HEAD` in a repository with no
-    /// commits, or on a freshly orphaned branch. Distinct from
-    /// [`GitError::RefNotFound`] because the two call for different things
-    /// from a caller: this one says the branch has no commits *yet*, which is
-    /// a state that ends, where a missing ref is a name that was never going
-    /// to resolve.
+    /// whose target does not exist yet — `HEAD` before the first commit.
+    /// Distinct from [`GitError::RefNotFound`] because the two call for
+    /// different things from a caller: this one says there are no commits
+    /// *yet*, which is a state that ends and is answered by making one, where
+    /// a missing ref is a name that was never going to resolve and is
+    /// answered by fixing it.
     ///
-    /// Names the branch state rather than the repository, because a
-    /// repository with plenty of commits still has an unborn HEAD after
-    /// `git checkout --orphan`.
-    UnbornHead {
+    /// The name is a shade looser than the condition. What is strictly
+    /// reported is an unborn ref, and a repository with plenty of commits
+    /// still has one after `git checkout --orphan`. Named for the ordinary
+    /// case because the caller's response is the same either way: there is no
+    /// commit here, so make one.
+    EmptyRepository {
         ref_name: String,
     },
 
@@ -290,8 +292,8 @@ impl fmt::Display for GitError {
             GitError::RefNotFound { ref_name } => {
                 write!(f, "Could not resolve ref to a commit: {}", ref_name)
             }
-            GitError::UnbornHead { ref_name } => {
-                write!(f, "Ref has no commits yet: {}", ref_name)
+            GitError::EmptyRepository { ref_name } => {
+                write!(f, "Repository has no commits on this ref yet: {}", ref_name)
             }
             GitError::TagAlreadyExists { name } => write!(f, "Tag already exists: {}", name),
 
@@ -450,7 +452,7 @@ impl GitError {
             GitError::TagNotFound { .. } => "TAG_NOT_FOUND",
             GitError::TagAlreadyExists { .. } => "TAG_ALREADY_EXISTS",
             GitError::RefNotFound { .. } => "REF_NOT_FOUND",
-            GitError::UnbornHead { .. } => "UNBORN_HEAD",
+            GitError::EmptyRepository { .. } => "EMPTY_REPOSITORY",
             GitError::InvalidPath { .. } => "INVALID_PATH",
             GitError::InvalidArgument { .. } => "INVALID_ARGUMENT",
             GitError::InvalidCommitHash { .. } => "INVALID_COMMIT_HASH",
@@ -585,7 +587,7 @@ impl GitError {
             GitError::RefNotFound { ref_name } => {
                 details.set("refName", ref_name.as_str())?;
             }
-            GitError::UnbornHead { ref_name } => {
+            GitError::EmptyRepository { ref_name } => {
                 details.set("refName", ref_name.as_str())?;
             }
             GitError::InvalidPath { path, reason } => {
@@ -797,7 +799,7 @@ impl GitError {
                     serde_json::Value::String(ref_name.clone()),
                 );
             }
-            GitError::UnbornHead { ref_name } => {
+            GitError::EmptyRepository { ref_name } => {
                 details.insert(
                     "refName".to_string(),
                     serde_json::Value::String(ref_name.clone()),

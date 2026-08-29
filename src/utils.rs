@@ -424,7 +424,7 @@ pub fn git_error_to_napi_with_flags(error: GitError, structured: bool) -> NapiEr
         // Not InvalidArg: a ref name that names nothing is a question about
         // the repository that came back "no", not a malformed argument.
         GitError::RefNotFound { .. } => Status::GenericFailure,
-        GitError::UnbornHead { .. } => Status::GenericFailure,
+        GitError::EmptyRepository { .. } => Status::GenericFailure,
         GitError::UncommittedChanges { .. } => Status::GenericFailure,
         GitError::UnstagedChangesWouldBeLost { .. } => Status::GenericFailure,
         GitError::ConfigMissing { .. } => Status::GenericFailure,

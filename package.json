@@ -1,6 +1,6 @@
 {
   "name": "liminal-git",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Native git operations for Node.js, built on libgit2 via napi-rs.",
   "repository": {
     "type": "git",
@@ -23,13 +23,13 @@
       "default": "./index.js"
     }
   },
+  "//napi": "targets lists exactly what CI builds and tests, and nothing else. x86_64-apple-darwin was declared here for a long time without any CI leg ever producing or exercising it; publishing a binary nobody tests is a support promise nobody made, so it is gone. Intel macOS installs from a git tag and builds from source, which is the same route every consumer used before npm publishing existed.",
   "napi": {
     "binaryName": "liminal-git",
     "targets": [
-      "x86_64-pc-windows-msvc",
       "x86_64-unknown-linux-gnu",
       "aarch64-apple-darwin",
-      "x86_64-apple-darwin"
+      "x86_64-pc-windows-msvc"
     ]
   },
   "scripts": {

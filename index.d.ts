@@ -153,12 +153,12 @@ export declare class GitService {
    *
    * Anything that does not name a commit is an error naming the ref, never
    * a null. `REF_NOT_FOUND` for no such ref or a ref that peels to a
-   * non-commit such as a tag of a blob; `UNBORN_HEAD` for a symbolic ref
-   * whose target does not exist yet, which is `"HEAD"` in a repository
-   * with no commits or on a freshly orphaned branch. Those are separate
-   * because a caller does different things with them: one branch has no
-   * commits *yet*, the other names something that was never going to
-   * resolve. An abbreviated hash is not resolved.
+   * non-commit such as a tag of a blob; `EMPTY_REPOSITORY` for a symbolic
+   * ref whose target does not exist yet, which is `"HEAD"` before the
+   * first commit and also a freshly orphaned branch in a repository that
+   * has plenty. Those are separate because a caller does different things
+   * with them: one has no commits *yet* and is answered by making one, the
+   * other names something that was never going to resolve. An abbreviated hash is not resolved.
    *
    * Not a revparse grammar: `HEAD~3` and `main@{yesterday}` are out of
    * scope. One ref in, one hash out.

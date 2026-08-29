@@ -11,27 +11,48 @@ contents at a commit, restoring a deleted file, structured diffs. Branch and tag
 management are complete, remotes and merging are supported, and what is left out
 is left out deliberately (see [Scope](#scope)).
 
-## Requirements
+## Install
 
-The addon is compiled from source when you install it, so the installing machine
-needs:
+```bash
+npm install liminal-git
+```
+
+**Node.js 20 or newer.** Nothing else. The addon ships as a prebuilt binary per
+platform, so installing needs no Rust toolchain and no C compiler, and takes as
+long as any other package.
+
+Three platforms are published, which are exactly the three CI builds and tests:
+
+| Platform            | Package                      |
+| ------------------- | ---------------------------- |
+| Linux x64 (glibc)   | `liminal-git-linux-x64-gnu`  |
+| macOS Apple Silicon | `liminal-git-darwin-arm64`   |
+| Windows x64         | `liminal-git-win32-x64-msvc` |
+
+They are wired as `optionalDependencies`, so npm fetches only the one matching
+the installing machine. A published binary nobody tests is a support promise
+nobody made, which is why the list is not longer than the CI matrix.
+
+### Building from source
+
+Anywhere else — Intel macOS, musl, ARM Linux — and for working on the library
+itself, install from a git tag:
+
+```bash
+npm install github:liminalfield/liminal-git#v1.6.0
+```
+
+That route runs the `prepare` script, which compiles the addon on the installing
+machine. It needs:
 
 - **Rust 1.89 or newer.** Enforced by `rust-version` in `Cargo.toml` and checked
   in CI. The floor is set by `std::fs::File::try_lock`, stabilised in 1.89.
 - **A C compiler**, to build the vendored libgit2.
-- **Node.js 20 or newer.**
 
-Expect the first install to take roughly 100 seconds while the crate compiles in
-release mode. npm does not cache the result between installs.
-
-## Install
-
-```bash
-npm install github:liminalfield/liminal-git#v1.5.0
-```
-
-Not published to npm. Pinning a tag or a commit is recommended over a branch, so
-that a rebuild cannot silently change what you depend on.
+Expect roughly 100 seconds while the crate compiles in release mode. npm does not
+cache the result between installs, which is the cost the published binaries
+exist to remove. Pin a tag or a commit rather than a branch either way, so that a
+rebuild cannot silently change what you depend on.
 
 ## Usage
 
@@ -250,12 +271,13 @@ caller that accepts either form does not have to branch on which it got.
 
 Anything that does not name a commit **throws, naming the ref** — never a null.
 `REF_NOT_FOUND` covers a ref that does not exist and a ref that peels to
-something other than a commit, such as a tag of a blob. `UNBORN_HEAD` covers a
-symbolic ref whose target does not exist yet: `"HEAD"` in a repository with no
-commits, or on a freshly orphaned branch. Those are two codes rather than one
-because a caller does different things with them — one branch has no commits
-*yet*, which is a state that ends, and the other names something that was never
-going to resolve. An abbreviated hash is not resolved either: `Oid::from_str`
+something other than a commit, such as a tag of a blob. `EMPTY_REPOSITORY`
+covers a symbolic ref whose target does not exist yet: `"HEAD"` before the first
+commit, and also a freshly orphaned branch in a repository that has plenty.
+Those are two codes rather than one because a caller does different things with
+them — one has no commits *yet*, which is a state that ends and is answered by
+making one, and the other names something that was never going to resolve and is
+answered by fixing the name. An abbreviated hash is not resolved either: `Oid::from_str`
 zero-fills a short string into a different, well-formed oid rather than
 rejecting it, and answering about the wrong object silently is worse than
 saying no.
@@ -404,7 +426,7 @@ The codes are stable:
 - **Merge resolution** — `HEAD_MOVED`, `UNRESOLVED_CONFLICTS`, `MERGE_NO_LONGER_CONFLICTS`
 - **Branches** — `BRANCH_NOT_FOUND`, `BRANCH_ALREADY_EXISTS`, `CANNOT_DELETE_CURRENT_BRANCH`, `BRANCH_NOT_MERGED`, `NOT_FAST_FORWARD`
 - **Tags** — `TAG_NOT_FOUND`, `TAG_ALREADY_EXISTS`
-- **Refs** — `REF_NOT_FOUND`, `UNBORN_HEAD`
+- **Refs** — `REF_NOT_FOUND`, `EMPTY_REPOSITORY`
 - **Validation** — `INVALID_PATH`, `INVALID_ARGUMENT`, `INVALID_COMMIT_HASH`, `INVALID_BRANCH_NAME`, `INVALID_TAG_NAME`
 - **System** — `IO_ERROR`, `GIT_OPERATION_FAILURE`
 
@@ -508,6 +530,34 @@ declared MSRV, and — the check that matters most — that the package installs
 loads from a *packed tarball*, not merely that it builds inside a clone. Those
 are different things, and the difference once hid a package that shipped every
 Rust source file and no binary.
+
+### Releasing
+
+Publishing happens in CI and nowhere else. A local `npm publish` would ship
+whatever that machine happened to have built, from whatever source tree it
+happened to have, with no record of either.
+
+1. Bump the version in `Cargo.toml` and `package.json`, run `cargo update -p
+   liminal-git`, and **regenerate the bindings** with `npm run build`.
+   `index.js` embeds the package version in its native-binding guard, so a bump
+   without a rebuild ships a package that throws at `require` time. That is
+   what went wrong with 1.3.1, and it is unfixable in place because a version
+   number can never be reused.
+2. Commit and push to `main`. Wait for CI to go green.
+3. Tag the green commit and push the tag.
+
+Pushing a `v*` tag runs the whole matrix again on that commit and then, only if
+every job passes, publishes. The publish job checks the tag against
+`package.json`, collects the three addons the matrix just built and loaded,
+verifies each declared target has one, dry-runs, publishes the three platform
+packages, and publishes the main package last — so it never exists on npm
+pointing at platform packages that do not.
+
+It needs an `NPM_TOKEN` repository secret: an npm **automation** token, which is
+the type that publishes without a 2FA prompt.
+
+The binaries published are the artifacts the matrix built and tested, not a
+later recompilation of the same source that nobody exercised.
 
 ## Architecture
 

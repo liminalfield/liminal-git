@@ -1,0 +1,21 @@
+{
+  "name": "liminal-git-darwin-arm64",
+  "version": "1.6.0",
+  "cpu": [
+    "arm64"
+  ],
+  "main": "liminal-git.darwin-arm64.node",
+  "files": [
+    "liminal-git.darwin-arm64.node"
+  ],
+  "description": "Native git operations for Node.js, built on libgit2 via napi-rs.",
+  "author": "Oluf Andrews <oluf@oandrews.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/liminalfield/liminal-git.git"
+  },
+  "os": [
+    "darwin"
+  ]
+}

@@ -19,3 +19,7 @@ node_modules/
 
 # npm pack output (the CI packed-install check creates this)
 *.tgz
+
+# Downloaded addons in the publish job; the binaries are gitignored above
+# anyway, but the directory should not appear as untracked either.
+artifacts/
