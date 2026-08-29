@@ -402,14 +402,18 @@ jobs:
       # happily — optional dependencies fail quietly — and the error surfaces
       # at require time, on that platform only.
       #
-      # The registry is eventually consistent and the lag is uneven. When
-      # 1.6.3 went out, two platform packages were visible within seconds and
-      # the third took around two and a half minutes to be accepted, then
-      # longer again to appear through the CDN, with cache-busting query
-      # params not defeating the stale document. So this waits generously —
-      # five minutes per package — rather than treating slow propagation as a
-      # failed publish. A version that never appears in that window is a real
-      # failure worth stopping for.
+      # The registry is eventually consistent and the lag is wildly uneven,
+      # measured rather than guessed. Across 1.6.3 and 1.7.0, linux-x64-gnu
+      # and darwin-arm64 were fetchable within seconds of npm reporting them,
+      # and win32-x64-msvc took minutes both times — past five on 1.7.0, which
+      # failed this check on a release that was in fact fine. Cache-busting
+      # query params do not defeat the stale document, so there is nothing to
+      # do but wait.
+      #
+      # Fifteen minutes per package, then. It costs nothing on the normal path
+      # and the alternative is failing good releases, which is the more
+      # expensive mistake: this check exists to stop a broken main package,
+      # not to police npm's propagation times.
       #
       # The ordering is deliberate. Failing here leaves platform packages
       # published with no main package pointing at them, which no consumer can
@@ -423,10 +427,10 @@ jobs:
             name=$(node -p "require('./${dir}package.json').name")
             url="https://registry.npmjs.org/${name}/-/${name}-${version}.tgz"
             code=000
-            for attempt in $(seq 1 30); do
+            for attempt in $(seq 1 90); do
               code=$(curl -s -o /dev/null -w '%{http_code}' "$url")
               [ "$code" = "200" ] && break
-              echo "  waiting for $name@$version (HTTP $code, attempt $attempt/30)"
+              echo "  waiting for $name@$version (HTTP $code, attempt $attempt/90)"
               sleep 10
             done
             if [ "$code" = "200" ]; then
