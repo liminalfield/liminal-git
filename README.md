@@ -27,7 +27,7 @@ release mode. npm does not cache the result between installs.
 ## Install
 
 ```bash
-npm install github:liminalfield/liminal-git#v1.3.2
+npm install github:liminalfield/liminal-git#v1.4.0
 ```
 
 Not published to npm. Pinning a tag or a commit is recommended over a branch, so
