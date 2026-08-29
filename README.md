@@ -433,6 +433,27 @@ The codes are stable:
 Only `IO_ERROR`, `REPOSITORY_CORRUPTED` and `REPOSITORY_LOCKED` are marked
 retriable.
 
+### The codes are API surface
+
+Consumers branch on `code`, so a code is a promise in the way a TypeScript
+signature is, and it is versioned the same way:
+
+- **Renaming or removing a code is a breaking change.** Major bump, or at
+  minimum a headline in the release notes — never a line under "also in this
+  release".
+- **Narrowing what an existing code covers is breaking too**, even though
+  nothing is renamed. When `EMPTY_REPOSITORY` split out of `REF_NOT_FOUND`, a
+  consumer matching `REF_NOT_FOUND` silently stopped seeing the empty-repository
+  case.
+- **Adding a code is not breaking**, provided it does not narrow an existing
+  one.
+
+This is written down because it was got wrong once. `UNBORN_HEAD` became
+`EMPTY_REPOSITORY` in 1.6.0 and the change was described as free on the grounds
+that the code was new and unadopted — an assumption about one consumer's
+timeline rather than a fact, and it was wrong. Nothing throws when a code
+changes underneath a caller; the branch just stops matching.
+
 ## Feature flags
 
 Set via the `LIMINAL_FEATURE_FLAGS` environment variable, read once when a
