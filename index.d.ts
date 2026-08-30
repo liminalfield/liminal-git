@@ -304,6 +304,25 @@ export declare class GitService {
    * when the resolved set does not match the conflict set exactly.
    */
   commitMerge(repoPath: string, theirRef: string, expectedHeadHash: string, resolvedFiles: Array<ResolvedFile>, message: string, userName?: string | undefined | null, userEmail?: string | undefined | null, options?: CommitOptions | undefined | null): Promise<CommitInfo>
+  /**
+   * Replay one commit's change onto HEAD as a new, single-parent commit.
+   *
+   * The landing that keeps history linear where `merge` would write a
+   * two-parent commit. Strict in the same way the merge operations are: a
+   * conflict is detected, never resolved. On any conflict the call fails
+   * with `MERGE_CONFLICT` naming the contested paths, and the working tree,
+   * the index and HEAD are exactly as they were — no `CHERRY_PICK_HEAD`, no
+   * conflict markers, nothing to clean up.
+   *
+   * The author is carried over from the commit being replayed; the caller
+   * signs as committer. `commitHash` must be the full 40 characters.
+   *
+   * Refuses with `INVALID_ARGUMENT` for a merge commit, `DETACHED_HEAD`
+   * when there is no branch to land on, `NOTHING_TO_COMMIT` when the commit
+   * is already applied, and `UNSTAGED_CHANGES_WOULD_BE_LOST` when a path it
+   * would change has unsaved edits on disk.
+   */
+  cherryPick(repoPath: string, commitHash: string, committerName: string, committerEmail: string): Promise<string>
   /** List all tags in the repository */
   listTags(repoPath: string): Promise<Array<TagInfo>>
   /** Create a new tag */

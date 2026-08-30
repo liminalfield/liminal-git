@@ -381,34 +381,9 @@ fn checkout_branch_internal_impl(
 
                 Ok(())
             }
-            Err(e) => {
-                // Checkout would fail - likely due to conflicts
-                // git2 returns various error codes (Uncommitted, Modified, or general checkout failure)
-                // Check if it's a conflict-related error by looking for common patterns
-                let is_conflict_error = e.code() == git2::ErrorCode::Uncommitted
-                    || e.code() == git2::ErrorCode::Modified
-                    || e.message().contains("conflict");
-
-                if is_conflict_error {
-                    // Collect files that have uncommitted changes that would conflict
-                    let conflicting_files = collect_actual_conflicts(repo, &target_tree)?;
-
-                    if !conflicting_files.is_empty() {
-                        info!(
-                            "checkout_branch: safe mode blocked - {} actual conflicting files",
-                            conflicting_files.len()
-                        );
-                        Err(GitError::UnstagedChangesWouldBeLost {
-                            files: conflicting_files,
-                        })
-                    } else {
-                        // No conflicts found, but checkout still failed - pass through original error
-                        Err(GitError::from(e).with_operation("checkout_tree"))
-                    }
-                } else {
-                    Err(GitError::from(e).with_operation("checkout_tree"))
-                }
-            }
+            // Safe mode's own error says only that something conflicted, so
+            // the answer is re-derived from the state on disk.
+            Err(e) => Err(checkout_refusal(repo, &target_tree, "checkout_branch", e)),
         }
     } else {
         // Force mode - overwrite local changes
@@ -429,6 +404,98 @@ fn checkout_branch_internal_impl(
 
         Ok(())
     }
+}
+
+/// The error a refused safe checkout should report, derived from the state on
+/// disk rather than from libgit2's message.
+///
+/// libgit2 says only that something conflicted — never which files, and never
+/// whether the caller has edits to save or a file to move. Both have to be
+/// re-derived, and they are reported as different errors because they call for
+/// different remedies. Tracked first: a path that is both committed and dirty
+/// is the case the caller is most likely to be in, and the one this library
+/// has always named.
+///
+/// Anything libgit2 refused for some other reason passes through untouched.
+pub(crate) fn checkout_refusal(
+    repo: &Repository,
+    target_tree: &git2::Tree<'_>,
+    operation: &str,
+    original: git2::Error,
+) -> GitError {
+    let is_conflict_error = original.code() == git2::ErrorCode::Uncommitted
+        || original.code() == git2::ErrorCode::Modified
+        || original.message().contains("conflict");
+
+    if !is_conflict_error {
+        return GitError::from(original).with_operation("checkout_tree");
+    }
+
+    match collect_actual_conflicts(repo, target_tree) {
+        Ok(files) if !files.is_empty() => {
+            info!(
+                "{}: safe mode blocked - {} actual conflicting files",
+                operation,
+                files.len()
+            );
+            return GitError::UnstagedChangesWouldBeLost { files };
+        }
+        Ok(_) => {}
+        Err(e) => return e,
+    }
+
+    match collect_untracked_collisions(repo, target_tree) {
+        Ok(files) if !files.is_empty() => {
+            info!(
+                "{}: safe mode blocked - {} untracked file(s) in the way",
+                operation,
+                files.len()
+            );
+            GitError::UntrackedFilesWouldBeOverwritten { files }
+        }
+        Ok(_) => GitError::from(original).with_operation("checkout_tree"),
+        Err(e) => e,
+    }
+}
+
+/// Untracked files sitting exactly where the target tree has content.
+///
+/// `collect_actual_conflicts` cannot see these, and correctly so: it asks
+/// which *tracked* paths have changes the checkout would discard, and a file
+/// with no committed history has none. It stands to lose itself instead, which
+/// libgit2 refuses the checkout over just the same.
+///
+/// `recurse_untracked_dirs` because otherwise a wholly new directory is
+/// reported as one entry named `dir/`, which names no path in the target tree
+/// and would make the collision invisible again.
+pub(crate) fn collect_untracked_collisions(
+    repo: &Repository,
+    target_tree: &git2::Tree<'_>,
+) -> std::result::Result<Vec<String>, GitError> {
+    let mut opts = git2::StatusOptions::new();
+    opts.include_untracked(true);
+    opts.recurse_untracked_dirs(true);
+    opts.include_ignored(false);
+
+    let statuses = repo
+        .statuses(Some(&mut opts))
+        .map_err(|e| GitError::from(e).with_operation("get_status"))?;
+
+    let mut files = Vec::new();
+    for entry in statuses.iter() {
+        if !entry.status().contains(git2::Status::WT_NEW) {
+            continue;
+        }
+        if let Some(path) = entry.path()
+            && target_tree.get_path(std::path::Path::new(path)).is_ok()
+        {
+            files.push(path.to_string());
+        }
+    }
+
+    files.sort();
+    files.dedup();
+    Ok(files)
 }
 
 /// Collect files that would actually conflict with the target tree
@@ -788,28 +855,9 @@ pub fn fast_forward_impl(
         let mut checkout_builder = git2::build::CheckoutBuilder::new();
         checkout_builder.safe();
         if let Err(e) = repo.checkout_tree(target_tree.as_object(), Some(&mut checkout_builder)) {
-            // Same conflict detection as checkout_branch_internal_impl: safe
-            // mode's error alone doesn't say which files would be
-            // overwritten, so re-derive that list rather than surface the
-            // raw libgit2 error.
-            let is_conflict_error = e.code() == git2::ErrorCode::Uncommitted
-                || e.code() == git2::ErrorCode::Modified
-                || e.message().contains("conflict");
-
-            if is_conflict_error {
-                let conflicting_files = collect_actual_conflicts(&repo, &target_tree)?;
-                if !conflicting_files.is_empty() {
-                    info!(
-                        "fast_forward: safe mode blocked - {} actual conflicting files",
-                        conflicting_files.len()
-                    );
-                    return Err(GitError::UnstagedChangesWouldBeLost {
-                        files: conflicting_files,
-                    });
-                }
-                return Err(GitError::from(e).with_operation("checkout_tree"));
-            }
-            return Err(GitError::from(e).with_operation("checkout_tree"));
+            // Same re-derivation as checkout_branch_internal_impl: safe mode's
+            // error alone doesn't say which files stood in the way.
+            return Err(checkout_refusal(&repo, &target_tree, "fast_forward", e));
         }
     }
 

@@ -515,6 +515,37 @@ fn test_merge_ignores_a_dirty_file_outside_the_merge_set() {
 
 #[test]
 #[serial_test::serial]
+fn test_merge_names_the_untracked_files_in_the_way() {
+    let (_tmp, repo_path) = setup_test_repo();
+    write_and_commit(&repo_path, "a.txt", "A", "base");
+    create_branch(&repo_path, "feature");
+
+    checkout_branch_impl(repo_path.to_str().unwrap(), "feature").expect("checkout feature");
+    write_and_commit(&repo_path, "page.md", "from the branch\n", "their page");
+
+    checkout_default(&repo_path);
+    write_and_commit(&repo_path, "d.txt", "D", "our file");
+
+    // Untracked, and exactly where the merge wants to write.
+    write_file(&repo_path, "page.md", "an unsaved draft\n");
+    let head_before = head_hash(&repo_path);
+
+    let error = merge_impl(repo_path.to_str().unwrap(), "feature", None, None, None)
+        .expect_err("an untracked file in the way must stop the merge");
+
+    match error {
+        GitError::UntrackedFilesWouldBeOverwritten { files } => {
+            assert_eq!(files, vec!["page.md".to_string()])
+        }
+        other => panic!("expected UntrackedFilesWouldBeOverwritten, got {:?}", other),
+    }
+
+    assert_eq!(head_hash(&repo_path), head_before, "HEAD must not move");
+    assert_eq!(read_file(&repo_path, "page.md"), "an unsaved draft\n");
+}
+
+#[test]
+#[serial_test::serial]
 fn test_read_blob_round_trips_content() {
     let (_tmp, repo_path) = setup_test_repo();
     write_and_commit(
@@ -1209,4 +1240,426 @@ fn test_commit_merge_records_the_committer_separately_from_the_author() {
         "a committer that cannot be read back is a committer that was not recorded"
     );
     assert_eq!(info.committer_email, "gantry@example.com");
+}
+
+// ===== cherry_pick =====
+//
+// The landing that keeps history linear: replay one commit onto an advanced
+// HEAD, and fail outright the moment the no-collision assumption is wrong.
+// Same stance as the rest of this module — a conflict is detected, never
+// resolved, and nothing is written when one is found.
+
+/// `commit_all`, but signed by someone in particular, so a test can tell the
+/// original author apart from whoever performed the cherry-pick.
+fn commit_all_as(repo_path: &Path, message: &str, name: &str, email: &str) -> String {
+    let repo = Repository::open(repo_path).expect("Failed to open repository");
+    let mut index = repo.index().expect("Failed to get index");
+    index
+        .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+        .expect("Failed to add all");
+    index
+        .update_all(["*"].iter(), None)
+        .expect("Failed to update all");
+    index.write().expect("Failed to write index");
+
+    let tree_id = index.write_tree().expect("Failed to write tree");
+    let tree = repo.find_tree(tree_id).expect("Failed to find tree");
+    let signature = git2::Signature::now(name, email).expect("Failed to create signature");
+    let parent = repo.head().ok().and_then(|head| head.peel_to_commit().ok());
+    let parents: Vec<_> = parent.iter().collect();
+
+    repo.commit(
+        Some("HEAD"),
+        &signature,
+        &signature,
+        message,
+        &tree,
+        &parents,
+    )
+    .expect("Failed to create commit")
+    .to_string()
+}
+
+/// The shape cherry-pick exists for: a session branch with one commit, and a
+/// scheduled job that advanced the default branch meanwhile, touching a
+/// different file. Returns the session commit.
+fn diverged_without_collision(repo_path: &Path) -> String {
+    write_and_commit(repo_path, "a.txt", "A", "base");
+    create_branch(repo_path, "feature");
+
+    checkout_branch_impl(repo_path.to_str().unwrap(), "feature").expect("checkout feature");
+    write_file(repo_path, "session.md", "session work\n");
+    let picked = commit_all_as(
+        repo_path,
+        "session work",
+        "The Writer",
+        "writer@example.com",
+    );
+
+    checkout_default(repo_path);
+    write_and_commit(repo_path, "scheduled.md", "job\n", "scheduled job");
+
+    picked
+}
+
+#[test]
+#[serial_test::serial]
+fn test_cherry_pick_replays_a_commit_onto_an_advanced_head() {
+    let (_tmp, repo_path) = setup_test_repo();
+    let picked = diverged_without_collision(&repo_path);
+    let ours = head_hash(&repo_path);
+
+    let hash = cherry_pick_impl(
+        repo_path.to_str().unwrap(),
+        &picked,
+        "gantry",
+        "gantry@example.com",
+    )
+    .expect("cherry_pick should succeed");
+
+    assert_eq!(
+        parents_of(&repo_path, &hash),
+        vec![ours],
+        "a cherry-pick has one parent — that is the whole point of it"
+    );
+    assert_eq!(head_hash(&repo_path), hash, "HEAD must have moved");
+
+    // Both the replayed work and what HEAD already had are on disk.
+    assert_eq!(read_file(&repo_path, "session.md"), "session work\n");
+    assert_eq!(read_file(&repo_path, "scheduled.md"), "job\n");
+    assert_eq!(read_file(&repo_path, "a.txt"), "A");
+
+    assert!(
+        status_paths(&repo_path).is_empty(),
+        "index and working tree must agree with the new HEAD"
+    );
+    let repo = Repository::open(&repo_path).unwrap();
+    assert_eq!(repo.state(), RepositoryState::Clean);
+    assert!(!repo_path.join(".git/CHERRY_PICK_HEAD").exists());
+}
+
+#[test]
+#[serial_test::serial]
+fn test_cherry_pick_preserves_the_author_and_message_and_records_the_caller() {
+    let (_tmp, repo_path) = setup_test_repo();
+    let picked = diverged_without_collision(&repo_path);
+
+    let hash = cherry_pick_impl(
+        repo_path.to_str().unwrap(),
+        &picked,
+        "gantry",
+        "gantry@example.com",
+    )
+    .expect("cherry_pick should succeed");
+
+    let (author, committer) = signatures_of(&repo_path, &hash);
+    assert_eq!(
+        author,
+        ("The Writer".to_string(), "writer@example.com".to_string()),
+        "the change still belongs to whoever wrote it"
+    );
+    assert_eq!(
+        committer,
+        ("gantry".to_string(), "gantry@example.com".to_string()),
+        "the replay was performed by the caller"
+    );
+
+    let repo = Repository::open(&repo_path).unwrap();
+    let commit = repo
+        .find_commit(git2::Oid::from_str(&hash).unwrap())
+        .unwrap();
+    assert_eq!(commit.message().unwrap(), "session work");
+}
+
+#[test]
+#[serial_test::serial]
+fn test_cherry_pick_conflict_leaves_the_repository_byte_identical() {
+    let (_tmp, repo_path) = setup_test_repo();
+    diverged_on_page(&repo_path);
+    // The feature tip: both sides edited page.md, so replaying it collides.
+    let picked = branch_tip(&repo_path, "feature");
+
+    let before_worktree = snapshot_worktree(&repo_path);
+    let before_git = snapshot_git_dir(&repo_path);
+
+    let error = cherry_pick_impl(
+        repo_path.to_str().unwrap(),
+        &picked,
+        "gantry",
+        "gantry@example.com",
+    )
+    .expect_err("a colliding cherry-pick must fail");
+
+    match error {
+        GitError::MergeConflict { files } => assert_eq!(files, vec!["page.md".to_string()]),
+        other => panic!("expected MergeConflict, got {:?}", other),
+    }
+
+    assert_eq!(snapshot_worktree(&repo_path), before_worktree);
+    assert_eq!(snapshot_git_dir(&repo_path), before_git);
+    assert!(!repo_path.join(".git/CHERRY_PICK_HEAD").exists());
+}
+
+#[test]
+#[serial_test::serial]
+fn test_cherry_pick_refuses_a_merge_commit() {
+    let (_tmp, repo_path) = setup_test_repo();
+    write_and_commit(&repo_path, "a.txt", "A", "base");
+    create_branch(&repo_path, "feature");
+    checkout_branch_impl(repo_path.to_str().unwrap(), "feature").expect("checkout feature");
+    write_and_commit(&repo_path, "b.txt", "B", "their file");
+    checkout_default(&repo_path);
+    write_and_commit(&repo_path, "d.txt", "D", "our file");
+
+    let merge_commit = merge_impl(repo_path.to_str().unwrap(), "feature", None, None, None)
+        .expect("merge should succeed")
+        .commit_hash
+        .expect("a merged outcome carries a hash");
+
+    create_branch(&repo_path, "later");
+    checkout_branch_impl(repo_path.to_str().unwrap(), "later").expect("checkout later");
+
+    let error = cherry_pick_impl(
+        repo_path.to_str().unwrap(),
+        &merge_commit,
+        "gantry",
+        "gantry@example.com",
+    )
+    .expect_err("a merge commit has no single change to replay");
+
+    match error {
+        GitError::InvalidArgument { argument, .. } => assert_eq!(argument, "commit_hash"),
+        other => panic!("expected InvalidArgument, got {:?}", other),
+    }
+}
+
+/// As `diverged_without_collision`, but the session commit edits a page that
+/// already existed, so the replay's change set contains a tracked path.
+fn diverged_editing_a_tracked_page(repo_path: &Path) -> String {
+    write_and_commit(repo_path, "page.md", "base\n", "base");
+    create_branch(repo_path, "feature");
+
+    checkout_branch_impl(repo_path.to_str().unwrap(), "feature").expect("checkout feature");
+    write_file(repo_path, "page.md", "session work\n");
+    let picked = commit_all_as(
+        repo_path,
+        "session work",
+        "The Writer",
+        "writer@example.com",
+    );
+
+    checkout_default(repo_path);
+    write_and_commit(repo_path, "scheduled.md", "job\n", "scheduled job");
+
+    picked
+}
+
+#[test]
+#[serial_test::serial]
+fn test_cherry_pick_refuses_when_a_path_it_would_change_is_dirty() {
+    let (_tmp, repo_path) = setup_test_repo();
+    let picked = diverged_editing_a_tracked_page(&repo_path);
+
+    // The replay rewrites page.md, and the writer has unsaved edits there.
+    write_file(&repo_path, "page.md", "unsaved draft\n");
+    let head_before = head_hash(&repo_path);
+
+    let error = cherry_pick_impl(
+        repo_path.to_str().unwrap(),
+        &picked,
+        "gantry",
+        "gantry@example.com",
+    )
+    .expect_err("a dirty path in the change set must stop the replay");
+
+    match error {
+        GitError::UnstagedChangesWouldBeLost { files } => {
+            assert_eq!(files, vec!["page.md".to_string()])
+        }
+        other => panic!("expected UnstagedChangesWouldBeLost, got {:?}", other),
+    }
+
+    assert_eq!(head_hash(&repo_path), head_before, "HEAD must not move");
+    assert_eq!(read_file(&repo_path, "page.md"), "unsaved draft\n");
+}
+
+#[test]
+#[serial_test::serial]
+fn test_cherry_pick_names_the_untracked_files_in_the_way_and_writes_nothing() {
+    let (_tmp, repo_path) = setup_test_repo();
+    let picked = diverged_without_collision(&repo_path);
+
+    // An untracked file standing exactly where the replay wants to write. It
+    // has no committed history, so there are no unsaved changes to lose — what
+    // it stands to lose is itself, and the remedy is to move it rather than to
+    // save or discard edits. The refusal must also cost nothing: the commit
+    // object was created before the checkout and is left unreferenced for gc,
+    // and the ref never moved.
+    write_file(&repo_path, "session.md", "unsaved draft\n");
+    let head_before = head_hash(&repo_path);
+
+    let error = cherry_pick_impl(
+        repo_path.to_str().unwrap(),
+        &picked,
+        "gantry",
+        "gantry@example.com",
+    )
+    .expect_err("an untracked file in the way must stop the replay");
+
+    match error {
+        GitError::UntrackedFilesWouldBeOverwritten { files } => {
+            assert_eq!(files, vec!["session.md".to_string()])
+        }
+        other => panic!("expected UntrackedFilesWouldBeOverwritten, got {:?}", other),
+    }
+
+    assert_eq!(head_hash(&repo_path), head_before, "HEAD must not move");
+    assert_eq!(
+        read_file(&repo_path, "session.md"),
+        "unsaved draft\n",
+        "the writer's unsaved page must survive untouched"
+    );
+    let repo = Repository::open(&repo_path).unwrap();
+    assert_eq!(repo.state(), RepositoryState::Clean);
+    assert!(!repo_path.join(".git/CHERRY_PICK_HEAD").exists());
+}
+
+#[test]
+#[serial_test::serial]
+fn test_cherry_pick_ignores_a_dirty_file_outside_its_change_set() {
+    let (_tmp, repo_path) = setup_test_repo();
+    let picked = diverged_without_collision(&repo_path);
+
+    // An unrelated page the writer has open must not block the replay.
+    write_file(&repo_path, "a.txt", "an open draft\n");
+
+    cherry_pick_impl(
+        repo_path.to_str().unwrap(),
+        &picked,
+        "gantry",
+        "gantry@example.com",
+    )
+    .expect("cherry_pick should succeed");
+
+    assert_eq!(read_file(&repo_path, "session.md"), "session work\n");
+    assert_eq!(
+        read_file(&repo_path, "a.txt"),
+        "an open draft\n",
+        "the unrelated draft must survive untouched"
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn test_cherry_pick_of_an_already_applied_commit_is_nothing_to_commit() {
+    let (_tmp, repo_path) = setup_test_repo();
+    let picked = diverged_without_collision(&repo_path);
+
+    cherry_pick_impl(
+        repo_path.to_str().unwrap(),
+        &picked,
+        "gantry",
+        "gantry@example.com",
+    )
+    .expect("the first replay should succeed");
+    let head_before = head_hash(&repo_path);
+
+    let error = cherry_pick_impl(
+        repo_path.to_str().unwrap(),
+        &picked,
+        "gantry",
+        "gantry@example.com",
+    )
+    .expect_err("replaying a commit already applied changes nothing");
+
+    match error {
+        GitError::NothingToCommit => {}
+        other => panic!("expected NothingToCommit, got {:?}", other),
+    }
+    assert_eq!(head_hash(&repo_path), head_before, "HEAD must not move");
+}
+
+#[test]
+#[serial_test::serial]
+fn test_cherry_pick_rejects_an_abbreviated_hash_rather_than_zero_filling_it() {
+    let (_tmp, repo_path) = setup_test_repo();
+    let picked = diverged_without_collision(&repo_path);
+
+    let error = cherry_pick_impl(
+        repo_path.to_str().unwrap(),
+        &picked[..8],
+        "gantry",
+        "gantry@example.com",
+    )
+    .expect_err("an abbreviated hash must not be zero-filled into another oid");
+
+    match error {
+        GitError::InvalidCommitHash { hash } => assert_eq!(hash, picked[..8].to_string()),
+        other => panic!("expected InvalidCommitHash, got {:?}", other),
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn test_cherry_pick_refuses_on_a_detached_head() {
+    let (_tmp, repo_path) = setup_test_repo();
+    let picked = diverged_without_collision(&repo_path);
+
+    let repo = Repository::open(&repo_path).unwrap();
+    let head = repo.head().unwrap().peel_to_commit().unwrap().id();
+    repo.set_head_detached(head).expect("detach HEAD");
+    drop(repo);
+
+    let error = cherry_pick_impl(
+        repo_path.to_str().unwrap(),
+        &picked,
+        "gantry",
+        "gantry@example.com",
+    )
+    .expect_err("a detached HEAD has no branch to land on");
+
+    match error {
+        GitError::DetachedHead => {}
+        other => panic!("expected DetachedHead, got {:?}", other),
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn test_cherry_pick_replays_a_root_commit() {
+    let (_tmp, repo_path) = setup_test_repo();
+    write_and_commit(&repo_path, "a.txt", "A", "base");
+
+    // An orphan branch has a root commit — no parent to diff against. libgit2
+    // takes the empty tree as the base, so the whole commit is the change.
+    let repo = Repository::open(&repo_path).unwrap();
+    repo.set_head("refs/heads/orphan")
+        .expect("point HEAD at an orphan");
+    drop(repo);
+    std::fs::remove_file(repo_path.join("a.txt")).expect("clear the working tree");
+    write_file(&repo_path, "root.md", "root\n");
+    let root = commit_all_as(
+        &repo_path,
+        "orphan root",
+        "The Writer",
+        "writer@example.com",
+    );
+
+    checkout_default(&repo_path);
+
+    let hash = cherry_pick_impl(
+        repo_path.to_str().unwrap(),
+        &root,
+        "gantry",
+        "gantry@example.com",
+    )
+    .expect("a parentless commit is still one change to replay");
+
+    assert_eq!(read_file(&repo_path, "root.md"), "root\n");
+    assert_eq!(
+        read_file(&repo_path, "a.txt"),
+        "A",
+        "replaying an orphan root must not delete what HEAD already had"
+    );
+    assert_eq!(parents_of(&repo_path, &hash).len(), 1);
 }

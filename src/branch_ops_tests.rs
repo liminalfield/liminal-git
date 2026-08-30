@@ -576,3 +576,122 @@ fn test_fast_forward_refuses_up_to_date_branch() {
         other => panic!("expected NotFastForward, got {:?}", other),
     }
 }
+
+// ===== untracked files standing in the way of a checkout =====
+//
+// A file with no committed history has no uncommitted changes to lose, so
+// `collect_actual_conflicts` cannot see it. It has something else to lose —
+// itself — and libgit2 refuses the checkout either way, saying only that
+// something conflicted. These pin the more specific answer.
+
+/// A repository where `feature` adds `page.md` and the default branch has
+/// never had it, so an untracked `page.md` stands exactly where a checkout of
+/// `feature` wants to write.
+fn feature_adds_a_page(repo_path: &Path) {
+    create_test_file(repo_path, "a.txt", "A");
+    commit_file(repo_path, "a.txt", "Initial commit");
+
+    create_branch(repo_path, "feature");
+    checkout_branch_impl(repo_path.to_str().unwrap(), "feature").expect("checkout feature");
+    create_test_file(repo_path, "page.md", "from the branch");
+    commit_file(repo_path, "page.md", "Add page.md on feature");
+
+    checkout_branch_impl(repo_path.to_str().unwrap(), "master")
+        .or_else(|_| checkout_branch_impl(repo_path.to_str().unwrap(), "main"))
+        .expect("checkout default");
+}
+
+#[test]
+#[serial_test::serial]
+fn test_checkout_branch_names_the_untracked_files_in_the_way() {
+    let (_temp_dir, repo_path) = setup_test_repo();
+    feature_adds_a_page(&repo_path);
+
+    create_test_file(&repo_path, "page.md", "an unsaved draft");
+
+    let error = checkout_branch_impl(repo_path.to_str().unwrap(), "feature")
+        .expect_err("an untracked file in the way must stop the checkout");
+
+    match error {
+        GitError::UntrackedFilesWouldBeOverwritten { files } => {
+            assert_eq!(files, vec!["page.md".to_string()])
+        }
+        other => panic!("expected UntrackedFilesWouldBeOverwritten, got {:?}", other),
+    }
+
+    assert_eq!(
+        std::fs::read_to_string(repo_path.join("page.md")).unwrap(),
+        "an unsaved draft",
+        "the draft must survive untouched"
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn test_checkout_branch_ignores_an_untracked_file_the_target_does_not_have() {
+    let (_temp_dir, repo_path) = setup_test_repo();
+    feature_adds_a_page(&repo_path);
+
+    // Untracked, but nothing in the target tree wants that path.
+    create_test_file(&repo_path, "scratch.md", "a note to self");
+
+    checkout_branch_impl(repo_path.to_str().unwrap(), "feature")
+        .expect("an untracked file out of the way must not block the checkout");
+
+    assert_eq!(
+        std::fs::read_to_string(repo_path.join("scratch.md")).unwrap(),
+        "a note to self"
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn test_fast_forward_names_the_untracked_files_in_the_way() {
+    let (_temp_dir, repo_path) = setup_test_repo();
+    feature_adds_a_page(&repo_path);
+
+    create_test_file(&repo_path, "page.md", "an unsaved draft");
+
+    let error = fast_forward_impl(repo_path.to_str().unwrap(), "feature")
+        .expect_err("an untracked file in the way must stop the fast-forward");
+
+    match error {
+        GitError::UntrackedFilesWouldBeOverwritten { files } => {
+            assert_eq!(files, vec!["page.md".to_string()])
+        }
+        other => panic!("expected UntrackedFilesWouldBeOverwritten, got {:?}", other),
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn test_a_tracked_file_still_reports_unstaged_changes_would_be_lost() {
+    let (_temp_dir, repo_path) = setup_test_repo();
+
+    // The regression guard for the split: a file that *is* committed and has
+    // unsaved edits keeps the error it has always had, because the remedy is
+    // different — save or discard, rather than move it out of the way.
+    create_test_file(&repo_path, "page.md", "base");
+    commit_file(&repo_path, "page.md", "Initial commit");
+
+    create_branch(&repo_path, "feature");
+    checkout_branch_impl(repo_path.to_str().unwrap(), "feature").expect("checkout feature");
+    create_test_file(&repo_path, "page.md", "from the branch");
+    commit_file(&repo_path, "page.md", "Edit page.md on feature");
+
+    checkout_branch_impl(repo_path.to_str().unwrap(), "master")
+        .or_else(|_| checkout_branch_impl(repo_path.to_str().unwrap(), "main"))
+        .expect("checkout default");
+
+    create_test_file(&repo_path, "page.md", "an unsaved edit");
+
+    let error = checkout_branch_impl(repo_path.to_str().unwrap(), "feature")
+        .expect_err("a dirty tracked file must stop the checkout");
+
+    match error {
+        GitError::UnstagedChangesWouldBeLost { files } => {
+            assert_eq!(files, vec!["page.md".to_string()])
+        }
+        other => panic!("expected UnstagedChangesWouldBeLost, got {:?}", other),
+    }
+}

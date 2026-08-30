@@ -72,6 +72,17 @@ pub enum GitError {
     UncommittedChanges {
         count: usize,
     },
+    /// An untracked file sits exactly where the operation would write.
+    ///
+    /// Distinct from `UnstagedChangesWouldBeLost` because the remedy is
+    /// different. A tracked file with unsaved edits is answered by saving or
+    /// discarding them; a file with no committed history has no edits to
+    /// save — what it stands to lose is itself, and the answer is to move it
+    /// or delete it. Reporting both as one error would tell the caller to
+    /// offer the wrong thing half the time.
+    UntrackedFilesWouldBeOverwritten {
+        files: Vec<String>,
+    },
     UnstagedChangesWouldBeLost {
         files: Vec<String>,
     },
@@ -106,10 +117,12 @@ pub enum GitError {
     },
     /// Another holder of the repository lock did not release it in time.
     ///
-    /// Unlike every other variant here, nothing is actually wrong: the
-    /// repository is intact and the request was valid. It is the one genuinely
-    /// retriable failure this library produces, and callers are expected to
-    /// treat it that way rather than surfacing it as a fault.
+    /// Unlike most variants here, nothing is actually wrong: the repository
+    /// is intact and the request was valid. It is the clearest of the
+    /// retriable failures this library produces — see `is_retryable`, which
+    /// also answers for libgit2 failures that came from the operating system
+    /// — and callers are expected to treat it that way rather than surfacing
+    /// it as a fault.
     RepositoryLocked {
         path: String,
         waited_ms: u64,
@@ -238,6 +251,12 @@ impl fmt::Display for GitError {
             GitError::UncommittedChanges { count } => {
                 write!(f, "Uncommitted changes: {} file(s)", count)
             }
+            GitError::UntrackedFilesWouldBeOverwritten { files } => write!(
+                f,
+                "Operation would overwrite {} untracked file(s): {:?}",
+                files.len(),
+                files
+            ),
             GitError::UnstagedChangesWouldBeLost { files } => write!(
                 f,
                 "Operation would lose uncommitted changes in {} file(s)",
@@ -414,14 +433,38 @@ impl GitError {
         }
     }
 
-    /// Check if error is retryable
+    /// Whether repeating the same call may succeed.
+    ///
+    /// It is not a claim that it will. It says the failure was about the
+    /// moment rather than about the request, which is the distinction a
+    /// caller's retry loop needs: retry this, surface that one now.
+    ///
+    /// `GitOperationFailure` is what every libgit2 error becomes, so answering
+    /// for it means reading the `class` and `code` it already carries. A
+    /// failure that came from the operating system or the filesystem is the
+    /// same kind of thing `RepositoryLocked` is, one layer down — a sync
+    /// client holding a file open during a checkout is routine on Windows and
+    /// gone a moment later. Everything else libgit2 reports is a real answer
+    /// about the repository, and asking again gets the same one.
+    ///
+    /// `ErrorClass::Checkout` is deliberately absent: a checkout conflict is
+    /// an answer about the tree, not a transient failure to write it.
+    ///
+    /// Compared against git2's enums rather than the integers they happen to
+    /// have today — the discriminants are not part of git2's contract, and
+    /// hardcoding them would rot silently.
     pub fn is_retryable(&self) -> bool {
-        matches!(
-            self,
+        match self {
             GitError::IoError { .. }
-                | GitError::RepositoryCorrupted { .. }
-                | GitError::RepositoryLocked { .. }
-        )
+            | GitError::RepositoryCorrupted { .. }
+            | GitError::RepositoryLocked { .. } => true,
+            GitError::GitOperationFailure { class, code, .. } => {
+                *code == git2::ErrorCode::Locked as i32
+                    || *class == git2::ErrorClass::Os as i32
+                    || *class == git2::ErrorClass::Filesystem as i32
+            }
+            _ => false,
+        }
     }
 
     /// Get error code for structured error responses
@@ -437,6 +480,9 @@ impl GitError {
             GitError::NothingToCommit => "NOTHING_TO_COMMIT",
             GitError::MergeConflict { .. } => "MERGE_CONFLICT",
             GitError::UncommittedChanges { .. } => "UNCOMMITTED_CHANGES",
+            GitError::UntrackedFilesWouldBeOverwritten { .. } => {
+                "UNTRACKED_FILES_WOULD_BE_OVERWRITTEN"
+            }
             GitError::UnstagedChangesWouldBeLost { .. } => "UNSTAGED_CHANGES_WOULD_BE_LOST",
             GitError::DetachedHead => "DETACHED_HEAD",
             GitError::HeadMoved { .. } => "HEAD_MOVED",
@@ -521,6 +567,12 @@ impl GitError {
             }
             GitError::UncommittedChanges { count } => {
                 details.set("count", *count as u32)?;
+            }
+            GitError::UntrackedFilesWouldBeOverwritten { files } => {
+                let files_strs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
+                let files_array = Array::from_vec(env, files_strs)?;
+                details.set("files", files_array)?;
+                details.set("count", files.len() as u32)?;
             }
             GitError::UnstagedChangesWouldBeLost { files } => {
                 let files_strs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
@@ -691,6 +743,17 @@ impl GitError {
                 details.insert(
                     "count".to_string(),
                     serde_json::Value::Number((*count as u64).into()),
+                );
+            }
+            GitError::UntrackedFilesWouldBeOverwritten { files } => {
+                let files_array: Vec<serde_json::Value> = files
+                    .iter()
+                    .map(|f| serde_json::Value::String(f.clone()))
+                    .collect();
+                details.insert("files".to_string(), serde_json::Value::Array(files_array));
+                details.insert(
+                    "count".to_string(),
+                    serde_json::Value::Number((files.len() as u64).into()),
                 );
             }
             GitError::UnstagedChangesWouldBeLost { files } => {
@@ -925,6 +988,137 @@ mod tests {
             name: "bad name".to_string(),
         };
         assert!(!not_retryable.is_retryable());
+
+        assert!(
+            GitError::RepositoryCorrupted {
+                path: "/repo".to_string(),
+                details: "objects missing".to_string(),
+            }
+            .is_retryable()
+        );
+        assert!(
+            GitError::RepositoryLocked {
+                path: "/repo".to_string(),
+                waited_ms: 5000,
+            }
+            .is_retryable()
+        );
+    }
+
+    /// A `GitOperationFailure` carrying the given class and code, with the
+    /// other fields fixed so the tests differ only in what they classify on.
+    fn git_failure(class: git2::ErrorClass, code: git2::ErrorCode) -> GitError {
+        GitError::GitOperationFailure {
+            operation: "checkout_tree".to_string(),
+            class: class as i32,
+            code: code as i32,
+            message: "the file is in use by another process".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_a_locked_git_failure_is_retriable() {
+        let serialized =
+            git_failure(git2::ErrorClass::Os, git2::ErrorCode::Locked).to_serializable();
+
+        assert!(serialized.retriable);
+        assert_eq!(
+            serialized.code, "GIT_OPERATION_FAILURE",
+            "the classification changes, the error code does not"
+        );
+    }
+
+    #[test]
+    fn test_an_os_class_git_failure_is_retriable() {
+        // A sync client holding the file open during checkout: routine on
+        // Windows, and the case a retry loop exists for.
+        assert!(
+            git_failure(git2::ErrorClass::Os, git2::ErrorCode::GenericError)
+                .to_serializable()
+                .retriable
+        );
+    }
+
+    #[test]
+    fn test_a_filesystem_class_git_failure_is_retriable() {
+        assert!(
+            git_failure(git2::ErrorClass::Filesystem, git2::ErrorCode::GenericError)
+                .to_serializable()
+                .retriable
+        );
+    }
+
+    #[test]
+    fn test_an_ordinary_git_failure_is_not_retriable() {
+        // The guard against this becoming "every libgit2 failure is
+        // retriable": a bad reference is a real answer, and repeating the call
+        // will get the same one.
+        assert!(
+            !git_failure(git2::ErrorClass::Reference, git2::ErrorCode::GenericError)
+                .to_serializable()
+                .retriable
+        );
+    }
+
+    #[test]
+    fn test_a_checkout_conflict_is_not_retriable() {
+        // Deliberately excluded: a checkout conflict is a real answer about
+        // the tree, not a transient failure to write it.
+        assert!(
+            !git_failure(git2::ErrorClass::Checkout, git2::ErrorCode::Conflict)
+                .to_serializable()
+                .retriable
+        );
+    }
+
+    #[test]
+    fn test_a_retriable_git_failure_keeps_its_details() {
+        let serialized =
+            git_failure(git2::ErrorClass::Os, git2::ErrorCode::Locked).to_serializable();
+
+        assert_eq!(
+            serialized.details.get("class"),
+            Some(&serde_json::Value::Number(
+                (git2::ErrorClass::Os as i64).into()
+            ))
+        );
+        assert_eq!(
+            serialized.details.get("code"),
+            Some(&serde_json::Value::Number(
+                (git2::ErrorCode::Locked as i64).into()
+            ))
+        );
+        assert_eq!(
+            serialized.details.get("gitMessage"),
+            Some(&serde_json::Value::String(
+                "the file is in use by another process".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_the_three_original_retriable_variants_still_serialize_retriable() {
+        for err in [
+            GitError::IoError {
+                operation: "write".to_string(),
+                error: "device busy".to_string(),
+            },
+            GitError::RepositoryCorrupted {
+                path: "/repo".to_string(),
+                details: "objects missing".to_string(),
+            },
+            GitError::RepositoryLocked {
+                path: "/repo".to_string(),
+                waited_ms: 5000,
+            },
+        ] {
+            let serialized = err.to_serializable();
+            assert!(
+                serialized.retriable,
+                "{} must stay retriable",
+                serialized.code
+            );
+        }
     }
 
     #[test]

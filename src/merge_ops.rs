@@ -147,16 +147,17 @@ pub fn merge_impl(
     }
 
     let message = format!("Merge branch '{}'", branch);
+    let author = crate::utils::read_user_signature(&repo, user_name, user_email)?;
+    let committer = crate::utils::committer_signature(&author, committer)?;
     let commit_id = finish_merge(
         &repo,
         &mut index,
         &head_ref,
-        &our_commit,
-        &their_commit,
+        &[&our_commit, &their_commit],
         &message,
-        user_name,
-        user_email,
-        committer,
+        &author,
+        &committer,
+        "commit (merge)",
     )?;
 
     info!(
@@ -324,16 +325,17 @@ pub fn commit_merge_impl(
         }
     }
 
+    let author = crate::utils::read_user_signature(&repo, user_name, user_email)?;
+    let committer = crate::utils::committer_signature(&author, committer)?;
     let commit_id = finish_merge(
         &repo,
         &mut index,
         &head_ref,
-        &our_commit,
-        &their_commit,
+        &[&our_commit, &their_commit],
         message,
-        user_name,
-        user_email,
-        committer,
+        &author,
+        &committer,
+        "commit (merge)",
     )?;
 
     let commit = repo
@@ -350,6 +352,140 @@ pub fn commit_merge_impl(
 }
 
 // ===== INTERNALS =====
+
+/// Replay one commit's change onto HEAD as a new, single-parent commit.
+///
+/// The landing that keeps history linear. A session branch accumulates work,
+/// the default branch advances underneath it, and `fastForward` is correctly
+/// refused; `merge` answers that with a two-parent history, and this answers it
+/// with a replay. It is a history-shape preference, not a capability the merge
+/// operations lack.
+///
+/// Strict, in the same sense the rest of this module is: a conflict is
+/// detected, never resolved. The replay is performed in memory by
+/// `cherrypick_commit`, and on any conflict the call fails with
+/// `MergeConflict` naming the contested paths while the working tree, the
+/// index and HEAD stay exactly as they were. No `CHERRY_PICK_HEAD`, no
+/// conflict markers, nothing to clean up.
+///
+/// The author is carried over from the commit being replayed — the change
+/// still belongs to whoever wrote it — and the caller signs as committer.
+///
+/// Refuses, without writing anything, when:
+///
+/// - the hash is not a full 40 hex characters (`InvalidCommitHash`). An
+///   abbreviated hash is not resolved here for the same reason `resolve_ref`
+///   will not: `Oid::from_str` zero-fills a short string into a different,
+///   well-formed oid, and applying the wrong commit is far worse than
+///   declining to guess;
+/// - the hash names a merge commit (`InvalidArgument`) — picking one of its
+///   sides is a decision this library does not make for the caller;
+/// - HEAD is detached (`DetachedHead`) — there is no branch for the replay to
+///   land on;
+/// - the replay would change nothing (`NothingToCommit`), which is what
+///   replaying an already-applied commit does;
+/// - a path the replay would change has unsaved edits on disk
+///   (`UnstagedChangesWouldBeLost`). The narrower check `merge` uses rather
+///   than demanding a wholly clean tree: an unrelated draft the writer has
+///   open is none of this operation's business.
+pub fn cherry_pick_impl(
+    repo_path: &str,
+    commit_hash: &str,
+    committer_name: &str,
+    committer_email: &str,
+) -> std::result::Result<String, GitError> {
+    info!("cherry_pick: commit={}", commit_hash);
+    let start = std::time::Instant::now();
+
+    if commit_hash.len() != 40 || !commit_hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(GitError::InvalidCommitHash {
+            hash: commit_hash.to_string(),
+        });
+    }
+    let oid = Oid::from_str(commit_hash).map_err(|_| GitError::InvalidCommitHash {
+        hash: commit_hash.to_string(),
+    })?;
+
+    let repo =
+        Repository::open(repo_path).map_err(|e| GitError::from(e).with_operation("cherry_pick"))?;
+
+    let picked = repo
+        .find_commit(oid)
+        .map_err(|e| GitError::from(e).with_operation("find_commit"))?;
+
+    if picked.parent_count() > 1 {
+        return Err(GitError::InvalidArgument {
+            argument: "commit_hash".to_string(),
+            reason: format!(
+                "{} is a merge commit; which of its sides to replay is not a choice this operation makes",
+                commit_hash
+            ),
+        });
+    }
+
+    let head_ref = repo
+        .head()
+        .map_err(|e| GitError::from(e).with_operation("get_head"))?;
+    if !head_ref.is_branch() {
+        return Err(GitError::DetachedHead);
+    }
+    let our_commit = head_ref
+        .peel_to_commit()
+        .map_err(|e| GitError::from(e).with_operation("peel_to_commit"))?;
+
+    // In memory, like every other write in this module: an abandoned or
+    // refused replay costs the caller nothing.
+    let mut index = repo
+        .cherrypick_commit(&picked, &our_commit, 0, None)
+        .map_err(|e| GitError::from(e).with_operation("cherrypick_commit"))?;
+
+    if index.has_conflicts() {
+        let files = conflicted_files(&index)?
+            .into_iter()
+            .map(|conflict| conflict.path)
+            .collect::<Vec<_>>();
+        info!(
+            "cherry_pick: {} conflicted path(s) in {}ms — nothing written",
+            files.len(),
+            start.elapsed().as_millis()
+        );
+        return Err(GitError::MergeConflict { files });
+    }
+
+    // Checked here rather than in `finish_merge`, which writes a merge commit
+    // and so always has something to record. The tree is written twice as a
+    // result; the second write finds the objects already in the odb.
+    let tree_id = index
+        .write_tree_to(&repo)
+        .map_err(|e| GitError::from(e).with_operation("write_tree_to"))?;
+    if tree_id == our_commit.tree_id() {
+        return Err(GitError::NothingToCommit);
+    }
+
+    let author = picked.author();
+    let committer = git2::Signature::now(committer_name, committer_email)
+        .map_err(|e| GitError::from(e).with_operation("create_signature"))?;
+    let message = picked.message().unwrap_or("").to_string();
+
+    let commit_id = finish_merge(
+        &repo,
+        &mut index,
+        &head_ref,
+        &[&our_commit],
+        &message,
+        &author,
+        &committer,
+        "cherry-pick",
+    )?;
+
+    info!(
+        "cherry_pick: created {} in {}ms",
+        commit_id,
+        start.elapsed().as_millis()
+    );
+
+    Ok(commit_id.to_string())
+}
 
 /// The three sides of every contested path, sorted by path so two runs of the
 /// same merge produce the same list.
@@ -465,8 +601,13 @@ fn join_paths<'a>(paths: impl Iterator<Item = &'a String>) -> String {
     paths.cloned().collect::<Vec<_>>().join(", ")
 }
 
-/// Turn a conflict-free in-memory index into a merge commit, updating the
-/// working tree, the on-disk index and the current ref.
+/// Turn a conflict-free in-memory index into a commit, updating the working
+/// tree, the on-disk index and the current ref.
+///
+/// Serves both merges, which pass two parents, and `cherry_pick`, which passes
+/// one. The signatures are passed in rather than resolved here because a
+/// cherry-pick's author comes from the commit being replayed, not from the
+/// caller.
 ///
 /// The order is deliberate and is the whole reason an abandoned or refused
 /// merge costs nothing:
@@ -486,12 +627,11 @@ fn finish_merge(
     repo: &Repository,
     index: &mut Index,
     head_ref: &git2::Reference<'_>,
-    our_commit: &Commit<'_>,
-    their_commit: &Commit<'_>,
+    parents: &[&Commit<'_>],
     message: &str,
-    user_name: Option<&str>,
-    user_email: Option<&str>,
-    committer: Option<(&str, &str)>,
+    author: &git2::Signature<'_>,
+    committer: &git2::Signature<'_>,
+    reflog_action: &str,
 ) -> std::result::Result<Oid, GitError> {
     let tree_id = index
         .write_tree_to(repo)
@@ -514,25 +654,15 @@ fn finish_merge(
         return Err(GitError::UnstagedChangesWouldBeLost { files: dirty });
     }
 
-    let signature = crate::utils::read_user_signature(repo, user_name, user_email)?;
-    let committer = crate::utils::committer_signature(&signature, committer)?;
-
     // No ref update yet: an unreachable commit is not a state anyone has to
     // clean up if the checkout below refuses.
     let commit_id = repo
-        .commit(
-            None,
-            &signature,
-            &committer,
-            message,
-            &tree,
-            &[our_commit, their_commit],
-        )
+        .commit(None, author, committer, message, &tree, parents)
         .map_err(|e| GitError::from(e).with_operation("create_commit"))?;
 
     checkout_merged_tree(repo, &tree)?;
 
-    let reflog_message = format!("commit (merge): {}", message);
+    let reflog_message = format!("{}: {}", reflog_action, message);
     if head_ref.is_branch() {
         let branch_ref_name = head_ref.name().ok_or_else(|| GitError::InvalidBranchName {
             name: "<non-UTF-8 branch ref>".to_string(),
@@ -607,20 +737,10 @@ fn checkout_merged_tree(repo: &Repository, tree: &Tree<'_>) -> std::result::Resu
     builder.safe();
 
     if let Err(e) = repo.checkout_tree(tree.as_object(), Some(&mut builder)) {
-        // Same conflict detection as checkout_branch_internal_impl and
+        // Same re-derivation as checkout_branch_internal_impl and
         // fast_forward_impl: safe mode's own error does not say which files
-        // stood in the way, so re-derive the list.
-        let is_conflict_error = e.code() == git2::ErrorCode::Uncommitted
-            || e.code() == git2::ErrorCode::Modified
-            || e.message().contains("conflict");
-
-        if is_conflict_error {
-            let files = crate::branch_ops::collect_actual_conflicts(repo, tree)?;
-            if !files.is_empty() {
-                return Err(GitError::UnstagedChangesWouldBeLost { files });
-            }
-        }
-        return Err(GitError::from(e).with_operation("checkout_tree"));
+        // stood in the way, nor whether they were tracked.
+        return Err(crate::branch_ops::checkout_refusal(repo, tree, "merge", e));
     }
 
     Ok(())
@@ -647,6 +767,22 @@ pub async fn merge(
             user_email.as_deref(),
             options.as_ref(),
         )
+    })
+    .await
+}
+
+#[cfg(feature = "napi-binding")]
+pub async fn cherry_pick(
+    service: &GitService,
+    repo_path: String,
+    commit_hash: String,
+    committer_name: String,
+    committer_email: String,
+) -> Result<String> {
+    let structured = service.feature_flags().structured_errors;
+    crate::utils::run_blocking(structured, move || {
+        let _guard = crate::utils::lock_repo(&repo_path)?;
+        cherry_pick_impl(&repo_path, &commit_hash, &committer_name, &committer_email)
     })
     .await
 }

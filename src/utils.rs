@@ -426,6 +426,7 @@ pub fn git_error_to_napi_with_flags(error: GitError, structured: bool) -> NapiEr
         GitError::RefNotFound { .. } => Status::GenericFailure,
         GitError::EmptyRepository { .. } => Status::GenericFailure,
         GitError::UncommittedChanges { .. } => Status::GenericFailure,
+        GitError::UntrackedFilesWouldBeOverwritten { .. } => Status::GenericFailure,
         GitError::UnstagedChangesWouldBeLost { .. } => Status::GenericFailure,
         GitError::ConfigMissing { .. } => Status::GenericFailure,
         GitError::CannotDeleteCurrentBranch { .. } => Status::GenericFailure,

@@ -172,6 +172,16 @@ pub fn validate_committer(options: Option<&crate::types::CommitOptions>) -> Resu
     validate_identity(name, email, &IdentityLabels::COMMITTER)
 }
 
+/// Validate an identity that is the committer rather than the author, so the
+/// errors name the argument the caller actually passed. `cherryPick` takes one
+/// directly: the author comes from the commit being replayed.
+pub fn validate_committer_info(
+    committer_name: &str,
+    committer_email: &str,
+) -> Result<(), GitError> {
+    validate_identity(committer_name, committer_email, &IdentityLabels::COMMITTER)
+}
+
 /// What an identity is called in the errors `validate_identity` produces.
 struct IdentityLabels {
     noun: &'static str,

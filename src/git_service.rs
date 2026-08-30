@@ -1028,6 +1028,43 @@ impl GitService {
         .await
     }
 
+    /// Replay one commit's change onto HEAD as a new, single-parent commit.
+    ///
+    /// The landing that keeps history linear where `merge` would write a
+    /// two-parent commit. Strict in the same way the merge operations are: a
+    /// conflict is detected, never resolved. On any conflict the call fails
+    /// with `MERGE_CONFLICT` naming the contested paths, and the working tree,
+    /// the index and HEAD are exactly as they were — no `CHERRY_PICK_HEAD`, no
+    /// conflict markers, nothing to clean up.
+    ///
+    /// The author is carried over from the commit being replayed; the caller
+    /// signs as committer. `commitHash` must be the full 40 characters.
+    ///
+    /// Refuses with `INVALID_ARGUMENT` for a merge commit, `DETACHED_HEAD`
+    /// when there is no branch to land on, `NOTHING_TO_COMMIT` when the commit
+    /// is already applied, and `UNSTAGED_CHANGES_WOULD_BE_LOST` when a path it
+    /// would change has unsaved edits on disk.
+    #[napi]
+    pub async fn cherry_pick(
+        &self,
+        repo_path: String,
+        commit_hash: String,
+        committer_name: String,
+        committer_email: String,
+    ) -> Result<String> {
+        validate_repo_path(&repo_path)?;
+        validate_commit_hash(&commit_hash)?;
+        validate_committer_info(&committer_name, &committer_email)?;
+        merge_ops::cherry_pick(
+            self,
+            repo_path,
+            commit_hash,
+            committer_name,
+            committer_email,
+        )
+        .await
+    }
+
     /// List all tags in the repository
     #[napi]
     pub async fn list_tags(&self, repo_path: String) -> Result<Vec<TagInfo>> {

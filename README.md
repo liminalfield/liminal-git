@@ -428,9 +428,54 @@ the paths that merged cleanly and cannot get it subtly wrong. If the repository
 moved while the writer was deciding, `commitMerge` refuses with `HEAD_MOVED`
 rather than committing against a stale base.
 
-**Not** supported, deliberately: `clone`, and any automatic conflict resolution
-strategy. Which of two versions of a writer's work survives is not a decision
-this library will make on their behalf.
+`cherryPick` is the same landing with linear history. Where `merge` writes a
+two-parent commit, `cherryPick` replays one commit's change onto HEAD as a new
+single-parent commit — the case being a session branch that accumulated work
+while a scheduled job advanced the target, so `fastForward` is correctly
+refused and the caller would rather not have a merge commit:
+
+```js
+const hash = await git.cherryPick(repo, sessionCommit, 'my-agent', 'agent@example.com');
+```
+
+It is strict in the same way the merge operations are: a conflict is detected,
+never resolved. On any conflict it fails with `MERGE_CONFLICT` naming the
+contested paths, and the working tree, the index and HEAD are exactly as they
+were — no `CHERRY_PICK_HEAD`, no conflict markers, nothing to clean up.
+
+The author is carried over from the commit being replayed, because the change
+still belongs to whoever wrote it; the caller signs as committer. `commitHash`
+must be the full 40 characters — an abbreviated hash is `INVALID_COMMIT_HASH`
+rather than being zero-filled into a different, well-formed oid and applying
+the wrong commit. It refuses a merge commit with `INVALID_ARGUMENT` (which of
+its sides to replay is not a choice this library makes), a detached HEAD with
+`DETACHED_HEAD`, an already-applied commit with `NOTHING_TO_COMMIT`, and a
+change set containing a page with unsaved edits with
+`UNSTAGED_CHANGES_WOULD_BE_LOST`.
+
+### Two ways a page can be in the way
+
+Every operation that writes the working tree — `checkoutBranch`, `fastForward`,
+`merge`, `cherryPick` — refuses rather than overwrite a page the writer has
+not committed. Which refusal you get says what to do about it, because the two
+call for different remedies:
+
+| The page is | Error | `details.files` | The remedy |
+|---|---|---|---|
+| tracked, with unsaved edits | `UNSTAGED_CHANGES_WOULD_BE_LOST` | the paths | save or discard the edits |
+| untracked | `UNTRACKED_FILES_WOULD_BE_OVERWRITTEN` | the paths | move or delete the file |
+
+An untracked page has no committed history, so it has no *changes* to lose —
+what it stands to lose is itself, and telling the writer to "save or discard
+your edits" would be advice they cannot act on. Both name the exact paths, so
+a host application can offer the right thing.
+
+Untracked files that the incoming tree does not want are none of these
+operations' business and never block anything.
+
+**Not** supported, deliberately: `clone`, `revert`, cherry-pick ranges, and any
+automatic conflict resolution strategy. Which of two versions of a writer's
+work survives is not a decision this library will make on their behalf.
 
 Credentials are passed **per operation** rather than held by the service. This
 library has no business owning secrets; the host application knows where they
@@ -498,7 +543,7 @@ The codes are stable:
 
 - **Repository** — `REPOSITORY_NOT_FOUND`, `REPOSITORY_CORRUPTED`, `INVALID_REPOSITORY`, `REPOSITORY_LOCKED`
 - **Files** — `FILE_NOT_FOUND`, `FILE_NOT_IN_REPOSITORY`, `BLOB_NOT_UTF8`, `PATH_TRAVERSAL`
-- **Operations** — `NOTHING_TO_COMMIT`, `MERGE_CONFLICT`, `UNCOMMITTED_CHANGES`, `UNSTAGED_CHANGES_WOULD_BE_LOST`, `DETACHED_HEAD`, `CONFIG_MISSING`
+- **Operations** — `NOTHING_TO_COMMIT`, `MERGE_CONFLICT`, `UNCOMMITTED_CHANGES`, `UNSTAGED_CHANGES_WOULD_BE_LOST`, `UNTRACKED_FILES_WOULD_BE_OVERWRITTEN`, `DETACHED_HEAD`, `CONFIG_MISSING`
 - **Merge resolution** — `HEAD_MOVED`, `UNRESOLVED_CONFLICTS`, `MERGE_NO_LONGER_CONFLICTS`
 - **Branches** — `BRANCH_NOT_FOUND`, `BRANCH_ALREADY_EXISTS`, `CANNOT_DELETE_CURRENT_BRANCH`, `BRANCH_NOT_MERGED`, `NOT_FAST_FORWARD`
 - **Tags** — `TAG_NOT_FOUND`, `TAG_ALREADY_EXISTS`
@@ -506,8 +551,37 @@ The codes are stable:
 - **Validation** — `INVALID_PATH`, `INVALID_ARGUMENT`, `INVALID_COMMIT_HASH`, `INVALID_BRANCH_NAME`, `INVALID_TAG_NAME`
 - **System** — `IO_ERROR`, `GIT_OPERATION_FAILURE`
 
-Only `IO_ERROR`, `REPOSITORY_CORRUPTED` and `REPOSITORY_LOCKED` are marked
-retriable.
+### What `retriable` means
+
+**True means the same call may succeed if repeated. It is not a claim that it
+will.** It says the failure was about the moment rather than about the request,
+which is the distinction a retry loop needs: retry this one, surface that one
+now.
+
+Retriable:
+
+- `IO_ERROR`, `REPOSITORY_CORRUPTED` and `REPOSITORY_LOCKED` — always.
+- `GIT_OPERATION_FAILURE` — **when it came from the operating system**. Every
+  libgit2 failure arrives under this one code, so the flag is decided from the
+  `class` and `code` in `details`: libgit2's `Locked` code, or its `Os` or
+  `Filesystem` classes. That is the case a retry loop is usually written for —
+  a sync client (Google Drive, Dropbox, OneDrive) holding a file open while
+  `discardChanges` or a checkout writes it, which is routine on Windows and
+  gone a moment later.
+
+Everything else is `false`, including a `GIT_OPERATION_FAILURE` from any other
+class. A checkout conflict is deliberately not retriable: it is an answer about
+the tree, not a transient failure to write it.
+
+So the useful shape on the calling side is:
+
+```js
+if (parsed?.retriable) { /* back off and try again */ }
+else { /* surface it now — a second attempt gets the same answer */ }
+```
+
+A blanket "retry everything three times" spends the backoff on `DETACHED_HEAD`
+and `PATH_TRAVERSAL`, which will never succeed on a second attempt.
 
 ### The codes are API surface
 
@@ -583,7 +657,7 @@ npm run build                        # the Node addon (napi build --release)
 cargo test --no-default-features
 ```
 
-344 tests across ten targets. `--no-default-features` is required rather than
+367 tests across ten targets. `--no-default-features` is required rather than
 preferred: with the `napi-binding` feature on, a test binary fails at the
 **linker**, because napi resolves its symbols from the host Node process at run
 time and those symbols do not exist in a test executable. Disabling the feature
