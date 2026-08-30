@@ -237,7 +237,7 @@ fn test_merge_clean_disjoint_files_creates_two_parent_commit() {
     checkout_default(&repo_path);
     let ours = write_and_commit(&repo_path, "d.txt", "D", "our file");
 
-    let outcome = merge_impl(repo_path.to_str().unwrap(), "feature", None, None)
+    let outcome = merge_impl(repo_path.to_str().unwrap(), "feature", None, None, None)
         .expect("merge should succeed");
 
     assert_eq!(outcome.kind, "merged");
@@ -274,7 +274,7 @@ fn test_merge_up_to_date_writes_nothing() {
     let base = write_and_commit(&repo_path, "a.txt", "A", "base");
     create_branch(&repo_path, "feature"); // feature == HEAD
 
-    let outcome = merge_impl(repo_path.to_str().unwrap(), "feature", None, None)
+    let outcome = merge_impl(repo_path.to_str().unwrap(), "feature", None, None, None)
         .expect("merge should succeed");
 
     assert_eq!(outcome.kind, "up-to-date");
@@ -297,7 +297,7 @@ fn test_merge_fast_forward_creates_no_merge_commit() {
 
     checkout_default(&repo_path);
 
-    let outcome = merge_impl(repo_path.to_str().unwrap(), "feature", None, None)
+    let outcome = merge_impl(repo_path.to_str().unwrap(), "feature", None, None, None)
         .expect("merge should succeed");
 
     assert_eq!(outcome.kind, "fast-forwarded");
@@ -317,7 +317,7 @@ fn test_merge_conflict_reports_all_three_sides() {
     let (_tmp, repo_path) = setup_test_repo();
     diverged_on_page(&repo_path);
 
-    let outcome = merge_impl(repo_path.to_str().unwrap(), "feature", None, None)
+    let outcome = merge_impl(repo_path.to_str().unwrap(), "feature", None, None, None)
         .expect("merge should succeed");
 
     assert_eq!(outcome.kind, "conflicted");
@@ -353,7 +353,7 @@ fn test_merge_delete_modify_conflict_has_no_oid_for_the_deleting_side() {
     checkout_default(&repo_path);
     write_and_commit(&repo_path, "page.md", "ours\n", "our edit");
 
-    let outcome = merge_impl(repo_path.to_str().unwrap(), "feature", None, None)
+    let outcome = merge_impl(repo_path.to_str().unwrap(), "feature", None, None, None)
         .expect("merge should succeed");
 
     assert_eq!(outcome.kind, "conflicted");
@@ -377,7 +377,13 @@ fn test_merge_unknown_branch_is_branch_not_found() {
     let (_tmp, repo_path) = setup_test_repo();
     write_and_commit(&repo_path, "a.txt", "A", "base");
 
-    match merge_impl(repo_path.to_str().unwrap(), "does-not-exist", None, None) {
+    match merge_impl(
+        repo_path.to_str().unwrap(),
+        "does-not-exist",
+        None,
+        None,
+        None,
+    ) {
         Err(GitError::BranchNotFound { name }) => assert_eq!(name, "does-not-exist"),
         other => panic!("expected BranchNotFound, got {:?}", other),
     }
@@ -396,7 +402,7 @@ fn test_conflicted_merge_leaves_the_repository_byte_identical() {
     let head_before = head_hash(&repo_path);
     let status_before = status_paths(&repo_path);
 
-    let outcome = merge_impl(repo_path.to_str().unwrap(), "feature", None, None)
+    let outcome = merge_impl(repo_path.to_str().unwrap(), "feature", None, None, None)
         .expect("merge should succeed");
     assert_eq!(outcome.kind, "conflicted");
 
@@ -454,7 +460,7 @@ fn test_merge_refuses_when_a_file_in_the_merge_set_is_dirty() {
     // The writer has unsaved edits to the very page the merge would rewrite.
     write_file(&repo_path, "page.md", "unsaved\n");
 
-    match merge_impl(repo_path.to_str().unwrap(), "feature", None, None) {
+    match merge_impl(repo_path.to_str().unwrap(), "feature", None, None, None) {
         Err(GitError::UnstagedChangesWouldBeLost { files }) => {
             assert_eq!(files, vec!["page.md".to_string()]);
         }
@@ -493,7 +499,7 @@ fn test_merge_ignores_a_dirty_file_outside_the_merge_set() {
     // notes.md is dirty but the merge does not touch it.
     write_file(&repo_path, "notes.md", "an unsaved draft\n");
 
-    let outcome = merge_impl(repo_path.to_str().unwrap(), "feature", None, None)
+    let outcome = merge_impl(repo_path.to_str().unwrap(), "feature", None, None, None)
         .expect("merge should succeed");
 
     assert_eq!(outcome.kind, "merged");
@@ -604,7 +610,7 @@ fn test_commit_merge_happy_path() {
     let ours = head_hash(&repo_path);
     let theirs = branch_tip(&repo_path, "feature");
 
-    let outcome = merge_impl(repo_path.to_str().unwrap(), "feature", None, None)
+    let outcome = merge_impl(repo_path.to_str().unwrap(), "feature", None, None, None)
         .expect("merge should succeed");
     assert_eq!(outcome.kind, "conflicted");
     assert_eq!(outcome.conflicts.len(), 1);
@@ -619,6 +625,7 @@ fn test_commit_merge_happy_path() {
             content: Some("ours and theirs, reconciled\n".to_string()),
         }],
         "Merge branch 'feature'",
+        None,
         None,
         None,
     )
@@ -657,7 +664,8 @@ fn test_commit_merge_refuses_when_head_moved() {
     conflicted_with_clean_neighbours(&repo_path);
 
     let stale = head_hash(&repo_path);
-    merge_impl(repo_path.to_str().unwrap(), "feature", None, None).expect("merge should succeed");
+    merge_impl(repo_path.to_str().unwrap(), "feature", None, None, None)
+        .expect("merge should succeed");
 
     // Another window commits while the resolution sits open.
     let moved = write_and_commit(&repo_path, "elsewhere.md", "elsewhere\n", "another window");
@@ -671,6 +679,7 @@ fn test_commit_merge_refuses_when_head_moved() {
             content: Some("reconciled\n".to_string()),
         }],
         "Merge branch 'feature'",
+        None,
         None,
         None,
     ) {
@@ -713,6 +722,7 @@ fn test_commit_merge_refuses_a_path_that_is_not_conflicted() {
         "Merge branch 'feature'",
         None,
         None,
+        None,
     ) {
         Err(GitError::InvalidArgument { argument, reason }) => {
             assert_eq!(argument, "resolvedFiles");
@@ -745,7 +755,7 @@ fn test_commit_merge_refuses_a_conflicted_path_left_unresolved() {
     write_file(&repo_path, "page.md", "ours\n");
     let ours = write_and_commit(&repo_path, "other.md", "ours\n", "our edits");
 
-    let outcome = merge_impl(repo_path.to_str().unwrap(), "feature", None, None)
+    let outcome = merge_impl(repo_path.to_str().unwrap(), "feature", None, None, None)
         .expect("merge should succeed");
     assert_eq!(outcome.conflicts.len(), 2, "both pages contest");
     assert_eq!(
@@ -767,6 +777,7 @@ fn test_commit_merge_refuses_a_conflicted_path_left_unresolved() {
             content: Some("reconciled\n".to_string()),
         }],
         "Merge branch 'feature'",
+        None,
         None,
         None,
     ) {
@@ -795,7 +806,7 @@ fn test_commit_merge_refuses_when_the_merge_no_longer_conflicts() {
     let ours = head_hash(&repo_path);
 
     // The writer sees the conflict and starts resolving page.md.
-    let outcome = merge_impl(repo_path.to_str().unwrap(), "feature", None, None)
+    let outcome = merge_impl(repo_path.to_str().unwrap(), "feature", None, None, None)
         .expect("merge should succeed");
     assert_eq!(outcome.kind, "conflicted");
 
@@ -816,6 +827,7 @@ fn test_commit_merge_refuses_when_the_merge_no_longer_conflicts() {
             content: Some("reconciled\n".to_string()),
         }],
         "Merge branch 'feature'",
+        None,
         None,
         None,
     ) {
@@ -859,6 +871,7 @@ fn test_commit_merge_refuses_when_a_merge_set_path_is_dirty() {
         "Merge branch 'feature'",
         None,
         None,
+        None,
     ) {
         Err(GitError::UnstagedChangesWouldBeLost { files }) => {
             assert_eq!(files, vec!["notes.md".to_string()]);
@@ -890,7 +903,7 @@ fn test_commit_merge_resolves_a_delete_modify_as_a_deletion() {
     checkout_default(&repo_path);
     let ours = write_and_commit(&repo_path, "page.md", "ours\n", "our edit");
 
-    let outcome = merge_impl(repo_path.to_str().unwrap(), "feature", None, None)
+    let outcome = merge_impl(repo_path.to_str().unwrap(), "feature", None, None, None)
         .expect("merge should succeed");
     assert_eq!(outcome.kind, "conflicted");
 
@@ -903,6 +916,7 @@ fn test_commit_merge_resolves_a_delete_modify_as_a_deletion() {
             content: None,
         }],
         "Merge branch 'feature'",
+        None,
         None,
         None,
     )
@@ -943,7 +957,7 @@ fn test_merge_refuses_to_delete_a_page_with_unsaved_edits() {
     // The writer is still editing the page their side deleted.
     write_file(&repo_path, "gone.md", "unsaved draft\n");
 
-    match merge_impl(repo_path.to_str().unwrap(), "feature", None, None) {
+    match merge_impl(repo_path.to_str().unwrap(), "feature", None, None, None) {
         Err(GitError::UnstagedChangesWouldBeLost { files }) => {
             assert_eq!(files, vec!["gone.md".to_string()]);
         }
@@ -977,8 +991,222 @@ fn test_merge_deletes_a_page_the_writer_also_deleted() {
     // is nothing to lose and nothing to refuse.
     std::fs::remove_file(repo_path.join("gone.md")).expect("delete gone.md locally");
 
-    let outcome = merge_impl(repo_path.to_str().unwrap(), "feature", None, None)
+    let outcome = merge_impl(repo_path.to_str().unwrap(), "feature", None, None, None)
         .expect("merge should succeed");
     assert_eq!(outcome.kind, "merged");
     assert!(!repo_path.join("gone.md").exists());
+}
+
+// ===== committer identity, and a merge with somewhere to put it =====
+
+/// `((author name, author email), (committer name, committer email))`.
+fn signatures_of(repo_path: &Path, hash: &str) -> ((String, String), (String, String)) {
+    let repo = Repository::open(repo_path).expect("Failed to open repository");
+    let commit = repo
+        .find_commit(git2::Oid::from_str(hash).expect("valid oid"))
+        .expect("Failed to find commit");
+    let author = commit.author();
+    let committer = commit.committer();
+    (
+        (
+            author.name().unwrap().to_string(),
+            author.email().unwrap().to_string(),
+        ),
+        (
+            committer.name().unwrap().to_string(),
+            committer.email().unwrap().to_string(),
+        ),
+    )
+}
+
+fn merge_as(committer_name: &str, committer_email: &str, no_fast_forward: bool) -> MergeOptions {
+    MergeOptions {
+        committer_name: Some(committer_name.to_string()),
+        committer_email: Some(committer_email.to_string()),
+        no_fast_forward: Some(no_fast_forward),
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn test_merge_records_the_committer_separately_from_the_author() {
+    let (_tmp, repo_path) = setup_test_repo();
+    write_and_commit(&repo_path, "a.txt", "A", "base");
+    create_branch(&repo_path, "feature");
+
+    checkout_branch_impl(repo_path.to_str().unwrap(), "feature").expect("checkout feature");
+    write_and_commit(&repo_path, "b.txt", "B", "their file");
+
+    checkout_default(&repo_path);
+    write_and_commit(&repo_path, "d.txt", "D", "our file");
+
+    let outcome = merge_impl(
+        repo_path.to_str().unwrap(),
+        "feature",
+        Some("The PM"),
+        Some("pm@example.com"),
+        Some(&merge_as("gantry", "gantry@example.com", false)),
+    )
+    .expect("merge should succeed");
+
+    assert_eq!(outcome.kind, "merged");
+    let hash = outcome
+        .commit_hash
+        .expect("a merged outcome carries a hash");
+    let (author, committer) = signatures_of(&repo_path, &hash);
+    assert_eq!(author, ("The PM".to_string(), "pm@example.com".to_string()));
+    assert_eq!(
+        committer,
+        ("gantry".to_string(), "gantry@example.com".to_string())
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn test_merge_no_fast_forward_writes_a_merge_commit_under_the_given_identity() {
+    let (_tmp, repo_path) = setup_test_repo();
+    let base = write_and_commit(&repo_path, "a.txt", "A", "base");
+    create_branch(&repo_path, "feature");
+
+    checkout_branch_impl(repo_path.to_str().unwrap(), "feature").expect("checkout feature");
+    write_and_commit(&repo_path, "b.txt", "B", "agent change");
+    let feature_tip = branch_tip(&repo_path, "feature");
+
+    checkout_default(&repo_path);
+
+    // Nothing has moved on the target branch, so this would fast-forward and
+    // leave the agent's commit as the tip with no record of the review.
+    let outcome = merge_impl(
+        repo_path.to_str().unwrap(),
+        "feature",
+        Some("The PM"),
+        Some("pm@example.com"),
+        Some(&merge_as("gantry", "gantry@example.com", true)),
+    )
+    .expect("merge should succeed");
+
+    assert_eq!(outcome.kind, "merged");
+    let hash = outcome
+        .commit_hash
+        .expect("a merged outcome carries a hash");
+    assert_eq!(head_hash(&repo_path), hash, "HEAD must have moved");
+    assert_eq!(
+        parents_of(&repo_path, &hash),
+        vec![base, feature_tip],
+        "HEAD must be the first parent and the merged branch the second"
+    );
+
+    let (author, committer) = signatures_of(&repo_path, &hash);
+    assert_eq!(author, ("The PM".to_string(), "pm@example.com".to_string()));
+    assert_eq!(
+        committer,
+        ("gantry".to_string(), "gantry@example.com".to_string())
+    );
+
+    // The merged work is on disk, not merely in the tree object.
+    assert_eq!(read_file(&repo_path, "b.txt"), "B");
+    assert!(
+        status_paths(&repo_path).is_empty(),
+        "index and working tree must agree with the new HEAD"
+    );
+    let repo = Repository::open(&repo_path).unwrap();
+    assert_eq!(repo.state(), RepositoryState::Clean);
+}
+
+#[test]
+#[serial_test::serial]
+fn test_merge_fast_forwards_when_not_asked_to_refuse() {
+    let (_tmp, repo_path) = setup_test_repo();
+    write_and_commit(&repo_path, "a.txt", "A", "base");
+    create_branch(&repo_path, "feature");
+
+    checkout_branch_impl(repo_path.to_str().unwrap(), "feature").expect("checkout feature");
+    write_and_commit(&repo_path, "b.txt", "B", "their file");
+    let feature_tip = branch_tip(&repo_path, "feature");
+
+    checkout_default(&repo_path);
+
+    let outcome = merge_impl(
+        repo_path.to_str().unwrap(),
+        "feature",
+        None,
+        None,
+        Some(&merge_as("gantry", "gantry@example.com", false)),
+    )
+    .expect("merge should succeed");
+
+    assert_eq!(
+        outcome.kind, "fast-forwarded",
+        "noFastForward: false must leave the default alone"
+    );
+    assert_eq!(outcome.commit_hash, Some(feature_tip));
+}
+
+#[test]
+#[serial_test::serial]
+fn test_merge_no_fast_forward_leaves_an_up_to_date_merge_alone() {
+    let (_tmp, repo_path) = setup_test_repo();
+    let base = write_and_commit(&repo_path, "a.txt", "A", "base");
+    create_branch(&repo_path, "feature"); // feature == HEAD
+
+    let outcome = merge_impl(
+        repo_path.to_str().unwrap(),
+        "feature",
+        Some("The PM"),
+        Some("pm@example.com"),
+        Some(&merge_as("gantry", "gantry@example.com", true)),
+    )
+    .expect("merge should succeed");
+
+    assert_eq!(
+        outcome.kind, "up-to-date",
+        "there is nothing to merge, so there is nothing to attribute"
+    );
+    assert_eq!(outcome.commit_hash, Some(base));
+    assert_eq!(commit_count(&repo_path), 1, "no new commit may be created");
+}
+
+#[test]
+#[serial_test::serial]
+fn test_commit_merge_records_the_committer_separately_from_the_author() {
+    let (_tmp, repo_path) = setup_test_repo();
+    conflicted_with_clean_neighbours(&repo_path);
+
+    let ours = head_hash(&repo_path);
+    merge_impl(repo_path.to_str().unwrap(), "feature", None, None, None)
+        .expect("merge should succeed");
+
+    let info = commit_merge_impl(
+        repo_path.to_str().unwrap(),
+        "feature",
+        &ours,
+        &[ResolvedFile {
+            path: "page.md".to_string(),
+            content: Some("ours and theirs, reconciled\n".to_string()),
+        }],
+        "Merge branch 'feature'",
+        Some("The PM"),
+        Some("pm@example.com"),
+        Some(&CommitOptions {
+            committer_name: Some("gantry".to_string()),
+            committer_email: Some("gantry@example.com".to_string()),
+        }),
+    )
+    .expect("commit_merge should succeed");
+
+    let (author, committer) = signatures_of(&repo_path, &info.hash);
+    assert_eq!(author, ("The PM".to_string(), "pm@example.com".to_string()));
+    assert_eq!(
+        committer,
+        ("gantry".to_string(), "gantry@example.com".to_string())
+    );
+    assert_eq!(
+        info.author_name, "The PM",
+        "CommitInfo must report the author it was given"
+    );
+    assert_eq!(
+        info.committer_name, "gantry",
+        "a committer that cannot be read back is a committer that was not recorded"
+    );
+    assert_eq!(info.committer_email, "gantry@example.com");
 }

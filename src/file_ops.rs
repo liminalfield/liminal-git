@@ -5,6 +5,7 @@ use git2::{IndexEntry, IndexTime, Repository, Signature, Status, StatusOptions};
 use log::{error, info};
 use std::fs;
 
+use crate::types::CommitOptions;
 use crate::utils::normalize_git_path;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -16,9 +17,14 @@ pub fn move_file_impl(
     message: &str,
     user_name: &str,
     user_email: &str,
+    options: Option<&CommitOptions>,
 ) -> Result<String, GitError> {
     info!("move_file: source={} dest={}", source_file, dest_file);
     let start = std::time::Instant::now();
+
+    // Resolved before the file is touched: an identity the operation is going
+    // to refuse must not leave the move half-done on disk.
+    let committer = crate::utils::committer_pair(options)?;
 
     let repo =
         Repository::open(repo_path).map_err(|e| GitError::from(e).with_operation("move_file"))?;
@@ -42,7 +48,7 @@ pub fn move_file_impl(
     stage_rename_impl(repo_path, source_file, dest_file)?;
 
     // 3. Commit the changes
-    let result = commit_impl(&repo, message, user_name, user_email)?;
+    let result = commit_impl(&repo, message, user_name, user_email, committer)?;
 
     info!("move_file: success in {}ms", start.elapsed().as_millis());
     Ok(result)
@@ -55,9 +61,13 @@ pub fn move_directory_impl(
     message: &str,
     user_name: &str,
     user_email: &str,
+    options: Option<&CommitOptions>,
 ) -> Result<String, GitError> {
     info!("move_directory: source={} dest={}", source_dir, dest_dir);
     let start = std::time::Instant::now();
+
+    // Resolved before anything moves, for the same reason as move_file.
+    let committer = crate::utils::committer_pair(options)?;
 
     let repo = Repository::open(repo_path)
         .map_err(|e| GitError::from(e).with_operation("move_directory"))?;
@@ -123,7 +133,7 @@ pub fn move_directory_impl(
         .write()
         .map_err(|e| GitError::from(e).with_operation("write_index"))?;
 
-    let result = commit_impl(&repo, message, user_name, user_email)?;
+    let result = commit_impl(&repo, message, user_name, user_email, committer)?;
 
     info!(
         "move_directory: success in {}ms",
@@ -231,9 +241,14 @@ pub fn commit_file_impl(
     message: &str,
     user_name: &str,
     user_email: &str,
+    options: Option<&CommitOptions>,
 ) -> Result<String, GitError> {
     info!("commit_file: path={}", file_path);
     let start = std::time::Instant::now();
+
+    // Resolved before anything is staged: an identity the operation is going
+    // to refuse must not leave the index holding a change.
+    let committer = crate::utils::committer_pair(options)?;
 
     let repo =
         Repository::open(repo_path).map_err(|e| GitError::from(e).with_operation("commit_file"))?;
@@ -244,7 +259,7 @@ pub fn commit_file_impl(
     let plan = plan_staging(&repo, repo_path, &paths)?;
     apply_staging(&repo, &plan)?;
 
-    let result = commit_impl(&repo, message, user_name, user_email)?;
+    let result = commit_impl(&repo, message, user_name, user_email, committer)?;
 
     info!("commit_file: success in {}ms", start.elapsed().as_millis());
     Ok(result)
@@ -270,9 +285,14 @@ pub fn commit_files_impl(
     message: &str,
     user_name: &str,
     user_email: &str,
+    options: Option<&CommitOptions>,
 ) -> Result<String, GitError> {
     info!("commit_files: count={}", file_paths.len());
     let start = std::time::Instant::now();
+
+    // Resolved before anything is staged, for the same reason the staging plan
+    // is built in full before it is applied.
+    let committer = crate::utils::committer_pair(options)?;
 
     let repo = Repository::open(repo_path)
         .map_err(|e| GitError::from(e).with_operation("commit_files"))?;
@@ -281,7 +301,7 @@ pub fn commit_files_impl(
     let plan = plan_staging(&repo, repo_path, file_paths)?;
     apply_staging(&repo, &plan)?;
 
-    let result = commit_impl(&repo, message, user_name, user_email)?;
+    let result = commit_impl(&repo, message, user_name, user_email, committer)?;
 
     info!("commit_files: success in {}ms", start.elapsed().as_millis());
     Ok(result)
@@ -292,6 +312,7 @@ fn commit_impl(
     message: &str,
     user_name: &str,
     user_email: &str,
+    committer: Option<(&str, &str)>,
 ) -> Result<String, GitError> {
     let mut index = repo
         .index()
@@ -315,6 +336,7 @@ fn commit_impl(
 
     let signature = Signature::now(user_name, user_email)
         .map_err(|e| GitError::from(e).with_operation("create_signature"))?;
+    let committer = crate::utils::committer_signature(&signature, committer)?;
 
     let parent_commit = match repo.head() {
         Ok(head) => {
@@ -332,14 +354,14 @@ fn commit_impl(
             .commit(
                 Some("HEAD"),
                 &signature,
-                &signature,
+                &committer,
                 message,
                 &tree,
                 &[&parent],
             )
             .map_err(|e| GitError::from(e).with_operation("create_commit"))?,
         None => repo
-            .commit(Some("HEAD"), &signature, &signature, message, &tree, &[])
+            .commit(Some("HEAD"), &signature, &committer, message, &tree, &[])
             .map_err(|e| GitError::from(e).with_operation("create_commit"))?,
     };
 
@@ -468,14 +490,17 @@ pub fn commit_staged_changes_impl(
     message: &str,
     user_name: &str,
     user_email: &str,
+    options: Option<&CommitOptions>,
 ) -> Result<String, GitError> {
     info!("commit_staged_changes");
     let start = std::time::Instant::now();
 
+    let committer = crate::utils::committer_pair(options)?;
+
     let repo = Repository::open(repo_path)
         .map_err(|e| GitError::from(e).with_operation("commit_staged_changes"))?;
 
-    let result = commit_impl(&repo, message, user_name, user_email)?;
+    let result = commit_impl(&repo, message, user_name, user_email, committer)?;
 
     info!(
         "commit_staged_changes: success in {}ms",
@@ -837,6 +862,7 @@ pub fn discard_changes_impl(repo_path: &str, file_path: &str) -> Result<bool, Gi
 /// * `message` - New commit message (if empty, reuse previous message)
 /// * `user_name` - Optional user name (None = read from config)
 /// * `user_email` - Optional user email (None = read from config)
+/// * `options` - Optional committer, defaulting to the author
 ///
 /// # Returns
 /// * `Ok(commit_hash)` - Hash of the amended commit
@@ -849,10 +875,10 @@ pub fn discard_changes_impl(repo_path: &str, file_path: &str) -> Result<bool, Gi
 /// use liminal_git::file_ops::commit_amend_impl;
 ///
 /// // Amend with new message
-/// commit_amend_impl("/repo", "Updated message", Some("Alice"), Some("alice@example.com"))?;
+/// commit_amend_impl("/repo", "Updated message", Some("Alice"), Some("alice@example.com"), None)?;
 ///
 /// // Amend keeping original message
-/// commit_amend_impl("/repo", "", None, None)?;
+/// commit_amend_impl("/repo", "", None, None, None)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -861,9 +887,12 @@ pub fn commit_amend_impl(
     message: &str,
     user_name: Option<&str>,
     user_email: Option<&str>,
+    options: Option<&CommitOptions>,
 ) -> Result<String, GitError> {
     info!("commit_amend: message_len={}", message.len());
     let start = std::time::Instant::now();
+
+    let committer = crate::utils::committer_pair(options)?;
 
     let repo = Repository::open(repo_path)
         .map_err(|e| GitError::from(e).with_operation("commit_amend"))?;
@@ -897,6 +926,7 @@ pub fn commit_amend_impl(
 
     // Get signature using the new helper (lenient validation)
     let signature = crate::utils::read_user_signature(&repo, user_name, user_email)?;
+    let committer = crate::utils::committer_signature(&signature, committer)?;
 
     // Get parent commits (amend keeps the same parents as original)
     // We collect parents into a Vec to ensure they live long enough
@@ -908,7 +938,7 @@ pub fn commit_amend_impl(
         .commit(
             None, // Don't update any reference yet
             &signature,
-            &signature,
+            &committer,
             commit_message,
             &tree,
             &parent_refs,
@@ -1137,6 +1167,7 @@ mod tests {
             "Amended message",
             Some("Test User"),
             Some("test@example.com"),
+            None,
         );
 
         assert!(result.is_ok());
@@ -1169,6 +1200,7 @@ mod tests {
             "",
             Some("Test User"),
             Some("test@example.com"),
+            None,
         );
 
         assert!(result.is_ok());
@@ -1192,7 +1224,7 @@ mod tests {
         let _ = stage_file_impl(repo_path.to_str().unwrap(), "test.txt");
 
         // Amend with None signature (should read from config)
-        let result = commit_amend_impl(repo_path.to_str().unwrap(), "Amended", None, None);
+        let result = commit_amend_impl(repo_path.to_str().unwrap(), "Amended", None, None, None);
 
         assert!(result.is_ok());
 
@@ -1222,6 +1254,7 @@ mod tests {
             "Amended",
             Some("Test User"),
             Some("test@example.com"),
+            None,
         );
 
         // Should succeed - detached HEAD can still be amended
@@ -1246,6 +1279,7 @@ mod tests {
             "Amended",
             Some("Test User"),
             Some("test@example.com"),
+            None,
         );
 
         // Should fail - no HEAD to amend
@@ -1297,7 +1331,7 @@ mod tests {
         let _ = stage_file_impl(repo_path.to_str().unwrap(), "test.txt");
 
         // Try to amend without config and without explicit params
-        let result = commit_amend_impl(repo_path.to_str().unwrap(), "Amended", None, None);
+        let result = commit_amend_impl(repo_path.to_str().unwrap(), "Amended", None, None, None);
 
         // Restore original env vars
         unsafe {
@@ -1347,6 +1381,7 @@ mod tests {
             "Amended",
             Some("Test User"),
             Some("test@example.com"),
+            None,
         );
 
         assert!(result.is_ok());

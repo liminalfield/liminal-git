@@ -19,7 +19,7 @@ export declare class GitService {
    * a deletion; a path that is neither on disk nor tracked fails with
    * `FILE_NOT_FOUND`.
    */
-  commitFile(repoPath: string, filePath: string, message: string, userName: string, userEmail: string): Promise<string>
+  commitFile(repoPath: string, filePath: string, message: string, userName: string, userEmail: string, options?: CommitOptions | undefined | null): Promise<string>
   /**
    * Stage the listed paths and write **one** commit.
    *
@@ -40,7 +40,7 @@ export declare class GitService {
    * whole-set check rather than a per-path one. An empty list is
    * `INVALID_ARGUMENT`, and so is a list longer than 1000 paths.
    */
-  commitFiles(repoPath: string, filePaths: Array<string>, message: string, userName: string, userEmail: string): Promise<string>
+  commitFiles(repoPath: string, filePaths: Array<string>, message: string, userName: string, userEmail: string, options?: CommitOptions | undefined | null): Promise<string>
   stageFile(repoPath: string, filePath: string): Promise<boolean>
   /**
    * Unstage a file from the index (reset to HEAD state)
@@ -56,9 +56,9 @@ export declare class GitService {
   getStagedFiles(repoPath: string): Promise<Array<string>>
   stageDeletion(repoPath: string, filePath: string): Promise<boolean>
   stageRename(repoPath: string, oldPath: string, newPath: string): Promise<boolean>
-  commitStagedChanges(repoPath: string, message: string, userName: string, userEmail: string): Promise<string>
-  moveFile(repoPath: string, sourcePath: string, destPath: string, message: string, userName: string, userEmail: string): Promise<string>
-  moveDirectory(repoPath: string, sourcePath: string, destPath: string, message: string, userName: string, userEmail: string): Promise<string>
+  commitStagedChanges(repoPath: string, message: string, userName: string, userEmail: string, options?: CommitOptions | undefined | null): Promise<string>
+  moveFile(repoPath: string, sourcePath: string, destPath: string, message: string, userName: string, userEmail: string, options?: CommitOptions | undefined | null): Promise<string>
+  moveDirectory(repoPath: string, sourcePath: string, destPath: string, message: string, userName: string, userEmail: string, options?: CommitOptions | undefined | null): Promise<string>
   initRepository(path: string): Promise<boolean>
   initRepositoryWithConfig(path: string, config: RepositoryConfig): Promise<boolean>
   /**
@@ -236,8 +236,9 @@ export declare class GitService {
    * * `message` - New commit message (if empty, reuse previous message)
    * * `user_name` - Optional user name (empty string = read from config)
    * * `user_email` - Optional user email (empty string = read from config)
+   * * `options` - Optional committer, defaulting to the author
    */
-  commitAmend(repoPath: string, message: string, userName: string, userEmail: string): Promise<string>
+  commitAmend(repoPath: string, message: string, userName: string, userEmail: string, options?: CommitOptions | undefined | null): Promise<string>
   getDeletedFiles(repoPath: string, limit?: number | undefined | null): Promise<Array<DeletedFileEntry>>
   getFileDiff(repoPath: string, filePath: string): Promise<FileDiff>
   getCommitDiff(repoPath: string, commitHash: string): Promise<CommitDiff>
@@ -279,8 +280,12 @@ export declare class GitService {
    * caller who abandons the resolution is left with the repository it
    * started with. Refuses with `UNSTAGED_CHANGES_WOULD_BE_LOST` when a file
    * the merge would change has unsaved edits on disk.
+   *
+   * Fast-forwards where it can, which writes no commit and so records
+   * nobody. `{ noFastForward: true }` requires a merge commit instead, so
+   * the merge has somewhere to say who performed it.
    */
-  merge(repoPath: string, branch: string, userName?: string | undefined | null, userEmail?: string | undefined | null): Promise<MergeOutcome>
+  merge(repoPath: string, branch: string, userName?: string | undefined | null, userEmail?: string | undefined | null, options?: MergeOptions | undefined | null): Promise<MergeOutcome>
   /**
    * Read a blob by oid as text — one side of a contested file.
    *
@@ -298,7 +303,7 @@ export declare class GitService {
    * HEAD is no longer `expected_head_hash`, and with `INVALID_ARGUMENT`
    * when the resolved set does not match the conflict set exactly.
    */
-  commitMerge(repoPath: string, theirRef: string, expectedHeadHash: string, resolvedFiles: Array<ResolvedFile>, message: string, userName?: string | undefined | null, userEmail?: string | undefined | null): Promise<CommitInfo>
+  commitMerge(repoPath: string, theirRef: string, expectedHeadHash: string, resolvedFiles: Array<ResolvedFile>, message: string, userName?: string | undefined | null, userEmail?: string | undefined | null, options?: CommitOptions | undefined | null): Promise<CommitInfo>
   /** List all tags in the repository */
   listTags(repoPath: string): Promise<Array<TagInfo>>
   /** Create a new tag */
@@ -399,11 +404,38 @@ export interface CommitInfo {
   message: string
   authorName: string
   authorEmail: string
+  /**
+   * Who performed the commit, which is not always who decided it. Equal to
+   * the author unless the commit was written with a `committer` — a
+   * history where the committer was recorded but cannot be read back is,
+   * to a caller, a history where it was not recorded.
+   */
+  committerName: string
+  committerEmail: string
   timestamp: string
   parentHashes: Array<string>
   fileChanges: number
   insertions: number
   deletions: number
+}
+
+/**
+ * Who performed a commit, when that is not who authored it.
+ *
+ * git has carried two signatures since the beginning, and the distinction is
+ * load-bearing whenever a tool commits a decision a person made: the person
+ * decided it, so they are the author; the tool performed it, so it is the
+ * committer. Absent, the author signs both trailers, which is what every
+ * caller written before this option got and still gets.
+ *
+ * An options object rather than two more positional parameters, for the same
+ * reason as `TreeFilterOptions`.
+ */
+export interface CommitOptions {
+  /** Name of the committer. Must be given together with `committerEmail`. */
+  committerName?: string
+  /** Email of the committer. Must be given together with `committerName`. */
+  committerEmail?: string
 }
 
 /**
@@ -553,6 +585,25 @@ export interface MergeAnalysis {
   ahead: number
   /** Commits `branch` has that HEAD does not. */
   behind: number
+}
+
+/** What `merge` records, and whether it is allowed to record nothing. */
+export interface MergeOptions {
+  /** Name of the committer. Must be given together with `committerEmail`. */
+  committerName?: string
+  /** Email of the committer. Must be given together with `committerName`. */
+  committerEmail?: string
+  /**
+   * Refuse to fast-forward: write a merge commit even when the target
+   * branch has not moved. `git merge --no-ff`.
+   *
+   * Off by default. On, a merge that would otherwise leave the branch tip
+   * authored by whoever wrote it — with no record that a merge happened or
+   * that anyone approved it — gets a commit to attribute. An `up-to-date`
+   * merge is unaffected: there is nothing to merge, so there is nothing to
+   * attribute.
+   */
+  noFastForward?: boolean
 }
 
 /**

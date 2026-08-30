@@ -21,6 +21,7 @@ mod file_ops_tests {
             "Initial commit",
             "Test User",
             "test@example.com",
+            None,
         )
         .unwrap();
 
@@ -32,6 +33,7 @@ mod file_ops_tests {
             "Second commit",
             "Test User",
             "test@example.com",
+            None,
         )
         .unwrap();
 
@@ -44,6 +46,7 @@ mod file_ops_tests {
             "Third commit",
             "Test User",
             "test@example.com",
+            None,
         )
         .unwrap();
 
@@ -104,6 +107,7 @@ mod file_ops_tests {
             INITIAL_COMMIT_MSG,
             TEST_USER_NAME,
             TEST_USER_EMAIL,
+            None,
         );
 
         assert_result_is_ok(&result);
@@ -125,6 +129,7 @@ mod file_ops_tests {
             INITIAL_COMMIT_MSG,
             TEST_USER_NAME,
             TEST_USER_EMAIL,
+            None,
         );
 
         assert_result_is_error(&result);
@@ -146,6 +151,7 @@ mod file_ops_tests {
             "Another commit",
             "Test User",
             "test@example.com",
+            None,
         );
 
         // Assert the variant, not the prose. This matched on "No changes"
@@ -172,6 +178,7 @@ mod file_ops_tests {
             "Multi-file commit",
             "Test User",
             "test@example.com",
+            None,
         );
 
         assert!(result.is_ok());
@@ -203,6 +210,7 @@ mod file_ops_tests {
             "Update existing and add new",
             "Test User",
             "test@example.com",
+            None,
         );
 
         assert!(result.is_ok());
@@ -275,6 +283,7 @@ mod file_ops_tests {
             "Add large file",
             "Test User",
             "test@example.com",
+            None,
         );
 
         assert!(result.is_ok());
@@ -300,6 +309,7 @@ mod file_ops_tests {
             "Add binary file",
             "Test User",
             "test@example.com",
+            None,
         );
 
         assert!(result.is_ok());
@@ -330,6 +340,7 @@ mod file_ops_tests {
             "Add unicode files",
             "Test User",
             "test@example.com",
+            None,
         );
 
         assert!(result.is_ok());
@@ -362,6 +373,7 @@ mod file_ops_tests {
             "Add nested files",
             "Test User",
             "test@example.com",
+            None,
         );
 
         assert!(result.is_ok());
@@ -394,6 +406,7 @@ mod file_ops_tests {
             "Add many files",
             "Test User",
             "test@example.com",
+            None,
         );
         let duration = start.elapsed();
 
@@ -656,6 +669,7 @@ mod file_ops_tests {
             "Initial",
             "Test User",
             "test@example.com",
+            None,
         )
         .unwrap();
 
@@ -704,6 +718,7 @@ mod file_ops_tests {
             "Delete a",
             "Test User",
             "test@example.com",
+            None,
         )
         .unwrap();
 
@@ -722,6 +737,7 @@ mod file_ops_tests {
             "Commit a ghost",
             "Test User",
             "test@example.com",
+            None,
         );
 
         assert!(
@@ -752,6 +768,7 @@ mod file_ops_tests {
             "Drop a, change b",
             "Test User",
             "test@example.com",
+            None,
         )
         .unwrap();
 
@@ -778,6 +795,7 @@ mod file_ops_tests {
             "Commit a ghost",
             "Test User",
             "test@example.com",
+            None,
         );
 
         assert!(
@@ -807,6 +825,7 @@ mod file_ops_tests {
             "Should not land",
             "Test User",
             "test@example.com",
+            None,
         );
 
         assert!(
@@ -835,6 +854,7 @@ mod file_ops_tests {
             "Same path three times",
             "Test User",
             "test@example.com",
+            None,
         )
         .unwrap();
 
@@ -867,9 +887,354 @@ mod file_ops_tests {
             "One path, two spellings",
             "Test User",
             "test@example.com",
+            None,
         )
         .unwrap();
 
         assert!(head_tree_has(&path, "a.txt"));
+    }
+
+    // ===== committer identity =====
+    //
+    // A tool that commits a decision a person made has two identities to
+    // record: the person authored it, the tool performed it. git has carried
+    // both since the beginning; these tests are about not dropping the second
+    // one.
+
+    /// `((author name, author email), (committer name, committer email))`.
+    fn signatures_of(repo_path: &str, hash: &str) -> ((String, String), (String, String)) {
+        let repo = Repository::open(repo_path).unwrap();
+        let commit = repo
+            .find_commit(git2::Oid::from_str(hash).unwrap())
+            .unwrap();
+        let author = commit.author();
+        let committer = commit.committer();
+        (
+            (
+                author.name().unwrap().to_string(),
+                author.email().unwrap().to_string(),
+            ),
+            (
+                committer.name().unwrap().to_string(),
+                committer.email().unwrap().to_string(),
+            ),
+        )
+    }
+
+    fn committer(name: &str, email: &str) -> CommitOptions {
+        CommitOptions {
+            committer_name: Some(name.to_string()),
+            committer_email: Some(email.to_string()),
+        }
+    }
+
+    #[test]
+    fn test_commit_file_records_the_committer_separately_from_the_author() {
+        let (temp_dir, path) = create_repo_with_two_files();
+        let a = temp_dir.path().join("a.txt");
+        fs::write(&a, "a two\n").unwrap();
+
+        let hash = commit_file_impl(
+            &path,
+            &a.to_string_lossy(),
+            "A decision the human made",
+            "A Human",
+            "human@example.com",
+            Some(&committer("gantry", "gantry@example.com")),
+        )
+        .unwrap();
+
+        let (author, committer) = signatures_of(&path, &hash);
+        assert_eq!(
+            author,
+            ("A Human".to_string(), "human@example.com".to_string())
+        );
+        assert_eq!(
+            committer,
+            ("gantry".to_string(), "gantry@example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_commit_files_records_the_committer_separately_from_the_author() {
+        let (temp_dir, path) = create_repo_with_two_files();
+        let a = temp_dir.path().join("a.txt");
+        fs::write(&a, "a two\n").unwrap();
+
+        let hash = commit_files_impl(
+            &path,
+            &[a.to_string_lossy().to_string()],
+            "A decision the human made",
+            "A Human",
+            "human@example.com",
+            Some(&committer("gantry", "gantry@example.com")),
+        )
+        .unwrap();
+
+        let (author, committer) = signatures_of(&path, &hash);
+        assert_eq!(
+            author,
+            ("A Human".to_string(), "human@example.com".to_string())
+        );
+        assert_eq!(
+            committer,
+            ("gantry".to_string(), "gantry@example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_commit_staged_changes_records_the_committer_separately_from_the_author() {
+        let (temp_dir, path) = create_repo_with_two_files();
+        let a = temp_dir.path().join("a.txt");
+        fs::write(&a, "a two\n").unwrap();
+        stage_file_impl(&path, &a.to_string_lossy()).unwrap();
+
+        let hash = commit_staged_changes_impl(
+            &path,
+            "A decision the human made",
+            "A Human",
+            "human@example.com",
+            Some(&committer("gantry", "gantry@example.com")),
+        )
+        .unwrap();
+
+        let (author, committer) = signatures_of(&path, &hash);
+        assert_eq!(
+            author,
+            ("A Human".to_string(), "human@example.com".to_string())
+        );
+        assert_eq!(
+            committer,
+            ("gantry".to_string(), "gantry@example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_commit_amend_records_the_committer_separately_from_the_author() {
+        let (temp_dir, path) = create_repo_with_two_files();
+        let a = temp_dir.path().join("a.txt");
+        fs::write(&a, "a two\n").unwrap();
+        stage_file_impl(&path, &a.to_string_lossy()).unwrap();
+
+        let hash = commit_amend_impl(
+            &path,
+            "Amended by a tool",
+            Some("A Human"),
+            Some("human@example.com"),
+            Some(&committer("gantry", "gantry@example.com")),
+        )
+        .unwrap();
+
+        let (author, committer) = signatures_of(&path, &hash);
+        assert_eq!(
+            author,
+            ("A Human".to_string(), "human@example.com".to_string())
+        );
+        assert_eq!(
+            committer,
+            ("gantry".to_string(), "gantry@example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_commit_without_a_committer_signs_both_trailers_as_the_author() {
+        let (temp_dir, path) = create_repo_with_two_files();
+        let a = temp_dir.path().join("a.txt");
+        fs::write(&a, "a two\n").unwrap();
+
+        let hash = commit_files_impl(
+            &path,
+            &[a.to_string_lossy().to_string()],
+            "No committer given",
+            "A Human",
+            "human@example.com",
+            None,
+        )
+        .unwrap();
+
+        let (author, committer) = signatures_of(&path, &hash);
+        assert_eq!(
+            author, committer,
+            "every caller that predates the option must be unaffected"
+        );
+    }
+
+    #[test]
+    fn test_a_committer_name_without_an_email_is_refused() {
+        let (temp_dir, path) = create_repo_with_two_files();
+        let a = temp_dir.path().join("a.txt");
+        fs::write(&a, "a two\n").unwrap();
+
+        let err = commit_files_impl(
+            &path,
+            &[a.to_string_lossy().to_string()],
+            "Half an identity",
+            "A Human",
+            "human@example.com",
+            Some(&CommitOptions {
+                committer_name: Some("gantry".to_string()),
+                committer_email: None,
+            }),
+        )
+        .unwrap_err();
+
+        match err {
+            GitError::InvalidArgument { argument, .. } => {
+                assert_eq!(argument, "committer_email")
+            }
+            other => panic!("expected InvalidArgument, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_a_committer_email_without_a_name_is_refused() {
+        let (temp_dir, path) = create_repo_with_two_files();
+        let a = temp_dir.path().join("a.txt");
+        fs::write(&a, "a two\n").unwrap();
+
+        let err = commit_files_impl(
+            &path,
+            &[a.to_string_lossy().to_string()],
+            "Half an identity",
+            "A Human",
+            "human@example.com",
+            Some(&CommitOptions {
+                committer_name: None,
+                committer_email: Some("gantry@example.com".to_string()),
+            }),
+        )
+        .unwrap_err();
+
+        match err {
+            GitError::InvalidArgument { argument, .. } => {
+                assert_eq!(argument, "committer_name")
+            }
+            other => panic!("expected InvalidArgument, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_half_a_committer_is_refused_before_anything_is_staged() {
+        let (temp_dir, path) = create_repo_with_two_files();
+        let a = temp_dir.path().join("a.txt");
+        fs::write(&a, "a two\n").unwrap();
+
+        let head_before = head_hash(&path);
+        let index_before = index_blob_of(&path, "a.txt");
+
+        commit_files_impl(
+            &path,
+            &[a.to_string_lossy().to_string()],
+            "Half an identity",
+            "A Human",
+            "human@example.com",
+            Some(&CommitOptions {
+                committer_name: Some("gantry".to_string()),
+                committer_email: None,
+            }),
+        )
+        .unwrap_err();
+
+        assert_eq!(head_hash(&path), head_before, "HEAD must not move");
+        assert_eq!(
+            index_blob_of(&path, "a.txt"),
+            index_before,
+            "an identity the operation refuses must not leave the index staged"
+        );
+    }
+
+    #[test]
+    fn test_move_file_records_the_committer_separately_from_the_author() {
+        let (_temp_dir, path) = create_repo_with_two_files();
+
+        let hash = move_file_impl(
+            &path,
+            "a.txt",
+            "moved/a.txt",
+            "Move a.txt",
+            "A Human",
+            "human@example.com",
+            Some(&committer("gantry", "gantry@example.com")),
+        )
+        .unwrap();
+
+        assert!(head_tree_has(&path, "moved/a.txt"));
+        assert!(!head_tree_has(&path, "a.txt"));
+
+        let (author, committer) = signatures_of(&path, &hash);
+        assert_eq!(
+            author,
+            ("A Human".to_string(), "human@example.com".to_string())
+        );
+        assert_eq!(
+            committer,
+            ("gantry".to_string(), "gantry@example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_move_directory_records_the_committer_separately_from_the_author() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().to_string_lossy().to_string();
+        init_repository_impl(&path).unwrap();
+
+        let nested = temp_dir.path().join("chapters");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("one.md"), "one\n").unwrap();
+        commit_files_impl(
+            &path,
+            &[nested.join("one.md").to_string_lossy().to_string()],
+            "Initial",
+            "Test User",
+            "test@example.com",
+            None,
+        )
+        .unwrap();
+
+        let hash = move_directory_impl(
+            &path,
+            "chapters",
+            "book/chapters",
+            "Move the chapters",
+            "A Human",
+            "human@example.com",
+            Some(&committer("gantry", "gantry@example.com")),
+        )
+        .unwrap();
+
+        assert!(head_tree_has(&path, "book/chapters/one.md"));
+        assert!(!head_tree_has(&path, "chapters/one.md"));
+
+        let (author, committer) = signatures_of(&path, &hash);
+        assert_eq!(
+            author,
+            ("A Human".to_string(), "human@example.com".to_string())
+        );
+        assert_eq!(
+            committer,
+            ("gantry".to_string(), "gantry@example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_move_file_without_a_committer_signs_both_trailers_as_the_author() {
+        let (_temp_dir, path) = create_repo_with_two_files();
+
+        let hash = move_file_impl(
+            &path,
+            "a.txt",
+            "moved/a.txt",
+            "Move a.txt",
+            "A Human",
+            "human@example.com",
+            None,
+        )
+        .unwrap();
+
+        let (author, committer) = signatures_of(&path, &hash);
+        assert_eq!(
+            author, committer,
+            "every caller that predates the option must be unaffected"
+        );
     }
 }

@@ -665,6 +665,71 @@ pub(crate) fn read_user_signature<'a>(
     })
 }
 
+/// The committer named by `options`, as a complete pair or nothing at all.
+///
+/// Half a committer is nobody. A name paired with the author's email names an
+/// identity that never existed, and once written it sits in history where
+/// nothing later can correct it — so a lone half is refused rather than
+/// completed from the author.
+///
+/// Empty and whitespace-only values count as absent, the same way
+/// `read_user_signature` treats the author's halves.
+pub(crate) fn committer_pair(
+    options: Option<&crate::types::CommitOptions>,
+) -> Result<Option<(&str, &str)>, GitError> {
+    committer_halves(
+        options.and_then(|options| options.committer_name.as_deref()),
+        options.and_then(|options| options.committer_email.as_deref()),
+    )
+}
+
+/// `committer_pair` for callers whose options object is not `CommitOptions` —
+/// `MergeOptions` carries the same two halves alongside its own settings.
+pub(crate) fn committer_halves<'a>(
+    name: Option<&'a str>,
+    email: Option<&'a str>,
+) -> Result<Option<(&'a str, &'a str)>, GitError> {
+    let name = name.filter(|value| !value.trim().is_empty());
+    let email = email.filter(|value| !value.trim().is_empty());
+
+    match (name, email) {
+        (None, None) => Ok(None),
+        (Some(name), Some(email)) => Ok(Some((name, email))),
+        (Some(_), None) => Err(GitError::InvalidArgument {
+            argument: "committer_email".to_string(),
+            reason: "A committer is a name and an email together; committer_name was given without committer_email".to_string(),
+        }),
+        (None, Some(_)) => Err(GitError::InvalidArgument {
+            argument: "committer_name".to_string(),
+            reason: "A committer is a name and an email together; committer_email was given without committer_name".to_string(),
+        }),
+    }
+}
+
+/// The signature to write into the committer trailer: the given committer, or
+/// the author when there is none.
+///
+/// The committer borrows the author's timestamp rather than reading the clock
+/// again. Both signatures are made in the same call, so a second `now()` could
+/// only differ by landing on the far side of a second boundary — a difference
+/// that means nothing and shows up in every byte-comparison of two commits.
+pub(crate) fn committer_signature(
+    author: &git2::Signature<'_>,
+    committer: Option<(&str, &str)>,
+) -> Result<git2::Signature<'static>, GitError> {
+    match committer {
+        None => Ok(author.to_owned()),
+        Some((name, email)) => git2::Signature::new(name, email, &author.when()).map_err(|e| {
+            GitError::GitOperationFailure {
+                operation: "create_committer_signature".to_string(),
+                class: e.class() as i32,
+                code: e.code() as i32,
+                message: e.message().to_string(),
+            }
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1300,6 +1365,7 @@ mod tests {
             "Seed",
             "Test User",
             "test@example.com",
+            None,
         )
         .unwrap();
 
@@ -1396,6 +1462,7 @@ mod tests {
             &format!("Sequence: {file_name}"),
             "Test User",
             "test@example.com",
+            None,
         )
         .expect("commit inside the scope");
 

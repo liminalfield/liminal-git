@@ -65,7 +65,14 @@ impl GitOps {
         validate_file_path(&file_path)?;
         validate_commit_message(&message)?;
         validate_user_info(&user_name, &user_email)?;
-        commit_file_impl(&repo_path, &file_path, &message, &user_name, &user_email)
+        commit_file_impl(
+            &repo_path,
+            &file_path,
+            &message,
+            &user_name,
+            &user_email,
+            None,
+        )
     }
 
     fn commit_files(
@@ -80,7 +87,14 @@ impl GitOps {
         validate_file_paths(&file_paths)?;
         validate_commit_message(&message)?;
         validate_user_info(&user_name, &user_email)?;
-        commit_files_impl(&repo_path, &file_paths, &message, &user_name, &user_email)
+        commit_files_impl(
+            &repo_path,
+            &file_paths,
+            &message,
+            &user_name,
+            &user_email,
+            None,
+        )
     }
 }
 

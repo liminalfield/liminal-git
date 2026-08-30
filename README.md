@@ -141,6 +141,69 @@ Neither operation takes options for amending or signing, and neither accepts a
 glob or a "commit everything dirty" mode. The argument stays an explicit list
 so that the caller states exactly what the commit contains.
 
+## Who decided it, and who performed it
+
+A commit carries two signatures. The **author** is who the change belongs to;
+the **committer** is who wrote it into the repository. They are the same person
+most of the time, which is why the distinction is easy to forget — and they
+stop being the same person the moment a tool commits on someone's behalf.
+
+Every operation that writes a commit takes an optional `committer`:
+
+```js
+await git.commitFiles(
+  repo,
+  ['notes/chapter-one.md'],
+  'Approve the rewrite',
+  'Ada Lovelace',        // decided it
+  'ada@example.com',
+  { committerName: 'my-agent', committerEmail: 'agent@example.com' },  // performed it
+);
+```
+
+Omit it and the author signs both trailers, which is what every caller written
+before this option got and still gets. Supply **both** halves or neither: a
+name paired with the author's email names an identity that never existed, so a
+lone half is `INVALID_ARGUMENT` rather than being quietly completed. The
+refusal happens before anything is staged.
+
+Every operation that writes a commit takes it: `commitFile`, `commitFiles`,
+`commitStagedChanges`, `commitAmend`, `moveFile`, `moveDirectory`, `merge` and
+`commitMerge`. That is deliberately the whole class rather than the operations
+someone asked for — an operation that writes a commit and cannot record who
+performed it is a side door back to collapsed identity.
+
+`CommitInfo` reports both, so what was written can be read back:
+
+```js
+const [head] = (await git.getCommitHistory(repo, 1)).commits;
+head.authorName;     // 'Ada Lovelace'
+head.committerName;  // 'my-agent'
+```
+
+### A merge with somewhere to put it
+
+`merge` fast-forwards when the target branch has not moved, and a fast-forward
+writes no commit — so there is nothing to sign, and the identity passed to
+`merge` goes nowhere. That matters most in the case you would least want it
+to: where an agent drafted a change on a branch and a person reviewed and
+merged it, the target's tip is then a commit authored by the agent, with no
+record anywhere that a human approved it.
+
+`noFastForward` refuses to fast-forward, the way `git merge --no-ff` does:
+
+```js
+await git.merge(repo, 'session/rewrite', 'Ada Lovelace', 'ada@example.com', {
+  noFastForward: true,
+  committerName: 'my-agent',
+  committerEmail: 'agent@example.com',
+});
+// -> { kind: 'merged', ... }  rather than { kind: 'fast-forwarded', ... }
+```
+
+An `up-to-date` merge is unaffected: HEAD already contains the branch, so there
+is nothing to merge and nothing to attribute.
+
 ## Concurrency
 
 Mutating operations take a per-repository lock with two layers: an in-process
@@ -345,7 +408,9 @@ a no-op, a fast-forward, or a real merge. `fastForward` performs the
 fast-forward case, moving the current branch's ref, its working tree and its
 index together. `merge` performs the general case: a real three-way merge that
 either writes a two-parent commit or reports the three sides of every contested
-path and writes nothing at all.
+path and writes nothing at all. `merge` fast-forwards where it can; pass
+`{ noFastForward: true }` to require a merge commit instead, so the merge has
+somewhere to record who performed it.
 
 The rule the merge operations are built around is that **a merge never leaves an
 in-progress state on disk**. There is no `MERGE_HEAD`, no conflicted on-disk
@@ -518,7 +583,7 @@ npm run build                        # the Node addon (napi build --release)
 cargo test --no-default-features
 ```
 
-330 tests across ten targets. `--no-default-features` is required rather than
+344 tests across ten targets. `--no-default-features` is required rather than
 preferred: with the `napi-binding` feature on, a test binary fails at the
 **linker**, because napi resolves its symbols from the host Node process at run
 time and those symbols do not exist in a test executable. Disabling the feature

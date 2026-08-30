@@ -15,7 +15,9 @@
 // costs the writer nothing at all.
 
 use crate::errors::GitError;
-use crate::types::{CommitInfo, ConflictedFile, MergeOutcome, ResolvedFile};
+use crate::types::{
+    CommitInfo, CommitOptions, ConflictedFile, MergeOptions, MergeOutcome, ResolvedFile,
+};
 use git2::{Commit, Index, IndexConflict, IndexEntry, IndexTime, Oid, Repository, Tree};
 use log::info;
 use std::collections::{BTreeMap, BTreeSet};
@@ -57,9 +59,16 @@ pub fn merge_impl(
     branch: &str,
     user_name: Option<&str>,
     user_email: Option<&str>,
+    options: Option<&MergeOptions>,
 ) -> std::result::Result<MergeOutcome, GitError> {
     info!("merge: branch={}", branch);
     let start = std::time::Instant::now();
+
+    let committer = crate::utils::committer_halves(
+        options.and_then(|options| options.committer_name.as_deref()),
+        options.and_then(|options| options.committer_email.as_deref()),
+    )?;
+    let no_fast_forward = options.and_then(|options| options.no_fast_forward) == Some(true);
 
     let repo =
         Repository::open(repo_path).map_err(|e| GitError::from(e).with_operation("merge"))?;
@@ -92,7 +101,11 @@ pub fn merge_impl(
                 conflicts: Vec::new(),
             });
         }
-        "fast-forward" => {
+        // Falling through to the merge path is the whole of --no-ff: the
+        // three-way merge of a branch that contains HEAD produces that
+        // branch's tree with no conflicts, and finish_merge gives it two
+        // parents and somewhere to record who approved it.
+        "fast-forward" if !no_fast_forward => {
             let result = crate::branch_ops::fast_forward_impl(repo_path, branch)?;
             info!(
                 "merge: fast-forwarded to {} in {}ms",
@@ -143,6 +156,7 @@ pub fn merge_impl(
         &message,
         user_name,
         user_email,
+        committer,
     )?;
 
     info!(
@@ -209,6 +223,7 @@ pub fn commit_merge_impl(
     message: &str,
     user_name: Option<&str>,
     user_email: Option<&str>,
+    options: Option<&CommitOptions>,
 ) -> std::result::Result<CommitInfo, GitError> {
     info!(
         "commit_merge: their_ref={} resolved={} file(s)",
@@ -216,6 +231,8 @@ pub fn commit_merge_impl(
         resolved_files.len()
     );
     let start = std::time::Instant::now();
+
+    let committer = crate::utils::committer_pair(options)?;
 
     let repo = Repository::open(repo_path)
         .map_err(|e| GitError::from(e).with_operation("commit_merge"))?;
@@ -316,6 +333,7 @@ pub fn commit_merge_impl(
         message,
         user_name,
         user_email,
+        committer,
     )?;
 
     let commit = repo
@@ -473,6 +491,7 @@ fn finish_merge(
     message: &str,
     user_name: Option<&str>,
     user_email: Option<&str>,
+    committer: Option<(&str, &str)>,
 ) -> std::result::Result<Oid, GitError> {
     let tree_id = index
         .write_tree_to(repo)
@@ -496,6 +515,7 @@ fn finish_merge(
     }
 
     let signature = crate::utils::read_user_signature(repo, user_name, user_email)?;
+    let committer = crate::utils::committer_signature(&signature, committer)?;
 
     // No ref update yet: an unreachable commit is not a state anyone has to
     // clean up if the checkout below refuses.
@@ -503,7 +523,7 @@ fn finish_merge(
         .commit(
             None,
             &signature,
-            &signature,
+            &committer,
             message,
             &tree,
             &[our_commit, their_commit],
@@ -615,6 +635,7 @@ pub async fn merge(
     branch: String,
     user_name: Option<String>,
     user_email: Option<String>,
+    options: Option<MergeOptions>,
 ) -> Result<MergeOutcome> {
     let structured = service.feature_flags().structured_errors;
     crate::utils::run_blocking(structured, move || {
@@ -624,6 +645,7 @@ pub async fn merge(
             &branch,
             user_name.as_deref(),
             user_email.as_deref(),
+            options.as_ref(),
         )
     })
     .await
@@ -648,6 +670,7 @@ pub async fn commit_merge(
     message: String,
     user_name: Option<String>,
     user_email: Option<String>,
+    options: Option<CommitOptions>,
 ) -> Result<CommitInfo> {
     let structured = service.feature_flags().structured_errors;
     crate::utils::run_blocking(structured, move || {
@@ -660,6 +683,7 @@ pub async fn commit_merge(
             &message,
             user_name.as_deref(),
             user_email.as_deref(),
+            options.as_ref(),
         )
     })
     .await

@@ -148,40 +148,93 @@ pub fn validate_commit_message(message: &str) -> Result<(), GitError> {
 }
 
 pub fn validate_user_info(user_name: &str, user_email: &str) -> Result<(), GitError> {
-    if user_name.is_empty() {
-        return Err(GitError::InvalidArgument {
-            argument: "user_name".to_string(),
-            reason: "User name cannot be empty".to_string(),
-        });
+    validate_identity(user_name, user_email, &IdentityLabels::USER)
+}
+
+/// Validate the committer, if one was given.
+///
+/// Only the shape of each half is checked here. Whether a lone half is allowed
+/// is decided where the commit is written, in `utils::committer_pair`, because
+/// that rule has to hold for callers of the Rust API too — and they never
+/// reach this layer.
+pub fn validate_committer(options: Option<&crate::types::CommitOptions>) -> Result<(), GitError> {
+    let Some(options) = options else {
+        return Ok(());
+    };
+
+    let name = options.committer_name.as_deref().unwrap_or("");
+    let email = options.committer_email.as_deref().unwrap_or("");
+
+    if name.trim().is_empty() || email.trim().is_empty() {
+        return Ok(());
     }
 
-    if user_email.is_empty() {
-        return Err(GitError::InvalidArgument {
-            argument: "user_email".to_string(),
-            reason: "User email cannot be empty".to_string(),
-        });
+    validate_identity(name, email, &IdentityLabels::COMMITTER)
+}
+
+/// What an identity is called in the errors `validate_identity` produces.
+struct IdentityLabels {
+    noun: &'static str,
+    name_argument: &'static str,
+    email_argument: &'static str,
+    info_argument: &'static str,
+}
+
+impl IdentityLabels {
+    const USER: Self = Self {
+        noun: "User",
+        name_argument: "user_name",
+        email_argument: "user_email",
+        info_argument: "user_info",
+    };
+    const COMMITTER: Self = Self {
+        noun: "Committer",
+        name_argument: "committer_name",
+        email_argument: "committer_email",
+        info_argument: "committer_info",
+    };
+}
+
+fn validate_identity(name: &str, email: &str, labels: &IdentityLabels) -> Result<(), GitError> {
+    let invalid = |argument: &str, reason: String| GitError::InvalidArgument {
+        argument: argument.to_string(),
+        reason,
+    };
+
+    if name.is_empty() {
+        return Err(invalid(
+            labels.name_argument,
+            format!("{} name cannot be empty", labels.noun),
+        ));
     }
 
-    if user_name.len() > 255 {
-        return Err(GitError::InvalidArgument {
-            argument: "user_name".to_string(),
-            reason: "User name too long".to_string(),
-        });
+    if email.is_empty() {
+        return Err(invalid(
+            labels.email_argument,
+            format!("{} email cannot be empty", labels.noun),
+        ));
     }
 
-    if user_email.len() > 255 {
-        return Err(GitError::InvalidArgument {
-            argument: "user_email".to_string(),
-            reason: "User email too long".to_string(),
-        });
+    if name.len() > 255 {
+        return Err(invalid(
+            labels.name_argument,
+            format!("{} name too long", labels.noun),
+        ));
+    }
+
+    if email.len() > 255 {
+        return Err(invalid(
+            labels.email_argument,
+            format!("{} email too long", labels.noun),
+        ));
     }
 
     // Basic email validation
-    if !user_email.contains('@') || !user_email.contains('.') {
-        return Err(GitError::InvalidArgument {
-            argument: "user_email".to_string(),
-            reason: "Invalid email format".to_string(),
-        });
+    if !email.contains('@') || !email.contains('.') {
+        return Err(invalid(
+            labels.email_argument,
+            "Invalid email format".to_string(),
+        ));
     }
 
     // More thorough email validation.
@@ -191,38 +244,38 @@ pub fn validate_user_info(user_name: &str, user_email: &str) -> Result<(), GitEr
     // Splitting instead makes that guarantee the compiler's to keep rather
     // than the reader's to verify, and it survives someone reordering the
     // checks above. `split_once` splits on the first '@', as `find` did.
-    let Some((local_part, domain_part)) = user_email.split_once('@') else {
-        return Err(GitError::InvalidArgument {
-            argument: "user_email".to_string(),
-            reason: "Invalid email format".to_string(),
-        });
+    let Some((local_part, domain_part)) = email.split_once('@') else {
+        return Err(invalid(
+            labels.email_argument,
+            "Invalid email format".to_string(),
+        ));
     };
 
     if local_part.is_empty() {
-        return Err(GitError::InvalidArgument {
-            argument: "user_email".to_string(),
-            reason: "Invalid email format: missing local part".to_string(),
-        });
+        return Err(invalid(
+            labels.email_argument,
+            "Invalid email format: missing local part".to_string(),
+        ));
     }
     if domain_part.is_empty() {
-        return Err(GitError::InvalidArgument {
-            argument: "user_email".to_string(),
-            reason: "Invalid email format: missing domain".to_string(),
-        });
+        return Err(invalid(
+            labels.email_argument,
+            "Invalid email format: missing domain".to_string(),
+        ));
     }
     if !domain_part.contains('.') {
-        return Err(GitError::InvalidArgument {
-            argument: "user_email".to_string(),
-            reason: "Invalid email format: domain missing dot".to_string(),
-        });
+        return Err(invalid(
+            labels.email_argument,
+            "Invalid email format: domain missing dot".to_string(),
+        ));
     }
 
     // Check for null bytes
-    if user_name.contains('\0') || user_email.contains('\0') {
-        return Err(GitError::InvalidArgument {
-            argument: "user_info".to_string(),
-            reason: "User info contains null bytes".to_string(),
-        });
+    if name.contains('\0') || email.contains('\0') {
+        return Err(invalid(
+            labels.info_argument,
+            format!("{} info contains null bytes", labels.noun),
+        ));
     }
 
     Ok(())

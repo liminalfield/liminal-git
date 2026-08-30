@@ -80,6 +80,12 @@ pub struct CommitInfo {
     pub message: String,
     pub author_name: String,
     pub author_email: String,
+    /// Who performed the commit, which is not always who decided it. Equal to
+    /// the author unless the commit was written with a `committer` — a
+    /// history where the committer was recorded but cannot be read back is,
+    /// to a caller, a history where it was not recorded.
+    pub committer_name: String,
+    pub committer_email: String,
     pub timestamp: String,
     pub parent_hashes: Vec<String>,
     pub file_changes: i32,
@@ -288,6 +294,44 @@ pub struct TreeFilterOptions {
     /// `effort/plan.yaml` but not `effortless.yaml`, and a missing trailing
     /// slash is normalised rather than being a second thing to remember.
     pub directory: Option<bool>,
+}
+
+/// Who performed a commit, when that is not who authored it.
+///
+/// git has carried two signatures since the beginning, and the distinction is
+/// load-bearing whenever a tool commits a decision a person made: the person
+/// decided it, so they are the author; the tool performed it, so it is the
+/// committer. Absent, the author signs both trailers, which is what every
+/// caller written before this option got and still gets.
+///
+/// An options object rather than two more positional parameters, for the same
+/// reason as `TreeFilterOptions`.
+#[derive(Debug, Default, Deserialize)]
+#[cfg_attr(feature = "napi-binding", napi(object))]
+pub struct CommitOptions {
+    /// Name of the committer. Must be given together with `committerEmail`.
+    pub committer_name: Option<String>,
+    /// Email of the committer. Must be given together with `committerName`.
+    pub committer_email: Option<String>,
+}
+
+/// What `merge` records, and whether it is allowed to record nothing.
+#[derive(Debug, Default, Deserialize)]
+#[cfg_attr(feature = "napi-binding", napi(object))]
+pub struct MergeOptions {
+    /// Name of the committer. Must be given together with `committerEmail`.
+    pub committer_name: Option<String>,
+    /// Email of the committer. Must be given together with `committerName`.
+    pub committer_email: Option<String>,
+    /// Refuse to fast-forward: write a merge commit even when the target
+    /// branch has not moved. `git merge --no-ff`.
+    ///
+    /// Off by default. On, a merge that would otherwise leave the branch tip
+    /// authored by whoever wrote it — with no record that a merge happened or
+    /// that anyone approved it — gets a commit to attribute. An `up-to-date`
+    /// merge is unaffected: there is nothing to merge, so there is nothing to
+    /// attribute.
+    pub no_fast_forward: Option<bool>,
 }
 
 /// Options for creating a new tag

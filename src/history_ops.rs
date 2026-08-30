@@ -93,6 +93,8 @@ pub fn get_file_history_impl(
                 message: commit.message().unwrap_or("").to_string(),
                 author_name: commit.author().name().unwrap_or("").to_string(),
                 author_email: commit.author().email().unwrap_or("").to_string(),
+                committer_name: commit.committer().name().unwrap_or("").to_string(),
+                committer_email: commit.committer().email().unwrap_or("").to_string(),
                 timestamp: commit.time().seconds().to_string(),
                 parent_hashes: commit.parent_ids().map(|id| id.to_string()).collect(),
                 file_changes: 1,
@@ -247,7 +249,7 @@ fn check_file_in_commit_with_rename(
 /// `get_file_history_impl` deliberately does not use this: it already has the
 /// per-file counts in hand and reports a 7-character short hash for
 /// historical reasons. Everything else that returns a `CommitInfo` should
-/// come through here rather than restating the eleven fields.
+/// come through here rather than restating the thirteen fields.
 pub(crate) fn commit_info_from(commit: &git2::Commit) -> CommitInfo {
     let hash = commit.id().to_string();
     CommitInfo {
@@ -256,6 +258,8 @@ pub(crate) fn commit_info_from(commit: &git2::Commit) -> CommitInfo {
         message: commit.message().unwrap_or("").to_string(),
         author_name: commit.author().name().unwrap_or("").to_string(),
         author_email: commit.author().email().unwrap_or("").to_string(),
+        committer_name: commit.committer().name().unwrap_or("").to_string(),
+        committer_email: commit.committer().email().unwrap_or("").to_string(),
         timestamp: commit.time().seconds().to_string(),
         parent_hashes: commit.parent_ids().map(|id| id.to_string()).collect(),
         file_changes: 0,

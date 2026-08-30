@@ -21,6 +21,7 @@ mod history_ops_tests {
             "Initial commit",
             "Test User",
             "test@example.com",
+            None,
         )
         .unwrap();
 
@@ -32,6 +33,7 @@ mod history_ops_tests {
             "Second commit",
             "Test User",
             "test@example.com",
+            None,
         )
         .unwrap();
 
@@ -44,6 +46,7 @@ mod history_ops_tests {
             "Third commit",
             "Test User",
             "test@example.com",
+            None,
         )
         .unwrap();
 
@@ -303,6 +306,7 @@ mod history_ops_tests {
             "Initial tree",
             "Test User",
             "test@example.com",
+            None,
         )
         .unwrap();
 
@@ -322,6 +326,7 @@ mod history_ops_tests {
             "Drop the guide, add notes",
             "Test User",
             "test@example.com",
+            None,
         )
         .unwrap();
 
@@ -478,6 +483,7 @@ mod history_ops_tests {
             "Add a symlink",
             "Test User",
             "test@example.com",
+            None,
         )
         .unwrap();
 
@@ -523,6 +529,7 @@ mod history_ops_tests {
             "Confusable names",
             "Test User",
             "test@example.com",
+            None,
         )
         .unwrap();
 
@@ -849,5 +856,70 @@ mod history_ops_tests {
             vec!["file.txt"]
         );
         assert_eq!(file.content, "first");
+    }
+
+    // ===== committer read-back =====
+
+    #[test]
+    fn test_commit_history_reports_the_committer_separately_from_the_author() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().to_string_lossy().to_string();
+        init_repository_impl(&path).unwrap();
+
+        let file = temp_dir.path().join("file.txt");
+        fs::write(&file, "content").unwrap();
+        commit_files_impl(
+            &path,
+            &[file.to_string_lossy().to_string()],
+            "A decision the human made",
+            "A Human",
+            "human@example.com",
+            Some(&CommitOptions {
+                committer_name: Some("gantry".to_string()),
+                committer_email: Some("gantry@example.com".to_string()),
+            }),
+        )
+        .unwrap();
+
+        let history = get_commit_history_impl(&path, None, None).unwrap();
+        let head = &history.commits[0];
+
+        assert_eq!(head.author_name, "A Human");
+        assert_eq!(head.author_email, "human@example.com");
+        assert_eq!(
+            head.committer_name, "gantry",
+            "the audit question is which tool performed this, and it has to be answerable"
+        );
+        assert_eq!(head.committer_email, "gantry@example.com");
+    }
+
+    #[test]
+    fn test_file_history_reports_the_committer_separately_from_the_author() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().to_string_lossy().to_string();
+        init_repository_impl(&path).unwrap();
+
+        let file = temp_dir.path().join("file.txt");
+        fs::write(&file, "content").unwrap();
+        commit_files_impl(
+            &path,
+            &[file.to_string_lossy().to_string()],
+            "A decision the human made",
+            "A Human",
+            "human@example.com",
+            Some(&CommitOptions {
+                committer_name: Some("gantry".to_string()),
+                committer_email: Some("gantry@example.com".to_string()),
+            }),
+        )
+        .unwrap();
+
+        let history = get_file_history_impl(&path, "file.txt", None)
+            .unwrap()
+            .commits;
+
+        assert_eq!(history[0].author_name, "A Human");
+        assert_eq!(history[0].committer_name, "gantry");
+        assert_eq!(history[0].committer_email, "gantry@example.com");
     }
 }

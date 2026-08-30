@@ -16,9 +16,9 @@ use crate::types::{
     CommitDiff, CommitHistory, CommitInfo, DeletedFileEntry, FileAtCommit, FileDiff, TreeEntry,
     TreeFilterOptions,
 };
+use crate::types::{CommitOptions, MergeOptions, MergeOutcome, ResolvedFile};
 use crate::types::{FetchResult, PushResult, RemoteCredentials, RemoteInfo, UpstreamStatus};
 use crate::types::{GitConfig, RepositoryConfig, RepositoryHealth, RepositoryInfo};
-use crate::types::{MergeOutcome, ResolvedFile};
 use crate::utils;
 use crate::validation::*;
 use log::info;
@@ -134,15 +134,24 @@ impl GitService {
         message: String,
         user_name: String,
         user_email: String,
+        options: Option<CommitOptions>,
     ) -> Result<String> {
         validate_repo_path(&repo_path)?;
         validate_file_path(&file_path)?;
         validate_commit_message(&message)?;
         validate_user_info(&user_name, &user_email)?;
+        validate_committer(options.as_ref())?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
             let _guard = utils::lock_repo(&repo_path)?;
-            commit_file_impl(&repo_path, &file_path, &message, &user_name, &user_email)
+            commit_file_impl(
+                &repo_path,
+                &file_path,
+                &message,
+                &user_name,
+                &user_email,
+                options.as_ref(),
+            )
         })
         .await
     }
@@ -173,15 +182,24 @@ impl GitService {
         message: String,
         user_name: String,
         user_email: String,
+        options: Option<CommitOptions>,
     ) -> Result<String> {
         validate_repo_path(&repo_path)?;
         validate_file_paths(&file_paths)?;
         validate_commit_message(&message)?;
         validate_user_info(&user_name, &user_email)?;
+        validate_committer(options.as_ref())?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
             let _guard = utils::lock_repo(&repo_path)?;
-            commit_files_impl(&repo_path, &file_paths, &message, &user_name, &user_email)
+            commit_files_impl(
+                &repo_path,
+                &file_paths,
+                &message,
+                &user_name,
+                &user_email,
+                options.as_ref(),
+            )
         })
         .await
     }
@@ -263,17 +281,26 @@ impl GitService {
         message: String,
         user_name: String,
         user_email: String,
+        options: Option<CommitOptions>,
     ) -> Result<String> {
         validate_repo_path(&repo_path)?;
+        validate_committer(options.as_ref())?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
             let _guard = utils::lock_repo(&repo_path)?;
-            commit_staged_changes_impl(&repo_path, &message, &user_name, &user_email)
+            commit_staged_changes_impl(
+                &repo_path,
+                &message,
+                &user_name,
+                &user_email,
+                options.as_ref(),
+            )
         })
         .await
     }
 
     #[napi]
+    #[allow(clippy::too_many_arguments)]
     pub async fn move_file(
         &self,
         repo_path: String,
@@ -282,12 +309,14 @@ impl GitService {
         message: String,
         user_name: String,
         user_email: String,
+        options: Option<CommitOptions>,
     ) -> Result<String> {
         validate_repo_path(&repo_path)?;
         validate_file_path(&source_path)?;
         validate_file_path(&dest_path)?;
         validate_commit_message(&message)?;
         validate_user_info(&user_name, &user_email)?;
+        validate_committer(options.as_ref())?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
             let _guard = utils::lock_repo(&repo_path)?;
@@ -298,12 +327,14 @@ impl GitService {
                 &message,
                 &user_name,
                 &user_email,
+                options.as_ref(),
             )
         })
         .await
     }
 
     #[napi]
+    #[allow(clippy::too_many_arguments)]
     pub async fn move_directory(
         &self,
         repo_path: String,
@@ -312,12 +343,14 @@ impl GitService {
         message: String,
         user_name: String,
         user_email: String,
+        options: Option<CommitOptions>,
     ) -> Result<String> {
         validate_repo_path(&repo_path)?;
         validate_directory_path(&source_path)?;
         validate_directory_path(&dest_path)?;
         validate_commit_message(&message)?;
         validate_user_info(&user_name, &user_email)?;
+        validate_committer(options.as_ref())?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
             let _guard = utils::lock_repo(&repo_path)?;
@@ -328,6 +361,7 @@ impl GitService {
                 &message,
                 &user_name,
                 &user_email,
+                options.as_ref(),
             )
         })
         .await
@@ -773,6 +807,7 @@ impl GitService {
     /// * `message` - New commit message (if empty, reuse previous message)
     /// * `user_name` - Optional user name (empty string = read from config)
     /// * `user_email` - Optional user email (empty string = read from config)
+    /// * `options` - Optional committer, defaulting to the author
     #[napi]
     pub async fn commit_amend(
         &self,
@@ -780,8 +815,10 @@ impl GitService {
         message: String,
         user_name: String,
         user_email: String,
+        options: Option<CommitOptions>,
     ) -> Result<String> {
         validate_repo_path(&repo_path)?;
+        validate_committer(options.as_ref())?;
         let structured = self.feature_flags().structured_errors;
         utils::run_blocking(structured, move || {
             let _guard = utils::lock_repo(&repo_path)?;
@@ -796,7 +833,7 @@ impl GitService {
             } else {
                 Some(user_email.as_str())
             };
-            commit_amend_impl(&repo_path, &message, name, email)
+            commit_amend_impl(&repo_path, &message, name, email, options.as_ref())
         })
         .await
     }
@@ -931,6 +968,10 @@ impl GitService {
     /// caller who abandons the resolution is left with the repository it
     /// started with. Refuses with `UNSTAGED_CHANGES_WOULD_BE_LOST` when a file
     /// the merge would change has unsaved edits on disk.
+    ///
+    /// Fast-forwards where it can, which writes no commit and so records
+    /// nobody. `{ noFastForward: true }` requires a merge commit instead, so
+    /// the merge has somewhere to say who performed it.
     #[napi]
     pub async fn merge(
         &self,
@@ -938,8 +979,9 @@ impl GitService {
         branch: String,
         user_name: Option<String>,
         user_email: Option<String>,
+        options: Option<MergeOptions>,
     ) -> Result<MergeOutcome> {
-        merge_ops::merge(self, repo_path, branch, user_name, user_email).await
+        merge_ops::merge(self, repo_path, branch, user_name, user_email, options).await
     }
 
     /// Read a blob by oid as text — one side of a contested file.
@@ -970,6 +1012,7 @@ impl GitService {
         message: String,
         user_name: Option<String>,
         user_email: Option<String>,
+        options: Option<CommitOptions>,
     ) -> Result<CommitInfo> {
         merge_ops::commit_merge(
             self,
@@ -980,6 +1023,7 @@ impl GitService {
             message,
             user_name,
             user_email,
+            options,
         )
         .await
     }

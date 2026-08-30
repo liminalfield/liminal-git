@@ -30,7 +30,15 @@ mod remote_ops_tests {
 
         let file = work_path.join("a.md");
         fs::write(&file, "one\n").unwrap();
-        commit_file_impl(&work, &file.to_string_lossy(), "first", "T", "t@e.com").unwrap();
+        commit_file_impl(
+            &work,
+            &file.to_string_lossy(),
+            "first",
+            "T",
+            "t@e.com",
+            None,
+        )
+        .unwrap();
 
         add_remote_impl(&work, "origin", &remote_path.to_string_lossy()).unwrap();
 
@@ -192,7 +200,15 @@ mod remote_ops_tests {
         // One local commit that the remote has not seen.
         let file = temp.path().join("work").join("b.md");
         fs::write(&file, "two\n").unwrap();
-        commit_file_impl(&work, &file.to_string_lossy(), "second", "T", "t@e.com").unwrap();
+        commit_file_impl(
+            &work,
+            &file.to_string_lossy(),
+            "second",
+            "T",
+            "t@e.com",
+            None,
+        )
+        .unwrap();
 
         let status = get_upstream_status_impl(&work, &branch).unwrap();
 

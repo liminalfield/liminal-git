@@ -326,6 +326,7 @@ mod repository_ops_tests {
             "Initial commit",
             "Test User",
             "test@example.com",
+            None,
         )
         .unwrap();
 
@@ -477,6 +478,7 @@ mod repository_ops_tests {
             "Initial commit",
             "Test User",
             "test@example.com",
+            None,
         )
         .unwrap();
 
@@ -514,6 +516,7 @@ mod repository_ops_tests {
             "Ignore application state",
             "Test User",
             "test@example.com",
+            None,
         )
         .unwrap();
 
@@ -548,6 +551,7 @@ mod repository_ops_tests {
             "Seed",
             "Test User",
             "test@example.com",
+            None,
         )
         .unwrap();
 
