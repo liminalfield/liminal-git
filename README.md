@@ -400,7 +400,7 @@ commit is still `FILE_NOT_FOUND`, and nothing on disk moves. It defaults to
 ## Scope
 
 Remote operations are supported: `listRemotes`, `addRemote`, `removeRemote`,
-`setRemoteUrl`, `fetch`, `push` and `getUpstreamStatus`.
+`setRemoteUrl`, `fetch`, `push`, `getUpstreamStatus` and `clone`.
 
 Merging is supported, and it is performed entirely in memory. `mergeAnalysis`
 reports, without changing anything, whether merging a branch into HEAD would be
@@ -473,7 +473,7 @@ a host application can offer the right thing.
 Untracked files that the incoming tree does not want are none of these
 operations' business and never block anything.
 
-**Not** supported, deliberately: `clone`, `revert`, cherry-pick ranges, and any
+**Not** supported, deliberately: `revert`, cherry-pick ranges, and any
 automatic conflict resolution strategy. Which of two versions of a writer's
 work survives is not a decision this library will make on their behalf.
 
@@ -516,7 +516,13 @@ ref updates, ahead/behind and push rejection are all exercised with no network
 and no server.
 
 Authentication is not covered, because a local path never asks for any. The
-credential callback is exercised by no test, and that gap is real.
+credential callback is exercised by no test, and that gap is real. The same
+is true of `clone`'s authentication paths, for the same reason: a local path
+or `file://` URL never prompts, so those paths have coverage only from the
+error-classification tests (synthesised failures, not a real credential
+exchange) — see `clone_reports_a_missing_remote_repository` in
+`tests/remote_ops_tests.rs` for the one path that is checked against a real
+remote, and only for the not-found case, not authentication.
 
 ## Errors
 
@@ -542,6 +548,7 @@ what the codes exist to prevent. A consumer that routes on error type wants
 The codes are stable:
 
 - **Repository** — `REPOSITORY_NOT_FOUND`, `REPOSITORY_CORRUPTED`, `INVALID_REPOSITORY`, `REPOSITORY_LOCKED`
+- **Remote** — `AUTHENTICATION_FAILED`, `REMOTE_NOT_FOUND`, `REMOTE_UNREACHABLE`, `DESTINATION_NOT_EMPTY`, `CLONE_INCOMPLETE`
 - **Files** — `FILE_NOT_FOUND`, `FILE_NOT_IN_REPOSITORY`, `BLOB_NOT_UTF8`, `PATH_TRAVERSAL`
 - **Operations** — `NOTHING_TO_COMMIT`, `MERGE_CONFLICT`, `UNCOMMITTED_CHANGES`, `UNSTAGED_CHANGES_WOULD_BE_LOST`, `UNTRACKED_FILES_WOULD_BE_OVERWRITTEN`, `DETACHED_HEAD`, `CONFIG_MISSING`
 - **Merge resolution** — `HEAD_MOVED`, `UNRESOLVED_CONFLICTS`, `MERGE_NO_LONGER_CONFLICTS`
@@ -561,17 +568,36 @@ now.
 Retriable:
 
 - `IO_ERROR`, `REPOSITORY_CORRUPTED` and `REPOSITORY_LOCKED` — always.
-- `GIT_OPERATION_FAILURE` — **when it came from the operating system**. Every
-  libgit2 failure arrives under this one code, so the flag is decided from the
-  `class` and `code` in `details`: libgit2's `Locked` code, or its `Os` or
-  `Filesystem` classes. That is the case a retry loop is usually written for —
-  a sync client (Google Drive, Dropbox, OneDrive) holding a file open while
-  `discardChanges` or a checkout writes it, which is routine on Windows and
-  gone a moment later.
+- `REMOTE_UNREACHABLE` — always. The remote could not be reached at all —
+  DNS, a dropped connection, a server that is down — which is exactly the
+  condition a second attempt can outlive.
+- `CLONE_INCOMPLETE` — only when the partially-created destination was
+  removed. A transfer that died after objects had already arrived leaves
+  nothing behind once cleanup succeeds, so the retry starts clean; if cleanup
+  itself failed, the retry would only reach `DESTINATION_NOT_EMPTY`, so this
+  is reported not retriable instead.
+- `GIT_OPERATION_FAILURE` — **when it came from the operating system**. A
+  libgit2 failure classifies more precisely than this wherever the failure
+  itself says which kind it was — `REPOSITORY_NOT_FOUND`,
+  `AUTHENTICATION_FAILED`, `REMOTE_NOT_FOUND` and `REMOTE_UNREACHABLE` above
+  are all libgit2 failures read this way, from the `class` and `code` in
+  `details`. `GIT_OPERATION_FAILURE` is what is left over: a libgit2 failure
+  with no code-specific classification, retriable only when the `class` and
+  `code` in `details` point at the operating system — libgit2's `Locked`
+  code, or its `Os` or `Filesystem` classes. That is the case a retry loop is
+  usually written for — a sync client (Google Drive, Dropbox, OneDrive)
+  holding a file open while `discardChanges` or a checkout writes it, which
+  is routine on Windows and gone a moment later.
 
 Everything else is `false`, including a `GIT_OPERATION_FAILURE` from any other
-class. A checkout conflict is deliberately not retriable: it is an answer about
-the tree, not a transient failure to write it.
+class. `REMOTE_NOT_FOUND`, `AUTHENTICATION_FAILED`, `DESTINATION_NOT_EMPTY`
+and `INVALID_ARGUMENT` are answers about the request, not the moment, so none
+of them are retriable either: the remote is not going to start existing, a
+rejected credential is not going to start being accepted, an occupied
+destination is not going to empty itself, and a URL libgit2 cannot parse is
+not going to parse itself, on a second attempt. A checkout conflict is
+deliberately not retriable for the same reason: it is an answer about the
+tree, not a transient failure to write it.
 
 So the useful shape on the calling side is:
 
@@ -603,6 +629,15 @@ This is written down because it was got wrong once. `UNBORN_HEAD` became
 that the code was new and unadopted — an assumption about one consumer's
 timeline rather than a fact, and it was wrong. Nothing throws when a code
 changes underneath a caller; the branch just stops matching.
+
+**This release narrows `GIT_OPERATION_FAILURE`.** A libgit2 failure that used
+to arrive under that one code now classifies more precisely wherever the
+failure itself says which kind it was: `REPOSITORY_NOT_FOUND`,
+`AUTHENTICATION_FAILED`, `REMOTE_NOT_FOUND`, `REMOTE_UNREACHABLE` and
+`INVALID_ARGUMENT` all split out of it. A consumer matching
+`GIT_OPERATION_FAILURE` for a mistyped path, for instance, now sees
+`REPOSITORY_NOT_FOUND` instead — the same case `UNBORN_HEAD` was, recorded
+here rather than repeated.
 
 ## Feature flags
 

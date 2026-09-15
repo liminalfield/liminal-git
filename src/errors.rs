@@ -39,6 +39,14 @@ pub enum GitError {
     InvalidRepository {
         path: String,
     },
+    /// A clone destination that already holds something.
+    ///
+    /// `entry` names one thing found there. A bare refusal is unexplainable
+    /// when the offender is a dotfile the person's file manager hides.
+    DestinationNotEmpty {
+        path: String,
+        entry: String,
+    },
 
     // File errors
     FileNotFound {
@@ -221,6 +229,23 @@ pub enum GitError {
         code: i32,  // git2::ErrorCode as i32
         message: String,
     },
+
+    /// A clone that failed after the destination was created.
+    ///
+    /// Carries the underlying libgit2 failure so the code stays precise, plus
+    /// what happened to the destination. Both matter: the cause tells a person
+    /// what to fix, and `partial_removed` tells a host whether the retry can
+    /// even start. libgit2 creates the directory and `.git` before it
+    /// authenticates, so a rejected credential leaves a directory behind too —
+    /// this is not only the interrupted-transfer case.
+    CloneFailed {
+        class: i32,
+        code: i32,
+        message: String,
+        destination: String,
+        partial_removed: bool,
+        received_objects: u32,
+    },
 }
 
 impl fmt::Display for GitError {
@@ -230,6 +255,9 @@ impl fmt::Display for GitError {
                 write!(f, "Repository corrupted at {}: {}", path, details)
             }
             GitError::InvalidRepository { path } => write!(f, "Invalid repository: {}", path),
+            GitError::DestinationNotEmpty { path, entry } => {
+                write!(f, "Destination is not empty: {} (found {})", path, entry)
+            }
 
             GitError::FileNotFound { path } => write!(f, "File not found: {}", path),
             GitError::FileNotInRepository { path } => write!(f, "File not in repository: {}", path),
@@ -336,6 +364,23 @@ impl fmt::Display for GitError {
                 "Git operation '{}' failed (class={}, code={}): {}",
                 operation, class, code, message
             ),
+
+            GitError::CloneFailed {
+                message,
+                destination,
+                partial_removed,
+                ..
+            } => write!(
+                f,
+                "Clone into {} failed: {}{}",
+                destination,
+                message,
+                if *partial_removed {
+                    ""
+                } else {
+                    " (the partial destination could not be removed)"
+                }
+            ),
         }
     }
 }
@@ -407,19 +452,80 @@ impl From<std::io::Error> for GitError {
 ///
 /// Compared against git2's enums rather than the integers they happen to have
 /// today — the discriminants are not part of git2's contract.
-fn classify_git_failure(class: i32, code: i32) -> &'static str {
+///
+/// The message is inspected as well as the class and code, and that is a
+/// deliberate exception to the rule this function otherwise follows. Issue
+/// #15 is the whole argument for classifying on `(class, code)` rather than
+/// prose: the class numbers are libgit2's contract, not this library's, and
+/// prose changes out from under you. That argument holds here too — this is
+/// not a case where matching on the message was the easy option, it is the
+/// only option this libgit2 version leaves. Confirmed against a real remote
+/// (see `clone_reports_a_missing_remote_repository` in
+/// `tests/remote_ops_tests.rs`, run with `--ignored`): a nonexistent GitHub
+/// repository over HTTPS comes back as class `Http`, code `GenericError` —
+/// not `NotFound` — with the message "unexpected http status code: 404". A
+/// 500 from the same host arrives with the identical class and code and only
+/// the digits in the message differ (see
+/// `an_http_500_message_stays_an_unreachable_remote` below), so the status
+/// code exists nowhere else to match on. Without the message check, class and
+/// code alone would file a 404 under `GIT_OPERATION_FAILURE` and default it
+/// to retriable — the retry-on-typo loop this classifier exists to prevent.
+/// The `NotFound` code check stays alongside it because other transports
+/// (bare `git://`, SSH) do set it for a missing remote; the message check
+/// only covers the HTTP transport's own way of saying the same thing, and
+/// only for 404 — other status codes deliberately stay
+/// `REMOTE_UNREACHABLE`. Do not widen this to "any 4xx" without checking what
+/// each code actually means; a 401 or 403 is an auth problem (and should be
+/// arriving with `GIT_EAUTH` regardless), not a missing remote.
+///
+/// The same prose-matching is needed for a URL libgit2 cannot parse or does
+/// not support at all — a typo in a scheme, or a path that resolves to
+/// nothing libgit2 recognises as a URL. That is a permanent, caller-fixable
+/// mistake, not a network condition, but it arrives with no distinguishing
+/// class or code of its own: a nonexistent local path clones as class `Net`,
+/// code `GenericError`, message "unsupported URL protocol" (confirmed with a
+/// throwaway probe against libgit2 1.7.2 — see the finding-3 note in the
+/// clone final-fixes report), which without this arm falls straight into
+/// `is_transport` below and reports `REMOTE_UNREACHABLE` — advertising a typo
+/// as retriable, which is exactly what splitting the transport codes exists
+/// to prevent (see the module doc on `classify_git_failure` and
+/// `docs/specs/2026-09-15-clone-design.md`, "a host with a retry loop spins
+/// on a typo"). An unsupported scheme (`ftp://`, `gopher://`, or any scheme
+/// libgit2 does not implement a transport for) instead comes back as class
+/// `Invalid`, code `GenericError`, message "invalid argument: 'port'" — a
+/// different class entirely, because libgit2's generic URL parser rejects it
+/// before any transport is chosen. Both messages are matched literally
+/// because, as with the 404 case above, there is nothing else in the error to
+/// match on. Whoever upgrades libgit2 must re-check these two strings the
+/// same way the 404 arm requires.
+///
+/// Because this is prose, it is exactly the kind of thing that rots silently:
+/// nothing in the ordinary suite talks to a real server, so nothing would
+/// notice if libgit2 changed the string. The `#[ignore]`d network test is the
+/// guard. **Whoever does issue #1 (the libgit2 1.9.6 upgrade) must re-run
+/// `cargo test --no-default-features -- --ignored clone_reports_a_missing_remote`
+/// by hand** — a changed message would make that test fail loudly, but only
+/// if someone runs it, and a silent change would quietly send real 404s back
+/// to being reported as retriable.
+fn classify_git_failure(class: i32, code: i32, message: &str) -> &'static str {
     let class_is = |c: git2::ErrorClass| class == c as i32;
     let code_is = |c: git2::ErrorCode| code == c as i32;
+    let is_transport = class_is(git2::ErrorClass::Net) || class_is(git2::ErrorClass::Http);
+    let is_unparseable_url =
+        message == "unsupported URL protocol" || message.contains("invalid argument: 'port'");
 
     if code_is(git2::ErrorCode::Auth) {
         "AUTHENTICATION_FAILED"
     } else if class_is(git2::ErrorClass::Repository) && code_is(git2::ErrorCode::NotFound) {
         "REPOSITORY_NOT_FOUND"
-    } else if (class_is(git2::ErrorClass::Net) || class_is(git2::ErrorClass::Http))
-        && code_is(git2::ErrorCode::NotFound)
+    } else if is_unparseable_url {
+        "INVALID_ARGUMENT"
+    } else if is_transport
+        && (code_is(git2::ErrorCode::NotFound)
+            || message.contains("unexpected http status code: 404"))
     {
         "REMOTE_NOT_FOUND"
-    } else if class_is(git2::ErrorClass::Net) || class_is(git2::ErrorClass::Http) {
+    } else if is_transport {
         "REMOTE_UNREACHABLE"
     } else {
         "GIT_OPERATION_FAILURE"
@@ -433,10 +539,13 @@ fn classify_git_failure(class: i32, code: i32) -> &'static str {
 /// and one that reports `REMOTE_NOT_FOUND` is not. Anything the classifier
 /// leaves as a generic failure keeps the older rule, which reads the operating
 /// system and filesystem classes as transient.
-fn git_failure_is_retriable(class: i32, code: i32) -> bool {
-    match classify_git_failure(class, code) {
+fn git_failure_is_retriable(class: i32, code: i32, message: &str) -> bool {
+    match classify_git_failure(class, code, message) {
         "REMOTE_UNREACHABLE" => true,
-        "REMOTE_NOT_FOUND" | "AUTHENTICATION_FAILED" | "REPOSITORY_NOT_FOUND" => false,
+        "REMOTE_NOT_FOUND"
+        | "AUTHENTICATION_FAILED"
+        | "REPOSITORY_NOT_FOUND"
+        | "INVALID_ARGUMENT" => false,
         _ => {
             code == git2::ErrorCode::Locked as i32
                 || class == git2::ErrorClass::Os as i32
@@ -505,8 +614,30 @@ impl GitError {
             GitError::IoError { .. }
             | GitError::RepositoryCorrupted { .. }
             | GitError::RepositoryLocked { .. } => true,
-            GitError::GitOperationFailure { class, code, .. } => {
-                git_failure_is_retriable(*class, *code)
+            GitError::GitOperationFailure {
+                class,
+                code,
+                message,
+                ..
+            } => git_failure_is_retriable(*class, *code, message),
+            GitError::CloneFailed {
+                class,
+                code,
+                message,
+                partial_removed,
+                ..
+            } => {
+                // A failed cleanup makes any clone failure non-retriable: the
+                // retry meets DESTINATION_NOT_EMPTY on a directory the caller
+                // never created. There is no separate "objects arrived"
+                // short-circuit here: retriability is about the underlying
+                // cause, not about how far the transfer got. A
+                // `(Reference, NotFound)` from an `options.branch` typo does
+                // not become retriable just because the pack had already
+                // downloaded — that would spin a host on a branch-name typo
+                // the same way an unclassified transport code once spun one
+                // on a URL typo.
+                *partial_removed && git_failure_is_retriable(*class, *code, message)
             }
             _ => false,
         }
@@ -517,6 +648,7 @@ impl GitError {
         match self {
             GitError::RepositoryCorrupted { .. } => "REPOSITORY_CORRUPTED",
             GitError::InvalidRepository { .. } => "INVALID_REPOSITORY",
+            GitError::DestinationNotEmpty { .. } => "DESTINATION_NOT_EMPTY",
             GitError::FileNotFound { .. } => "FILE_NOT_FOUND",
             GitError::FileNotInRepository { .. } => "FILE_NOT_IN_REPOSITORY",
             GitError::BlobNotUtf8 { .. } => "BLOB_NOT_UTF8",
@@ -549,8 +681,36 @@ impl GitError {
             GitError::InvalidBranchName { .. } => "INVALID_BRANCH_NAME",
             GitError::InvalidTagName { .. } => "INVALID_TAG_NAME",
             GitError::IoError { .. } => "IO_ERROR",
-            GitError::GitOperationFailure { class, code, .. } => {
-                classify_git_failure(*class, *code)
+            GitError::GitOperationFailure {
+                class,
+                code,
+                message,
+                ..
+            } => classify_git_failure(*class, *code, message),
+            GitError::CloneFailed {
+                class,
+                code,
+                message,
+                received_objects,
+                ..
+            } => {
+                // CLONE_INCOMPLETE means the transfer began and did not
+                // finish, so it requires both that something arrived AND
+                // that the underlying failure is transport-class (Net or
+                // Http) — a died connection, not a died repository. A
+                // (Reference, NotFound) after objects arrived (an
+                // options.branch typo, say) is not an incomplete transfer:
+                // the transfer finished; the branch it was asked to check
+                // out never existed. That falls through to the ordinary
+                // classification instead of falsely claiming the transfer
+                // was interrupted.
+                let is_transport = *class == git2::ErrorClass::Net as i32
+                    || *class == git2::ErrorClass::Http as i32;
+                if *received_objects > 0 && is_transport {
+                    "CLONE_INCOMPLETE"
+                } else {
+                    classify_git_failure(*class, *code, message)
+                }
             }
         }
     }
@@ -587,6 +747,10 @@ impl GitError {
             }
             GitError::InvalidRepository { path } => {
                 details.set("path", path.as_str())?;
+            }
+            GitError::DestinationNotEmpty { path, entry } => {
+                details.set("path", path.as_str())?;
+                details.set("entry", entry.as_str())?;
             }
             GitError::FileNotFound { path } => {
                 details.set("path", path.as_str())?;
@@ -716,6 +880,21 @@ impl GitError {
                 details.set("class", *class)?;
                 details.set("code", *code)?;
                 details.set("gitMessage", message.as_str())?;
+            }
+            GitError::CloneFailed {
+                class,
+                code,
+                message,
+                destination,
+                partial_removed,
+                received_objects,
+            } => {
+                details.set("class", *class)?;
+                details.set("code", *code)?;
+                details.set("gitMessage", message.as_str())?;
+                details.set("destination", destination.as_str())?;
+                details.set("partialRemoved", *partial_removed)?;
+                details.set("receivedObjects", *received_objects)?;
             } // No default case - compiler enforces exhaustiveness
         }
 
@@ -753,6 +932,13 @@ impl GitError {
             }
             GitError::InvalidRepository { path } => {
                 details.insert("path".to_string(), serde_json::Value::String(path.clone()));
+            }
+            GitError::DestinationNotEmpty { path, entry } => {
+                details.insert("path".to_string(), serde_json::Value::String(path.clone()));
+                details.insert(
+                    "entry".to_string(),
+                    serde_json::Value::String(entry.clone()),
+                );
             }
             GitError::FileNotFound { path } => {
                 details.insert("path".to_string(), serde_json::Value::String(path.clone()));
@@ -966,6 +1152,33 @@ impl GitError {
                     "gitMessage".to_string(),
                     serde_json::Value::String(message.clone()),
                 );
+            }
+            GitError::CloneFailed {
+                class,
+                code,
+                message,
+                destination,
+                partial_removed,
+                received_objects,
+            } => {
+                details.insert("class".to_string(), serde_json::Value::from(*class));
+                details.insert("code".to_string(), serde_json::Value::from(*code));
+                details.insert(
+                    "gitMessage".to_string(),
+                    serde_json::Value::String(message.clone()),
+                );
+                details.insert(
+                    "destination".to_string(),
+                    serde_json::Value::String(destination.clone()),
+                );
+                details.insert(
+                    "partialRemoved".to_string(),
+                    serde_json::Value::Bool(*partial_removed),
+                );
+                details.insert(
+                    "receivedObjects".to_string(),
+                    serde_json::Value::from(*received_objects),
+                );
             } // No default case - compiler enforces exhaustiveness
         }
 
@@ -1100,6 +1313,116 @@ mod tests {
 
         assert_eq!(serialized.code, "REMOTE_UNREACHABLE");
         assert!(serialized.retriable, "a network that is down comes back");
+    }
+
+    /// Like `git_failure`, but with a caller-supplied message. Needed only
+    /// for the arm in `classify_git_failure` that has no signal but the
+    /// message to go on — see the comment there for why that arm exists at
+    /// all. `git_failure`'s fixed message stays fixed for every other test;
+    /// this sibling exists so those callers do not have to start caring about
+    /// a message they were never testing.
+    fn git_failure_with_message(
+        class: git2::ErrorClass,
+        code: git2::ErrorCode,
+        message: &str,
+    ) -> GitError {
+        GitError::GitOperationFailure {
+            operation: "clone".to_string(),
+            class: class as i32,
+            code: code as i32,
+            message: message.to_string(),
+        }
+    }
+
+    /// Pins, in the ordinary suite, the real shape libgit2 1.7.2 returns for
+    /// an HTTPS 404 — confirmed live by
+    /// `clone_reports_a_missing_remote_repository`
+    /// (`tests/remote_ops_tests.rs`, `--ignored`). Without this test, the
+    /// message-matching clause in `classify_git_failure` has no coverage
+    /// outside that network test: someone could delete
+    /// `|| message.contains("unexpected http status code: 404")` and the
+    /// whole ordinary suite would stay green while every real 404 fell back
+    /// to `GIT_OPERATION_FAILURE` and retriable-by-default.
+    #[test]
+    fn an_http_404_message_is_a_missing_remote_repository() {
+        let serialized = git_failure_with_message(
+            git2::ErrorClass::Http,
+            git2::ErrorCode::GenericError,
+            "unexpected http status code: 404",
+        )
+        .to_serializable();
+
+        assert_eq!(serialized.code, "REMOTE_NOT_FOUND");
+        assert!(
+            !serialized.retriable,
+            "a typo does not fix itself, however libgit2 phrases it"
+        );
+    }
+
+    /// The companion the 404 test needs: identical class and code, a
+    /// different status number, and it must NOT read as REMOTE_NOT_FOUND.
+    /// This is what stops the message clause from being "improved" into
+    /// matching any unexpected status code — a 500 is the server's problem
+    /// this moment, not a fact about the repository, and collapsing the two
+    /// would make a transient failure permanent.
+    #[test]
+    fn an_http_500_message_stays_an_unreachable_remote() {
+        let serialized = git_failure_with_message(
+            git2::ErrorClass::Http,
+            git2::ErrorCode::GenericError,
+            "unexpected http status code: 500",
+        )
+        .to_serializable();
+
+        assert_eq!(serialized.code, "REMOTE_UNREACHABLE");
+        assert!(serialized.retriable, "a server error can pass on retry");
+    }
+
+    /// Pins the real shape libgit2 1.7.2 returns for a URL it cannot parse
+    /// as a URL at all — confirmed with a throwaway probe (`clone_impl`
+    /// against a nonexistent local path, and against a bare string with no
+    /// recognisable scheme): class `Net`, code `GenericError`, message
+    /// "unsupported URL protocol". Without the `is_unparseable_url` arm in
+    /// `classify_git_failure`, this falls into the `is_transport` catch-all
+    /// below and reports `REMOTE_UNREACHABLE` — advertising the most likely
+    /// typo on `clone` as retriable, which is what splitting the transport
+    /// codes exists to prevent.
+    #[test]
+    fn an_unrecognised_url_scheme_is_a_caller_mistake_not_a_network_one() {
+        let serialized = git_failure_with_message(
+            git2::ErrorClass::Net,
+            git2::ErrorCode::GenericError,
+            "unsupported URL protocol",
+        )
+        .to_serializable();
+
+        assert_eq!(serialized.code, "INVALID_ARGUMENT");
+        assert!(
+            !serialized.retriable,
+            "a typo in the URL does not fix itself on retry"
+        );
+    }
+
+    /// The companion case: a scheme libgit2's URL parser recognises the
+    /// *shape* of but implements no transport for (`ftp://`, `gopher://`,
+    /// and — per the throwaway probe — the made-up `bogus://` this test
+    /// stands in for) arrives under a different class entirely: `Invalid`,
+    /// `GenericError`, message "invalid argument: 'port'". Same caller
+    /// mistake, different libgit2 error shape, so it needs its own arm.
+    #[test]
+    fn an_unsupported_url_scheme_is_also_a_caller_mistake() {
+        let serialized = git_failure_with_message(
+            git2::ErrorClass::Invalid,
+            git2::ErrorCode::GenericError,
+            "invalid argument: 'port'",
+        )
+        .to_serializable();
+
+        assert_eq!(serialized.code, "INVALID_ARGUMENT");
+        assert!(
+            !serialized.retriable,
+            "an unsupported scheme does not fix itself on retry"
+        );
     }
 
     #[test]
@@ -1387,5 +1710,128 @@ mod tests {
             }
             _ => panic!("Expected array for triedLocations"),
         }
+    }
+
+    fn clone_failure_error(
+        class: git2::ErrorClass,
+        code: git2::ErrorCode,
+        partial_removed: bool,
+        received_objects: u32,
+    ) -> GitError {
+        GitError::CloneFailed {
+            class: class as i32,
+            code: code as i32,
+            message: "the remote hung up".to_string(),
+            destination: "/tmp/dest".to_string(),
+            partial_removed,
+            received_objects,
+        }
+    }
+
+    /// A clone that dies mid-transfer is its own answer: the bytes started
+    /// arriving, so the remote was reachable and the credentials were taken.
+    #[test]
+    fn a_clone_that_dies_after_objects_arrive_is_incomplete() {
+        let serialized = clone_failure_error(
+            git2::ErrorClass::Net,
+            git2::ErrorCode::GenericError,
+            true,
+            12,
+        )
+        .to_serializable();
+
+        assert_eq!(serialized.code, "CLONE_INCOMPLETE");
+        assert!(
+            serialized.retriable,
+            "cleanup succeeded, so a retry is clean"
+        );
+    }
+
+    /// The flag exists so this case cannot lie. A rejected credential is not
+    /// retriable advice about the credential, and the directory libgit2 left
+    /// behind decides whether a retry is even possible.
+    #[test]
+    fn an_auth_failure_during_clone_still_reports_auth_and_carries_the_cleanup() {
+        let error = clone_failure_error(git2::ErrorClass::Http, git2::ErrorCode::Auth, true, 0);
+        let serialized = error.to_serializable();
+
+        assert_eq!(serialized.code, "AUTHENTICATION_FAILED");
+        assert!(!serialized.retriable);
+        assert_eq!(
+            serialized.details.get("partialRemoved"),
+            Some(&serde_json::Value::Bool(true)),
+            "every post-creation failure says whether it cleaned up"
+        );
+        assert_eq!(
+            serialized.details.get("destination"),
+            Some(&serde_json::Value::String("/tmp/dest".to_string()))
+        );
+    }
+
+    /// A retry after a failed cleanup meets DESTINATION_NOT_EMPTY, so calling
+    /// it retriable would be advice that cannot be taken.
+    #[test]
+    fn a_clone_whose_cleanup_failed_is_never_retriable() {
+        let serialized = clone_failure_error(
+            git2::ErrorClass::Net,
+            git2::ErrorCode::GenericError,
+            false,
+            12,
+        )
+        .to_serializable();
+
+        assert_eq!(serialized.code, "CLONE_INCOMPLETE");
+        assert!(
+            !serialized.retriable,
+            "a directory is still there; the retry cannot succeed"
+        );
+    }
+
+    /// The transport case CLONE_INCOMPLETE exists for: objects arrived, then
+    /// the connection died. Cleanup succeeded, so a retry is clean.
+    #[test]
+    fn a_transport_failure_after_objects_arrive_is_incomplete_and_retriable() {
+        let serialized = clone_failure_error(
+            git2::ErrorClass::Http,
+            git2::ErrorCode::GenericError,
+            true,
+            42,
+        )
+        .to_serializable();
+
+        assert_eq!(serialized.code, "CLONE_INCOMPLETE");
+        assert!(
+            serialized.retriable,
+            "a died connection after a clean cleanup is worth retrying"
+        );
+    }
+
+    /// A `(Reference, NotFound)` — an `options.branch` typo — is not an
+    /// incomplete transfer even when objects had already arrived: the
+    /// transfer finished, the branch it was asked to check out never
+    /// existed. Before this fix, `received_objects > 0` alone made this
+    /// CLONE_INCOMPLETE and retriable, which would spin a host on the same
+    /// typo forever over a real network (objects arrive before the branch
+    /// lookup fails).
+    #[test]
+    fn a_missing_branch_after_objects_arrive_is_not_incomplete_and_not_retriable() {
+        let error = GitError::CloneFailed {
+            class: git2::ErrorClass::Reference as i32,
+            code: git2::ErrorCode::NotFound as i32,
+            message: "reference 'refs/heads/does-not-exist' not found".to_string(),
+            destination: "/tmp/dest".to_string(),
+            partial_removed: true,
+            received_objects: 42,
+        };
+        let serialized = error.to_serializable();
+
+        assert_ne!(
+            serialized.code, "CLONE_INCOMPLETE",
+            "the transfer finished; only the checkout target was wrong"
+        );
+        assert!(
+            !serialized.retriable,
+            "a nonexistent branch name does not fix itself on retry"
+        );
     }
 }

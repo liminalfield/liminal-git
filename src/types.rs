@@ -397,6 +397,37 @@ pub struct FetchResult {
 }
 
 #[cfg_attr(feature = "napi-binding", napi(object))]
+#[derive(Debug, Clone, Default)]
+pub struct CloneOptions {
+    /// Branch to check out. Defaults to the remote's HEAD.
+    pub branch: Option<String>,
+}
+
+#[cfg_attr(feature = "napi-binding", napi(object))]
+#[derive(Debug, Clone)]
+pub struct CloneResult {
+    /// The branch checked out.
+    ///
+    /// Present even for an empty remote, where it is unborn — a name the
+    /// first commit will land on rather than one that exists. For an empty
+    /// remote that name may come from local `init.defaultBranch` rather than
+    /// from the remote, which advertises no refs when it holds nothing. Do
+    /// not read it as a fact about the remote in that case.
+    pub branch: String,
+    /// The commit `branch` resolved to. Absent when the branch is unborn.
+    ///
+    /// napi-rs generates `commit?: string` for this field. Observed at
+    /// runtime (Node v26.7.0, napi v3.3.0): when absent, the property is
+    /// missing from the object entirely (`"commit" in result` is `false`)
+    /// and `result.commit` reads as `undefined`, never `null`. Check with
+    /// `result.commit == null`, which is true for both, rather than
+    /// `=== null`.
+    pub commit: Option<String>,
+    pub received_objects: u32,
+    pub received_bytes: f64,
+}
+
+#[cfg_attr(feature = "napi-binding", napi(object))]
 #[derive(Debug, Clone)]
 pub struct PushResult {
     pub remote: String,

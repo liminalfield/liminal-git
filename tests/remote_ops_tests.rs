@@ -232,4 +232,349 @@ mod remote_ops_tests {
             "got {result:?}"
         );
     }
+
+    // ===== clone: the destination probe =====
+
+    #[test]
+    fn probe_creates_a_missing_destination() {
+        let temp = TempDir::new().unwrap();
+        let dest = temp.path().join("fresh");
+
+        let state = probe_destination(&dest.to_string_lossy()).unwrap();
+
+        assert!(matches!(state, DestinationState::Created));
+        assert!(dest.is_dir(), "the probe creates the directory it reports");
+    }
+
+    #[test]
+    fn probe_accepts_an_existing_empty_destination() {
+        let temp = TempDir::new().unwrap();
+        let dest = temp.path().join("empty");
+        fs::create_dir(&dest).unwrap();
+
+        let state = probe_destination(&dest.to_string_lossy()).unwrap();
+
+        assert!(matches!(state, DestinationState::ExistingEmpty));
+    }
+
+    #[test]
+    fn probe_refuses_a_destination_with_files_and_names_one() {
+        let temp = TempDir::new().unwrap();
+        let dest = temp.path().join("occupied");
+        fs::create_dir(&dest).unwrap();
+        fs::write(dest.join("notes.md"), "mine\n").unwrap();
+
+        let err = probe_destination(&dest.to_string_lossy()).unwrap_err();
+
+        assert_eq!(err.error_code(), "DESTINATION_NOT_EMPTY");
+        assert!(
+            err.to_string().contains("notes.md"),
+            "the refusal names what it found, so a person can explain it: {err}"
+        );
+        assert_eq!(
+            fs::read_to_string(dest.join("notes.md")).unwrap(),
+            "mine\n",
+            "a refusal touches nothing — the probe runs before anything is created"
+        );
+    }
+
+    /// A directory holding nothing but a dotfile is not empty, matching
+    /// `git clone` and `init_repository_impl`. On macOS a folder containing
+    /// only .DS_Store looks empty in Finder, so the refusal has to name the
+    /// file or it is unexplainable.
+    #[test]
+    fn probe_refuses_a_destination_holding_only_a_dotfile() {
+        let temp = TempDir::new().unwrap();
+        let dest = temp.path().join("dotted");
+        fs::create_dir(&dest).unwrap();
+        fs::write(dest.join(".DS_Store"), "").unwrap();
+
+        let err = probe_destination(&dest.to_string_lossy()).unwrap_err();
+
+        assert_eq!(err.error_code(), "DESTINATION_NOT_EMPTY");
+        assert!(err.to_string().contains(".DS_Store"), "{err}");
+    }
+
+    #[test]
+    fn probe_refuses_when_the_parent_does_not_exist() {
+        let temp = TempDir::new().unwrap();
+        let dest = temp.path().join("missing").join("child");
+
+        let err = probe_destination(&dest.to_string_lossy()).unwrap_err();
+
+        assert_eq!(err.error_code(), "INVALID_PATH");
+        assert!(err.to_string().contains("parent"), "{err}");
+    }
+
+    // ===== clone =====
+
+    /// A bare repository with one commit on its default branch, to clone from.
+    fn remote_with_one_commit() -> (TempDir, String) {
+        let (temp, work, remote) = repo_with_remote();
+        let branch = head_branch(&work);
+        push_impl(&work, "origin", &branch, RemoteCredentials::default()).unwrap();
+        (temp, remote)
+    }
+
+    #[test]
+    fn clone_brings_down_a_repository() {
+        let (temp, remote) = remote_with_one_commit();
+        let dest = temp.path().join("clone");
+
+        let result = clone_impl(
+            &remote,
+            &dest.to_string_lossy(),
+            RemoteCredentials::default(),
+            None,
+        )
+        .unwrap();
+
+        assert!(dest.join(".git").is_dir(), "a repository landed");
+        assert_eq!(fs::read_to_string(dest.join("a.md")).unwrap(), "one\n");
+        assert!(
+            result.commit.is_some(),
+            "a non-empty remote resolves a commit"
+        );
+        assert_eq!(result.branch, head_branch(&dest.to_string_lossy()));
+        // A local remote is hardlinked rather than transferred, so libgit2's
+        // transfer callback never fires and the counters stay 0. That is the
+        // honest number: nothing crossed a wire. The clone is proven by the
+        // tree and the commit above, not by the counters.
+        assert_eq!(result.received_objects, 0);
+        assert_eq!(result.received_bytes as u32, 0);
+    }
+
+    #[test]
+    fn clone_accepts_an_existing_empty_destination() {
+        let (temp, remote) = remote_with_one_commit();
+        let dest = temp.path().join("prepared");
+        fs::create_dir(&dest).unwrap();
+
+        clone_impl(
+            &remote,
+            &dest.to_string_lossy(),
+            RemoteCredentials::default(),
+            None,
+        )
+        .unwrap();
+
+        assert!(dest.join(".git").is_dir());
+    }
+
+    #[test]
+    fn clone_checks_out_the_branch_it_is_given() {
+        let (temp, work, remote) = repo_with_remote();
+        let default = head_branch(&work);
+        push_impl(&work, "origin", &default, RemoteCredentials::default()).unwrap();
+
+        create_branch_impl(
+            &work,
+            &CreateBranchOptions {
+                name: "release".to_string(),
+                from_commit: None,
+                checkout: true,
+            },
+        )
+        .unwrap();
+        let file = std::path::Path::new(&work).join("b.md");
+        fs::write(&file, "two\n").unwrap();
+        commit_file_impl(
+            &work,
+            &file.to_string_lossy(),
+            "second",
+            "T",
+            "t@e.com",
+            None,
+        )
+        .unwrap();
+        push_impl(&work, "origin", "release", RemoteCredentials::default()).unwrap();
+
+        let dest = temp.path().join("named");
+        let result = clone_impl(
+            &remote,
+            &dest.to_string_lossy(),
+            RemoteCredentials::default(),
+            Some(CloneOptions {
+                branch: Some("release".to_string()),
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(result.branch, "release");
+        assert!(
+            dest.join("b.md").exists(),
+            "the named branch was checked out"
+        );
+    }
+
+    /// An empty remote has no commit, and the branch is unborn rather than
+    /// unknown. This test records what libgit2 resolves there — the name
+    /// decides whether a host's first commit lands on main or master, so
+    /// "absent" would be a worse answer than a name whose provenance is
+    /// documented.
+    #[test]
+    fn clone_of_an_empty_remote_reports_an_unborn_branch() {
+        let temp = TempDir::new().unwrap();
+        let remote = temp.path().join("empty.git");
+        git2::Repository::init_bare(&remote).unwrap();
+        let dest = temp.path().join("clone");
+
+        let result = clone_impl(
+            &remote.to_string_lossy(),
+            &dest.to_string_lossy(),
+            RemoteCredentials::default(),
+            None,
+        )
+        .unwrap();
+
+        assert!(
+            !result.branch.is_empty(),
+            "the unborn branch still has a name"
+        );
+        assert!(result.commit.is_none(), "there is nothing to resolve to");
+        assert_eq!(result.received_objects, 0);
+    }
+
+    #[test]
+    fn clone_removes_a_destination_it_created_when_the_clone_fails() {
+        let temp = TempDir::new().unwrap();
+        let dest = temp.path().join("doomed");
+
+        let err = clone_impl(
+            &temp.path().join("nothing-here.git").to_string_lossy(),
+            &dest.to_string_lossy(),
+            RemoteCredentials::default(),
+            None,
+        )
+        .unwrap_err();
+
+        assert!(
+            !dest.exists(),
+            "a half-populated directory a later call would treat as a \
+             repository is the outcome this is designed to prevent"
+        );
+        assert!(
+            err.to_serializable().details.get("partialRemoved")
+                == Some(&serde_json::Value::Bool(true)),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn clone_leaves_a_destination_it_did_not_create() {
+        let temp = TempDir::new().unwrap();
+        let dest = temp.path().join("mine");
+        fs::create_dir(&dest).unwrap();
+
+        let _ = clone_impl(
+            &temp.path().join("nothing-here.git").to_string_lossy(),
+            &dest.to_string_lossy(),
+            RemoteCredentials::default(),
+            None,
+        )
+        .unwrap_err();
+
+        assert!(
+            dest.is_dir(),
+            "we did not create it, so we do not remove it"
+        );
+        assert_eq!(
+            fs::read_dir(&dest).unwrap().count(),
+            0,
+            "but what landed inside it is ours to clear"
+        );
+    }
+
+    /// Unix only: a parent with no write bit refuses the destination before
+    /// anything exists to clean up — `probe_destination`'s own `create_dir`
+    /// fails, so `clone_impl` returns before it ever reaches `clone_failure`.
+    /// That is a real, worthwhile property on its own (nothing is left for a
+    /// retry to collide with), but it is a different property from cleanup
+    /// succeeding or failing, which needs something to already exist — see
+    /// `restore_destination`'s own tests in `src/remote_ops.rs` for that.
+    /// Skipped as root, where the permission bit does not bite.
+    #[cfg(unix)]
+    #[test]
+    fn clone_refuses_a_destination_whose_parent_is_read_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if unsafe { libc_geteuid() } == 0 {
+            eprintln!("skipped: running as root, where a read-only parent is not read-only");
+            return;
+        }
+
+        let temp = TempDir::new().unwrap();
+        let parent = temp.path().join("locked");
+        fs::create_dir(&parent).unwrap();
+        let dest = parent.join("clone");
+
+        let mut perms = fs::metadata(&parent).unwrap().permissions();
+        perms.set_mode(0o555);
+        fs::set_permissions(&parent, perms).unwrap();
+
+        let result = clone_impl(
+            &temp.path().join("nothing-here.git").to_string_lossy(),
+            &dest.to_string_lossy(),
+            RemoteCredentials::default(),
+            None,
+        );
+
+        // Restore before asserting, so a failed assertion still lets TempDir
+        // clean up rather than leaving the tree behind.
+        let mut perms = fs::metadata(&parent).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&parent, perms).unwrap();
+
+        assert!(result.is_err(), "a read-only parent cannot take a clone");
+        assert!(
+            !dest.exists(),
+            "the destination was refused before it was created"
+        );
+    }
+
+    /// Pins the premise behind the REMOTE_NOT_FOUND arm: that libgit2 reports
+    /// a missing remote repository as (Http, NotFound). The classification
+    /// tests use synthesised errors and prove the mapping, not the input.
+    ///
+    /// Ignored because it needs the network. Run it deliberately:
+    ///   cargo test --no-default-features -- --ignored clone_reports_a_missing_remote
+    ///
+    /// Observed against libgit2 1.7.2 (git2 0.18): NOT (Http, NotFound) as
+    /// assumed. A real GitHub 404 over HTTPS comes back as class `Http`,
+    /// code `GenericError`, message "unexpected http status code: 404" —
+    /// libgit2's HTTP transport never sets `GIT_ENOTFOUND` for this case.
+    /// `classify_git_failure` in `src/errors.rs` was changed to also match
+    /// on that message text so REMOTE_NOT_FOUND still holds and stays
+    /// non-retriable; the `NotFound`-code check stays alongside it for the
+    /// transports that do set that code for a missing remote.
+    #[test]
+    #[ignore]
+    fn clone_reports_a_missing_remote_repository() {
+        let temp = TempDir::new().unwrap();
+        let dest = temp.path().join("nope");
+
+        let err = clone_impl(
+            "https://github.com/liminalfield/this-repository-does-not-exist.git",
+            &dest.to_string_lossy(),
+            RemoteCredentials::default(),
+            None,
+        )
+        .unwrap_err();
+
+        let serialized = err.to_serializable();
+        assert_eq!(
+            serialized.code, "REMOTE_NOT_FOUND",
+            "details were {:?} — if libgit2 reports something other than \
+             (Http, NotFound), change the arm to match what it actually \
+             returns rather than changing this test",
+            serialized.details
+        );
+        assert!(!serialized.retriable, "a typo does not fix itself");
+    }
+
+    #[cfg(unix)]
+    unsafe extern "C" {
+        #[link_name = "geteuid"]
+        fn libc_geteuid() -> u32;
+    }
 }
