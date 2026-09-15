@@ -37,6 +37,11 @@ use napi::bindgen_prelude::*;
 /// `attempts` guards against libgit2 asking for the same thing repeatedly when
 /// the credential is wrong: without it a bad password becomes an infinite
 /// retry rather than an error.
+///
+/// Both give-up paths carry `ErrorCode::Auth`, because that is what
+/// `classify_git_failure` reads to report `AUTHENTICATION_FAILED`. Built with
+/// `Error::from_str` they were generic, and the most ordinary auth failure
+/// there is would have been the one that did not classify.
 // `std::result::Result` spelled out throughout this module: under the
 // napi-binding feature `napi::bindgen_prelude::*` brings its own `Result` into
 // scope, whose error type must be `AsRef<str>`. GitError and git2::Error are
@@ -51,7 +56,9 @@ fn credential_callback(
             let mut n = attempts.borrow_mut();
             *n += 1;
             if *n > 8 {
-                return Err(git2::Error::from_str(
+                return Err(git2::Error::new(
+                    git2::ErrorCode::Auth,
+                    git2::ErrorClass::Callback,
                     "authentication failed: exhausted the available credentials",
                 ));
             }
@@ -98,7 +105,9 @@ fn credential_callback(
             return Cred::credential_helper(&config, url, username_from_url);
         }
 
-        Err(git2::Error::from_str(
+        Err(git2::Error::new(
+            git2::ErrorCode::Auth,
+            git2::ErrorClass::Callback,
             "authentication failed: no credential type this client can supply was offered",
         ))
     }
@@ -507,4 +516,60 @@ pub async fn get_upstream_status(
         get_upstream_status_impl(&repo_path, &branch)
     })
     .await
+}
+
+#[cfg(test)]
+mod credential_tests {
+    use super::*;
+    use crate::errors::GitError;
+
+    /// The give-up errors must carry `Auth`, because that is what the error
+    /// classifier reads. Built with `Error::from_str` they were
+    /// `Generic`/`Generic`, and a rejected credential reported the same code
+    /// as any other failure — on the one path a host most needs to tell apart,
+    /// since it is the one a person can fix.
+    #[test]
+    fn giving_up_on_credentials_reports_an_authentication_failure() {
+        let mut callback = credential_callback(RemoteCredentials::default());
+
+        // No credential type offered at all: the last branch in the callback.
+        let err = callback(
+            "https://example.invalid/r.git",
+            None,
+            CredentialType::empty(),
+        )
+        .err()
+        .expect("no offered credential type can be satisfied");
+
+        assert_eq!(err.code(), git2::ErrorCode::Auth);
+        assert_eq!(err.class(), git2::ErrorClass::Callback);
+        assert_eq!(
+            GitError::from(err).error_code(),
+            "AUTHENTICATION_FAILED",
+            "the classifier must see this as auth, not as a generic failure"
+        );
+    }
+
+    /// libgit2 retries with different credential types; without the attempt
+    /// ceiling a wrong password is an infinite loop rather than an error.
+    #[test]
+    fn exhausting_the_attempt_ceiling_also_reports_an_authentication_failure() {
+        let mut callback = credential_callback(RemoteCredentials::default());
+
+        let mut last = None;
+        for _ in 0..9 {
+            last = Some(callback(
+                "https://example.invalid/r.git",
+                None,
+                CredentialType::empty(),
+            ));
+        }
+
+        let err = last
+            .unwrap()
+            .err()
+            .expect("the ceiling is reached by the ninth call");
+        assert_eq!(err.code(), git2::ErrorCode::Auth);
+        assert_eq!(err.class(), git2::ErrorClass::Callback);
+    }
 }

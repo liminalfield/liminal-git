@@ -32,9 +32,6 @@ pub struct SerializedGitError {
 #[derive(Debug, Clone)]
 pub enum GitError {
     // Repository errors
-    RepositoryNotFound {
-        path: String,
-    },
     RepositoryCorrupted {
         path: String,
         details: String,
@@ -229,7 +226,6 @@ pub enum GitError {
 impl fmt::Display for GitError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            GitError::RepositoryNotFound { path } => write!(f, "Repository not found: {}", path),
             GitError::RepositoryCorrupted { path, details } => {
                 write!(f, "Repository corrupted at {}: {}", path, details)
             }
@@ -397,6 +393,58 @@ impl From<std::io::Error> for GitError {
     }
 }
 
+/// Classify a libgit2 failure from the class and code it already carries.
+///
+/// This is where `GIT_OPERATION_FAILURE` stops being the answer to every
+/// question. libgit2 already knows which kind of failure it had; the
+/// information was reaching callers only as prose and a class integer, and
+/// neither is something a consumer should match on.
+///
+/// Arm order is load-bearing. `Auth` is tested before the transport classes,
+/// because an authentication failure over HTTPS carries a transport class and
+/// is an authentication failure regardless. Grouping these by class instead
+/// would read tidier and quietly change what a rejected token reports.
+///
+/// Compared against git2's enums rather than the integers they happen to have
+/// today — the discriminants are not part of git2's contract.
+fn classify_git_failure(class: i32, code: i32) -> &'static str {
+    let class_is = |c: git2::ErrorClass| class == c as i32;
+    let code_is = |c: git2::ErrorCode| code == c as i32;
+
+    if code_is(git2::ErrorCode::Auth) {
+        "AUTHENTICATION_FAILED"
+    } else if class_is(git2::ErrorClass::Repository) && code_is(git2::ErrorCode::NotFound) {
+        "REPOSITORY_NOT_FOUND"
+    } else if (class_is(git2::ErrorClass::Net) || class_is(git2::ErrorClass::Http))
+        && code_is(git2::ErrorCode::NotFound)
+    {
+        "REMOTE_NOT_FOUND"
+    } else if class_is(git2::ErrorClass::Net) || class_is(git2::ErrorClass::Http) {
+        "REMOTE_UNREACHABLE"
+    } else {
+        "GIT_OPERATION_FAILURE"
+    }
+}
+
+/// Whether a classified libgit2 failure is worth repeating.
+///
+/// Derived from the same classification as the code, so the two cannot drift:
+/// a failure that reports `REMOTE_UNREACHABLE` is retriable by construction,
+/// and one that reports `REMOTE_NOT_FOUND` is not. Anything the classifier
+/// leaves as a generic failure keeps the older rule, which reads the operating
+/// system and filesystem classes as transient.
+fn git_failure_is_retriable(class: i32, code: i32) -> bool {
+    match classify_git_failure(class, code) {
+        "REMOTE_UNREACHABLE" => true,
+        "REMOTE_NOT_FOUND" | "AUTHENTICATION_FAILED" | "REPOSITORY_NOT_FOUND" => false,
+        _ => {
+            code == git2::ErrorCode::Locked as i32
+                || class == git2::ErrorClass::Os as i32
+                || class == git2::ErrorClass::Filesystem as i32
+        }
+    }
+}
+
 impl GitError {
     /// Add operation context to a GitOperationFailure
     ///
@@ -439,9 +487,8 @@ impl GitError {
     /// moment rather than about the request, which is the distinction a
     /// caller's retry loop needs: retry this, surface that one now.
     ///
-    /// `GitOperationFailure` is what every libgit2 error becomes, so answering
-    /// for it means reading the `class` and `code` it already carries. A
-    /// failure that came from the operating system or the filesystem is the
+    /// See `git_failure_is_retriable` for the logic on `GitOperationFailure`:
+    /// a failure that came from the operating system or the filesystem is the
     /// same kind of thing `RepositoryLocked` is, one layer down — a sync
     /// client holding a file open during a checkout is routine on Windows and
     /// gone a moment later. Everything else libgit2 reports is a real answer
@@ -459,9 +506,7 @@ impl GitError {
             | GitError::RepositoryCorrupted { .. }
             | GitError::RepositoryLocked { .. } => true,
             GitError::GitOperationFailure { class, code, .. } => {
-                *code == git2::ErrorCode::Locked as i32
-                    || *class == git2::ErrorClass::Os as i32
-                    || *class == git2::ErrorClass::Filesystem as i32
+                git_failure_is_retriable(*class, *code)
             }
             _ => false,
         }
@@ -470,7 +515,6 @@ impl GitError {
     /// Get error code for structured error responses
     pub fn error_code(&self) -> &'static str {
         match self {
-            GitError::RepositoryNotFound { .. } => "REPOSITORY_NOT_FOUND",
             GitError::RepositoryCorrupted { .. } => "REPOSITORY_CORRUPTED",
             GitError::InvalidRepository { .. } => "INVALID_REPOSITORY",
             GitError::FileNotFound { .. } => "FILE_NOT_FOUND",
@@ -505,7 +549,9 @@ impl GitError {
             GitError::InvalidBranchName { .. } => "INVALID_BRANCH_NAME",
             GitError::InvalidTagName { .. } => "INVALID_TAG_NAME",
             GitError::IoError { .. } => "IO_ERROR",
-            GitError::GitOperationFailure { .. } => "GIT_OPERATION_FAILURE",
+            GitError::GitOperationFailure { class, code, .. } => {
+                classify_git_failure(*class, *code)
+            }
         }
     }
 
@@ -532,9 +578,6 @@ impl GitError {
         let mut details = Object::new(env)?;
 
         match self {
-            GitError::RepositoryNotFound { path } => {
-                details.set("path", path.as_str())?;
-            }
             GitError::RepositoryCorrupted {
                 path,
                 details: error_details,
@@ -698,9 +741,6 @@ impl GitError {
         let mut details = HashMap::new();
 
         match self {
-            GitError::RepositoryNotFound { path } => {
-                details.insert("path".to_string(), serde_json::Value::String(path.clone()));
-            }
             GitError::RepositoryCorrupted {
                 path,
                 details: error_details,
@@ -1014,6 +1054,52 @@ mod tests {
             code: code as i32,
             message: "the file is in use by another process".to_string(),
         }
+    }
+
+    #[test]
+    fn a_repository_class_not_found_is_not_a_repository() {
+        let serialized =
+            git_failure(git2::ErrorClass::Repository, git2::ErrorCode::NotFound).to_serializable();
+
+        assert_eq!(serialized.code, "REPOSITORY_NOT_FOUND");
+        assert!(!serialized.retriable, "a mistyped path is a real answer");
+    }
+
+    /// Arm order is load-bearing. `Auth` is matched before the transport classes,
+    /// so an authentication failure over HTTPS reads as auth rather than as a
+    /// transport problem. Regrouping the arms by class would change behaviour;
+    /// this test is what fails when someone does.
+    #[test]
+    fn a_transport_auth_failure_classifies_as_auth_not_transport() {
+        let serialized =
+            git_failure(git2::ErrorClass::Net, git2::ErrorCode::Auth).to_serializable();
+
+        assert_eq!(serialized.code, "AUTHENTICATION_FAILED");
+        assert!(
+            !serialized.retriable,
+            "a rejected credential is not a retry"
+        );
+    }
+
+    #[test]
+    fn an_http_not_found_is_a_missing_remote_repository() {
+        let serialized =
+            git_failure(git2::ErrorClass::Http, git2::ErrorCode::NotFound).to_serializable();
+
+        assert_eq!(serialized.code, "REMOTE_NOT_FOUND");
+        assert!(
+            !serialized.retriable,
+            "the remote answered; a typo does not fix itself on the second try"
+        );
+    }
+
+    #[test]
+    fn a_net_class_failure_is_an_unreachable_remote_and_is_retriable() {
+        let serialized =
+            git_failure(git2::ErrorClass::Net, git2::ErrorCode::GenericError).to_serializable();
+
+        assert_eq!(serialized.code, "REMOTE_UNREACHABLE");
+        assert!(serialized.retriable, "a network that is down comes back");
     }
 
     #[test]
