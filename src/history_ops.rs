@@ -478,7 +478,7 @@ pub fn get_tree_at_commit_impl(
     tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
         // libgit2 gives the directory with its trailing slash already on it,
         // and "" at the top level, so this concatenation is the full path.
-        let name = match entry.name() {
+        let name = match entry.name().ok() {
             Some(name) => name,
             // A name that is not valid UTF-8 cannot cross the N-API boundary.
             // Skipping the entry matches how every other operation here
@@ -1160,7 +1160,13 @@ pub fn resolve_ref_impl(repo_path: &str, ref_name: &str) -> Result<String, GitEr
             // missing ref because the two call for different things from a
             // caller — one is a state that ends, the other a name that was
             // never going to resolve.
-            Err(_) if reference.symbolic_target().is_some() && reference.resolve().is_err() => {
+            // `is_ok()` would be wrong here: 0.21 returns Ok(None) for a
+            // reference that is not symbolic, so only a Some target means the
+            // ref is symbolic and therefore unborn rather than missing.
+            Err(_)
+                if reference.symbolic_target().ok().flatten().is_some()
+                    && reference.resolve().is_err() =>
+            {
                 return Err(GitError::EmptyRepository {
                     ref_name: ref_name.to_string(),
                 });

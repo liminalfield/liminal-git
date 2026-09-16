@@ -166,7 +166,7 @@ fn status_paths(repo_path: &Path) -> Vec<String> {
     repo.statuses(Some(&mut opts))
         .expect("Failed to get statuses")
         .iter()
-        .filter_map(|entry| entry.path().map(|p| p.to_string()))
+        .filter_map(|entry| entry.path().ok().map(|p| p.to_string()))
         .collect()
 }
 
