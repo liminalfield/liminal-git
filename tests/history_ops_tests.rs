@@ -53,6 +53,28 @@ mod history_ops_tests {
         (temp_dir, path)
     }
 
+    /// Find a commit by its message.
+    ///
+    /// These tests used to index into the history by position. The fixture's
+    /// three commits are made inside one second, and `Sort::TIME` leaves the
+    /// order among equal timestamps arbitrary — locally they come back Third,
+    /// Initial, Second, so a positional guess held the intended commit by luck.
+    /// On a machine slow enough for the commits to straddle a second, the order
+    /// is strictly newest-first and the same index is a different commit. That
+    /// is what made these fail on Windows CI and nowhere else.
+    ///
+    /// `file_ops_tests.rs` carries the same helper for the same reason.
+    fn commit_hash_by_message(path: &str, message: &str) -> String {
+        let history = get_commit_history_impl(path, None, None).unwrap();
+        history
+            .commits
+            .iter()
+            .find(|c| c.message.trim() == message)
+            .unwrap_or_else(|| panic!("no commit with message {message:?}"))
+            .hash
+            .clone()
+    }
+
     #[test]
     fn test_get_commit_history_impl() {
         let (_temp_dir, path) = create_test_repo_with_history();
@@ -128,7 +150,7 @@ mod history_ops_tests {
         assert_eq!(file_content.path, "file1.txt");
 
         // Get file content from earlier commit (initial commit)
-        let initial_commit = &history.commits[1].hash;
+        let initial_commit = &commit_hash_by_message(&path, "Initial commit");
         let file_content2 = get_file_at_commit_impl(&path, "file1.txt", initial_commit);
         assert!(file_content2.is_ok());
         let file_content2 = file_content2.unwrap();
@@ -233,9 +255,10 @@ mod history_ops_tests {
     fn test_get_commit_diff_impl() {
         let (_temp_dir, path) = create_test_repo_with_history();
 
-        // Get a commit hash
-        let history = get_commit_history_impl(&path, None, None).unwrap();
-        let commit_hash = &history.commits[2].hash; // Second commit
+        // "Second commit" has a parent; the root commit does not. Selected by
+        // message because index 2 is the root on any machine where the three
+        // commits do not share a timestamp.
+        let commit_hash = &commit_hash_by_message(&path, "Second commit");
 
         let commit_diff = get_commit_diff_impl(&path, commit_hash);
         assert!(commit_diff.is_ok());
@@ -251,9 +274,11 @@ mod history_ops_tests {
     fn test_get_commit_diff_first_commit() {
         let (_temp_dir, path) = create_test_repo_with_history();
 
-        // Get first commit (no parent)
-        let history = get_commit_history_impl(&path, None, None).unwrap();
-        let first_commit = &history.commits[1].hash; // Initial commit (oldest)
+        // Get first commit (no parent). The old positional form said
+        // `commits[1]` with the comment "Initial commit (oldest)", which is
+        // wrong even under a strict newest-first order — the oldest of three is
+        // at index 2.
+        let first_commit = &commit_hash_by_message(&path, "Initial commit");
 
         let commit_diff = get_commit_diff_impl(&path, first_commit);
         assert!(commit_diff.is_ok());
