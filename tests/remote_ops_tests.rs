@@ -330,7 +330,13 @@ mod remote_ops_tests {
         .unwrap();
 
         assert!(dest.join(".git").is_dir(), "a repository landed");
-        assert_eq!(fs::read_to_string(dest.join("a.md")).unwrap(), "one\n");
+        // Line endings are normalised before comparing because a checkout runs
+        // git's filters, and Windows CI sets core.autocrlf=true globally: the
+        // blob holds "one\n" and the working tree gets "one\r\n". What this
+        // asserts is that the content arrived, not which convention the
+        // platform writes it in.
+        let landed = fs::read_to_string(dest.join("a.md")).unwrap();
+        assert_eq!(landed.replace("\r\n", "\n"), "one\n");
         assert!(
             result.commit.is_some(),
             "a non-empty remote resolves a commit"
