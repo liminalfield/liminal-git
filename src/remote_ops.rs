@@ -165,16 +165,21 @@ pub fn list_remotes_impl(repo_path: &str) -> std::result::Result<Vec<RemoteInfo>
         .map_err(|e| GitError::from(e).with_operation("list_remotes"))?;
 
     let mut remotes = Vec::new();
-    for name in names.iter().flatten() {
+    // git2 0.21 yields Result<Option<&str>> where 0.18 yielded Option<&str>.
+    // Dropping the Err keeps the old behaviour: a remote whose name is not valid
+    // UTF-8 is skipped rather than failing the listing.
+    for name in names.iter().filter_map(|n| n.ok()).flatten() {
         let remote = repo
             .find_remote(name)
             .map_err(|e| GitError::from(e).with_operation("find_remote"))?;
 
         // `pushurl` is only interesting when it differs; reporting it always
         // would imply a distinction the repository has not actually made.
-        let url = remote.url().map(str::to_string);
+        let url = remote.url().ok().map(str::to_string);
         let push_url = remote
             .pushurl()
+            .ok()
+            .flatten()
             .map(str::to_string)
             .filter(|p| Some(p) != url.as_ref());
 
@@ -539,7 +544,12 @@ pub fn clone_impl(
     // HEAD's symbolic target, not `repo.head()`: an unborn HEAD has a target
     // and no commit, and that is exactly the empty-remote case.
     let branch = match repo.find_reference("HEAD").ok().as_ref().and_then(|r| {
+        // 0.21 returns Result<Option<&str>>: Err for a target that is not
+        // UTF-8, Ok(None) for a reference that is not symbolic at all. Both
+        // mean "no branch name here", which is what flatten says.
         r.symbolic_target()
+            .ok()
+            .flatten()
             .map(|t| t.strip_prefix("refs/heads/").unwrap_or(t).to_string())
     }) {
         Some(name) => name,
@@ -548,7 +558,7 @@ pub fn clone_impl(
         None => repo
             .head()
             .ok()
-            .and_then(|h| h.shorthand().map(String::from))
+            .and_then(|h| h.shorthand().ok().map(String::from))
             .unwrap_or_else(|| "HEAD".to_string()),
     };
 

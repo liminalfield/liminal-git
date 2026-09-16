@@ -27,7 +27,10 @@ pub fn list_tags_impl(repo_path: &str) -> std::result::Result<Vec<TagInfo>, GitE
         .map_err(|e| GitError::from(e).with_operation("get_tag_names"))?;
     let mut tags = Vec::new();
 
-    for tag_name in tag_names.iter() {
+    // git2 0.21 yields Result<Option<&str>> here, where 0.18 yielded
+    // Option<&str>. Dropping the Err keeps the old behaviour: a name that is not
+    // valid UTF-8 is skipped rather than failing the listing.
+    for tag_name in tag_names.iter().filter_map(|n| n.ok()) {
         if let Some(name) = tag_name
             && let Some(tag_info) = extract_tag_info_impl(&repo, name)?
         {
@@ -197,8 +200,8 @@ fn extract_tag_info_impl(
         Ok(Some(TagInfo {
             name: tag_name.to_string(),
             commit_hash: target_commit.id().to_string(),
-            commit_message: target_commit.message().unwrap_or("").to_string(),
-            tag_message: Some(tag.message().unwrap_or("").to_string()),
+            commit_message: target_commit.message().ok().unwrap_or("").to_string(),
+            tag_message: Some(tag.message().ok().flatten().unwrap_or("").to_string()),
             tagger: tag.tagger().map(|sig| {
                 format!(
                     "{} <{}>",

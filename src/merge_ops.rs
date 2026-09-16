@@ -664,9 +664,12 @@ fn finish_merge(
 
     let reflog_message = format!("{}: {}", reflog_action, message);
     if head_ref.is_branch() {
-        let branch_ref_name = head_ref.name().ok_or_else(|| GitError::InvalidBranchName {
-            name: "<non-UTF-8 branch ref>".to_string(),
-        })?;
+        let branch_ref_name = head_ref
+            .name()
+            .ok()
+            .ok_or_else(|| GitError::InvalidBranchName {
+                name: "<non-UTF-8 branch ref>".to_string(),
+            })?;
         repo.reference(branch_ref_name, commit_id, true, &reflog_message)
             .map_err(|e| GitError::from(e).with_operation("update_branch"))?;
     } else {
@@ -714,7 +717,9 @@ fn dirty_deletions(
         {
             continue;
         }
-        let Some(path) = entry.path() else { continue };
+        let Some(path) = entry.path().ok() else {
+            continue;
+        };
         let as_path = Path::new(path);
         if head_tree.get_path(as_path).is_ok() && tree.get_path(as_path).is_err() {
             files.push(path.to_string());
