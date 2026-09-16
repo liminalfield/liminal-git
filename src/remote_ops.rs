@@ -5,7 +5,10 @@
 // Everything else is deliberately local.
 
 use crate::errors::GitError;
-use crate::{FetchResult, PushResult, RemoteCredentials, RemoteInfo, UpstreamStatus};
+use crate::{
+    CloneOptions, CloneResult, FetchResult, PushResult, RemoteCredentials, RemoteInfo,
+    UpstreamStatus,
+};
 use git2::{Cred, CredentialType, FetchOptions, PushOptions, RemoteCallbacks, Repository};
 use log::info;
 use std::cell::RefCell;
@@ -37,6 +40,11 @@ use napi::bindgen_prelude::*;
 /// `attempts` guards against libgit2 asking for the same thing repeatedly when
 /// the credential is wrong: without it a bad password becomes an infinite
 /// retry rather than an error.
+///
+/// Both give-up paths carry `ErrorCode::Auth`, because that is what
+/// `classify_git_failure` reads to report `AUTHENTICATION_FAILED`. Built with
+/// `Error::from_str` they were generic, and the most ordinary auth failure
+/// there is would have been the one that did not classify.
 // `std::result::Result` spelled out throughout this module: under the
 // napi-binding feature `napi::bindgen_prelude::*` brings its own `Result` into
 // scope, whose error type must be `AsRef<str>`. GitError and git2::Error are
@@ -51,7 +59,9 @@ fn credential_callback(
             let mut n = attempts.borrow_mut();
             *n += 1;
             if *n > 8 {
-                return Err(git2::Error::from_str(
+                return Err(git2::Error::new(
+                    git2::ErrorCode::Auth,
+                    git2::ErrorClass::Callback,
                     "authentication failed: exhausted the available credentials",
                 ));
             }
@@ -98,7 +108,9 @@ fn credential_callback(
             return Cred::credential_helper(&config, url, username_from_url);
         }
 
-        Err(git2::Error::from_str(
+        Err(git2::Error::new(
+            git2::ErrorCode::Auth,
+            git2::ErrorClass::Callback,
             "authentication failed: no credential type this client can supply was offered",
         ))
     }
@@ -415,6 +427,200 @@ pub fn get_upstream_status_impl(
     })
 }
 
+/// What the probe found, and therefore what cleanup has to undo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DestinationState {
+    /// The probe created the directory. Cleanup removes it entirely.
+    Created,
+    /// The directory was already there and empty. Cleanup empties it again
+    /// and leaves the directory, because we did not put it there.
+    ExistingEmpty,
+}
+
+/// Decide whether a clone may proceed into `dest_path`, and create it if
+/// it is not there.
+///
+/// Runs before any network work, so a destination that was never going to
+/// work costs nothing. "Empty" is strict: any entry counts, dotfiles
+/// included, matching `init_repository_impl` and `git clone`. The refusal
+/// names one entry it found — a directory holding only `.DS_Store` looks
+/// empty to the person staring at it.
+///
+/// Leading directories are deliberately not created. `git clone` creates
+/// them; refusing keeps cleanup to two shapes rather than an unbounded chain
+/// of parents to unwind. Relaxing this later is not a breaking change.
+pub fn probe_destination(dest_path: &str) -> std::result::Result<DestinationState, GitError> {
+    let dest = std::path::Path::new(dest_path);
+
+    if dest.exists() {
+        let mut entries = std::fs::read_dir(dest).map_err(|e| GitError::IoError {
+            operation: "read_destination".to_string(),
+            error: format!("{}: {}", dest_path, e),
+        })?;
+
+        if let Some(entry) = entries.next() {
+            let name = entry
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .unwrap_or_else(|_| "an unreadable entry".to_string());
+
+            return Err(GitError::DestinationNotEmpty {
+                path: dest_path.to_string(),
+                entry: name,
+            });
+        }
+
+        return Ok(DestinationState::ExistingEmpty);
+    }
+
+    // `create_dir`, not `create_dir_all`: the parent is required to exist
+    // already, so AlreadyExists here means another process created the
+    // destination between the check above and this call, and that is a real
+    // answer rather than something to paper over.
+    match std::fs::create_dir(dest) {
+        Ok(()) => Ok(DestinationState::Created),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(GitError::DestinationNotEmpty {
+                path: dest_path.to_string(),
+                entry: "a directory another process created".to_string(),
+            })
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(GitError::InvalidPath {
+            path: dest_path.to_string(),
+            reason: "parent directory does not exist".to_string(),
+        }),
+        Err(e) => Err(GitError::IoError {
+            operation: "create_destination".to_string(),
+            error: format!("{}: {}", dest_path, e),
+        }),
+    }
+}
+
+/// Clone a remote repository onto local disk.
+///
+/// The only operation here keyed by a URL and a destination rather than by a
+/// repository path, because the point of it is that no repository exists yet.
+///
+/// Credentials and the transfer counters come from `fetch_options`, the same
+/// code `fetch` runs. A second credential ladder is how two paths start
+/// disagreeing about what an SSH agent means.
+///
+/// A clone from a local path or `file://` URL reports zero received objects
+/// and bytes: libgit2 hardlinks the object store for those rather than
+/// transferring it, so the counters correctly report that nothing crossed
+/// a wire.
+pub fn clone_impl(
+    url: &str,
+    dest_path: &str,
+    creds: RemoteCredentials,
+    options: Option<CloneOptions>,
+) -> std::result::Result<CloneResult, GitError> {
+    info!("clone: url={} dest={}", url, dest_path);
+    let start = std::time::Instant::now();
+
+    let _guard = crate::utils::lock_destination(dest_path)?;
+    let state = probe_destination(dest_path)?;
+
+    let (opts, progress) = fetch_options(creds);
+
+    let mut builder = git2::build::RepoBuilder::new();
+    builder.fetch_options(opts);
+    if let Some(branch) = options.as_ref().and_then(|o| o.branch.as_deref()) {
+        builder.branch(branch);
+    }
+
+    let repo = builder.clone(url, std::path::Path::new(dest_path));
+    let (received_objects, received_bytes) = progress.get();
+
+    let repo = match repo {
+        Ok(repo) => repo,
+        Err(e) => return Err(clone_failure(e, dest_path, state, received_objects)),
+    };
+
+    // HEAD's symbolic target, not `repo.head()`: an unborn HEAD has a target
+    // and no commit, and that is exactly the empty-remote case.
+    let branch = match repo.find_reference("HEAD").ok().as_ref().and_then(|r| {
+        r.symbolic_target()
+            .map(|t| t.strip_prefix("refs/heads/").unwrap_or(t).to_string())
+    }) {
+        Some(name) => name,
+        // A detached HEAD does not arise from a plain clone; if it ever does,
+        // report what HEAD is rather than inventing a branch name.
+        None => repo
+            .head()
+            .ok()
+            .and_then(|h| h.shorthand().map(String::from))
+            .unwrap_or_else(|| "HEAD".to_string()),
+    };
+
+    let commit = repo
+        .head()
+        .ok()
+        .and_then(|h| h.target())
+        .map(|oid| oid.to_string());
+
+    info!(
+        "clone: {} objects in {}ms",
+        received_objects,
+        start.elapsed().as_millis()
+    );
+
+    Ok(CloneResult {
+        branch,
+        commit,
+        received_objects,
+        received_bytes: received_bytes as f64,
+    })
+}
+
+/// Put the destination back the way the probe found it.
+///
+/// Returns whether it succeeded, which is what decides retriability: a caller
+/// told to retry after a cleanup that failed would meet
+/// `DESTINATION_NOT_EMPTY` on a directory it never created.
+fn restore_destination(dest_path: &str, state: DestinationState) -> bool {
+    let dest = std::path::Path::new(dest_path);
+
+    match state {
+        DestinationState::Created => std::fs::remove_dir_all(dest).is_ok(),
+        DestinationState::ExistingEmpty => match std::fs::read_dir(dest) {
+            Ok(entries) => {
+                let mut cleared = true;
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let removed = if path.is_dir() && !path.is_symlink() {
+                        std::fs::remove_dir_all(&path)
+                    } else {
+                        std::fs::remove_file(&path)
+                    };
+                    cleared &= removed.is_ok();
+                }
+                cleared
+            }
+            Err(_) => false,
+        },
+    }
+}
+
+/// Turn a failed clone into an error that says which failure it was and what
+/// became of the destination.
+fn clone_failure(
+    e: git2::Error,
+    dest_path: &str,
+    state: DestinationState,
+    received_objects: u32,
+) -> GitError {
+    let partial_removed = restore_destination(dest_path, state);
+
+    GitError::CloneFailed {
+        class: e.class() as i32,
+        code: e.code() as i32,
+        message: e.message().to_string(),
+        destination: dest_path.to_string(),
+        partial_removed,
+        received_objects,
+    }
+}
+
 // ===== NAPI WRAPPERS =====
 
 #[cfg(feature = "napi-binding")]
@@ -480,6 +686,24 @@ pub async fn fetch(
 }
 
 #[cfg(feature = "napi-binding")]
+pub async fn clone(
+    service: &GitService,
+    url: String,
+    dest_path: String,
+    credentials: Option<RemoteCredentials>,
+    options: Option<CloneOptions>,
+) -> Result<CloneResult> {
+    let structured = service.feature_flags().structured_errors;
+    let creds = credentials.unwrap_or_default();
+    crate::utils::run_blocking(structured, move || {
+        // No `lock_repo` here, unlike every other operation: there is no
+        // repository yet. `clone_impl` takes the destination lock itself.
+        clone_impl(&url, &dest_path, creds, options)
+    })
+    .await
+}
+
+#[cfg(feature = "napi-binding")]
 pub async fn push(
     service: &GitService,
     repo_path: String,
@@ -507,4 +731,148 @@ pub async fn get_upstream_status(
         get_upstream_status_impl(&repo_path, &branch)
     })
     .await
+}
+
+#[cfg(test)]
+mod credential_tests {
+    use super::*;
+    use crate::errors::GitError;
+
+    /// The give-up errors must carry `Auth`, because that is what the error
+    /// classifier reads. Built with `Error::from_str` they were
+    /// `Generic`/`Generic`, and a rejected credential reported the same code
+    /// as any other failure — on the one path a host most needs to tell apart,
+    /// since it is the one a person can fix.
+    #[test]
+    fn giving_up_on_credentials_reports_an_authentication_failure() {
+        let mut callback = credential_callback(RemoteCredentials::default());
+
+        // No credential type offered at all: the last branch in the callback.
+        let err = callback(
+            "https://example.invalid/r.git",
+            None,
+            CredentialType::empty(),
+        )
+        .err()
+        .expect("no offered credential type can be satisfied");
+
+        assert_eq!(err.code(), git2::ErrorCode::Auth);
+        assert_eq!(err.class(), git2::ErrorClass::Callback);
+        assert_eq!(
+            GitError::from(err).error_code(),
+            "AUTHENTICATION_FAILED",
+            "the classifier must see this as auth, not as a generic failure"
+        );
+    }
+
+    /// libgit2 retries with different credential types; without the attempt
+    /// ceiling a wrong password is an infinite loop rather than an error.
+    #[test]
+    fn exhausting_the_attempt_ceiling_also_reports_an_authentication_failure() {
+        let mut callback = credential_callback(RemoteCredentials::default());
+
+        let mut last = None;
+        for _ in 0..9 {
+            last = Some(callback(
+                "https://example.invalid/r.git",
+                None,
+                CredentialType::empty(),
+            ));
+        }
+
+        let err = last
+            .unwrap()
+            .err()
+            .expect("the ceiling is reached by the ninth call");
+        assert_eq!(err.code(), git2::ErrorCode::Auth);
+        assert_eq!(err.class(), git2::ErrorClass::Callback);
+    }
+}
+
+/// Direct tests of `restore_destination`.
+///
+/// The flag it returns decides retriability for every clone failure, so it
+/// has to be proven, not plumbed through a clone that happens to fail at the
+/// right moment. Forcing a real clone to fail exactly when its cleanup
+/// cannot finish is not something a test can arrange deterministically —
+/// which failure, when, is up to libgit2 and the network — so the function
+/// that actually decides the flag is exercised directly instead.
+#[cfg(test)]
+mod restore_destination_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[cfg(unix)]
+    fn running_as_root() -> bool {
+        unsafe extern "C" {
+            #[link_name = "geteuid"]
+            fn geteuid() -> u32;
+        }
+        unsafe { geteuid() == 0 }
+    }
+
+    /// Unix only: a read-only subdirectory makes the file inside it
+    /// unremovable — unlink needs write permission on the directory the
+    /// entry lives in, not on the entry itself. Skipped as root, where the
+    /// permission bit does not bite.
+    #[cfg(unix)]
+    #[test]
+    fn reports_false_when_a_removal_cannot_finish() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if running_as_root() {
+            eprintln!("skipped: running as root, where a read-only directory is not read-only");
+            return;
+        }
+
+        let temp = TempDir::new().unwrap();
+        let dest = temp.path().join("dest");
+        std::fs::create_dir(&dest).unwrap();
+        let sub = dest.join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        std::fs::write(sub.join("f"), b"content").unwrap();
+
+        let mut perms = std::fs::metadata(&sub).unwrap().permissions();
+        perms.set_mode(0o555);
+        std::fs::set_permissions(&sub, perms).unwrap();
+
+        let succeeded =
+            restore_destination(&dest.to_string_lossy(), DestinationState::ExistingEmpty);
+
+        // Restore before asserting, so a failed assertion still lets TempDir
+        // clean up rather than leaving the tree behind.
+        let mut perms = std::fs::metadata(&sub).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&sub, perms).unwrap();
+
+        assert!(!succeeded, "the file inside `sub` could not be unlinked");
+    }
+
+    /// The other half of the branch: an ordinary file and an ordinary
+    /// subdirectory are both removable, so cleanup succeeds and the
+    /// destination directory itself — which we did not create — is left
+    /// standing, empty.
+    #[test]
+    fn reports_true_and_empties_the_destination_when_removal_succeeds() {
+        let temp = TempDir::new().unwrap();
+        let dest = temp.path().join("dest");
+        std::fs::create_dir(&dest).unwrap();
+        std::fs::write(dest.join("f"), b"content").unwrap();
+        std::fs::create_dir(dest.join("sub")).unwrap();
+        std::fs::write(dest.join("sub").join("g"), b"content").unwrap();
+
+        let succeeded =
+            restore_destination(&dest.to_string_lossy(), DestinationState::ExistingEmpty);
+
+        assert!(succeeded, "an ordinary file and subdirectory are removable");
+        assert!(
+            dest.is_dir(),
+            "we did not create the destination, so it stays"
+        );
+        assert_eq!(
+            std::fs::read_dir(&dest).unwrap().count(),
+            0,
+            "but everything inside it is gone"
+        );
+    }
 }

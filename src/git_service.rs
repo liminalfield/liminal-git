@@ -13,11 +13,14 @@ use crate::types::{
     BranchInfo, CreateBranchOptions, CreateTagOptions, FastForwardResult, MergeAnalysis, TagInfo,
 };
 use crate::types::{
+    CloneOptions, CloneResult, FetchResult, PushResult, RemoteCredentials, RemoteInfo,
+    UpstreamStatus,
+};
+use crate::types::{
     CommitDiff, CommitHistory, CommitInfo, DeletedFileEntry, FileAtCommit, FileDiff, TreeEntry,
     TreeFilterOptions,
 };
 use crate::types::{CommitOptions, MergeOptions, MergeOutcome, ResolvedFile};
-use crate::types::{FetchResult, PushResult, RemoteCredentials, RemoteInfo, UpstreamStatus};
 use crate::types::{GitConfig, RepositoryConfig, RepositoryHealth, RepositoryInfo};
 use crate::utils;
 use crate::validation::*;
@@ -1158,6 +1161,35 @@ impl GitService {
     ) -> Result<FetchResult> {
         validate_repo_path(&repo_path)?;
         remote_ops::fetch(self, repo_path, remote_name, credentials).await
+    }
+
+    /// Clone a remote repository onto local disk.
+    ///
+    /// The one operation here that takes a URL and a destination rather than a
+    /// repository path, because the point of it is that no repository exists
+    /// yet. `validate_repo_path` is deliberately not called on the
+    /// destination: it is not a repository, and will not be one until this
+    /// succeeds.
+    ///
+    /// Failures say which failure they were. Before the destination is
+    /// touched: DESTINATION_NOT_EMPTY, or INVALID_PATH when the parent
+    /// directory does not exist. Once the transfer is underway:
+    /// REMOTE_UNREACHABLE, REMOTE_NOT_FOUND, AUTHENTICATION_FAILED,
+    /// INVALID_ARGUMENT for a URL libgit2 cannot parse or does not support,
+    /// CLONE_INCOMPLETE for a transport failure after objects had already
+    /// arrived, and REPOSITORY_NOT_FOUND, IO_ERROR or GIT_OPERATION_FAILURE
+    /// for anything else libgit2 or the filesystem reports. Every failure
+    /// after the destination is created also reports `destination` and
+    /// `partialRemoved` in its details.
+    #[napi]
+    pub async fn clone(
+        &self,
+        url: String,
+        dest_path: String,
+        credentials: Option<RemoteCredentials>,
+        options: Option<CloneOptions>,
+    ) -> Result<CloneResult> {
+        remote_ops::clone(self, url, dest_path, credentials, options).await
     }
 
     /// Push a local branch to a remote.

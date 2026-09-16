@@ -352,6 +352,69 @@ pub fn lock_repo(repo_path: &str) -> Result<RepoLock, GitError> {
     }
 }
 
+/// Take the in-process lock for a clone destination.
+///
+/// Weaker than `lock_repo` on purpose, and the difference is worth knowing:
+/// this excludes clones within one process and not across processes. A
+/// cross-process lock is an `flock` on a file, and there is nowhere to put
+/// that file — inside the destination is a file cleanup deletes while it is
+/// held, and in the parent is litter in somebody's home directory.
+///
+/// It degrades safely. Two processes cloning into one destination are not
+/// excluded, but the loser meets `DESTINATION_NOT_EMPTY` against a tree the
+/// winner owns rather than an interleaved one.
+///
+/// Keyed on the canonicalised parent joined with the final component, because
+/// the destination itself may not exist yet — canonicalising it would fail,
+/// which is the bug that ruled out `lock_repo`. Canonicalising the parent
+/// doubles as the check that the parent exists.
+pub fn lock_destination(dest_path: &str) -> Result<RepoLock, GitError> {
+    let dest = Path::new(dest_path);
+
+    let name = dest
+        .file_name()
+        .ok_or_else(|| GitError::InvalidPath {
+            path: dest_path.to_string(),
+            reason: "destination has no final path component".to_string(),
+        })?
+        .to_owned();
+
+    let parent = match dest.parent() {
+        Some(p) if p.as_os_str().is_empty() => Path::new("."),
+        Some(p) => p,
+        None => Path::new("."),
+    };
+
+    let canonical_parent = std::fs::canonicalize(parent).map_err(|e| {
+        // Only `NotFound` means the parent is missing. Anything else — most
+        // often `PermissionDenied`, a parent that exists but is not
+        // searchable — is a real condition of its own, and reporting it as
+        // "does not exist" sends whoever reads the message looking for the
+        // wrong fix.
+        if e.kind() == std::io::ErrorKind::NotFound {
+            GitError::InvalidPath {
+                path: dest_path.to_string(),
+                reason: "parent directory does not exist".to_string(),
+            }
+        } else {
+            GitError::InvalidPath {
+                path: dest_path.to_string(),
+                reason: format!("parent directory is not accessible: {}", e),
+            }
+        }
+    })?;
+
+    let key = canonical_parent.join(name).to_string_lossy().into_owned();
+    let guard = process_mutex_for(&key)
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+
+    Ok(RepoLock {
+        _file: None,
+        _process: guard,
+    })
+}
+
 /// Run a blocking git2 operation off the JS thread on tokio's blocking pool,
 /// converting a GitError to a NAPI error with the caller's structured-errors
 /// flag. Keeps napi async methods from blocking the main event loop (#390).
@@ -432,9 +495,9 @@ pub fn git_error_to_napi_with_flags(error: GitError, structured: bool) -> NapiEr
         GitError::CannotDeleteCurrentBranch { .. } => Status::GenericFailure,
         GitError::BranchNotMerged { .. } => Status::GenericFailure,
         GitError::NotFastForward { .. } => Status::GenericFailure,
-        GitError::RepositoryNotFound { .. } => Status::GenericFailure,
         GitError::RepositoryCorrupted { .. } => Status::GenericFailure,
         GitError::InvalidRepository { .. } => Status::InvalidArg,
+        GitError::DestinationNotEmpty { .. } => Status::InvalidArg,
         GitError::FileNotInRepository { .. } => Status::InvalidArg,
         // Not InvalidArg: the oid the caller passed was perfectly valid, the
         // blob simply is not text. Nothing about the request needs fixing.
@@ -456,6 +519,7 @@ pub fn git_error_to_napi_with_flags(error: GitError, structured: bool) -> NapiEr
         GitError::RepositoryLocked { .. } => Status::GenericFailure,
         GitError::IoError { .. } => Status::GenericFailure,
         GitError::GitOperationFailure { .. } => Status::GenericFailure,
+        GitError::CloneFailed { .. } => Status::GenericFailure,
     };
 
     let message = if structured {

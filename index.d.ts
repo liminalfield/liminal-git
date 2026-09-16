@@ -346,6 +346,27 @@ export declare class GitService {
    * have can be lost by it.
    */
   fetch(repoPath: string, remoteName: string, credentials?: RemoteCredentials | undefined | null): Promise<FetchResult>
+  /**
+   * Clone a remote repository onto local disk.
+   *
+   * The one operation here that takes a URL and a destination rather than a
+   * repository path, because the point of it is that no repository exists
+   * yet. `validate_repo_path` is deliberately not called on the
+   * destination: it is not a repository, and will not be one until this
+   * succeeds.
+   *
+   * Failures say which failure they were. Before the destination is
+   * touched: DESTINATION_NOT_EMPTY, or INVALID_PATH when the parent
+   * directory does not exist. Once the transfer is underway:
+   * REMOTE_UNREACHABLE, REMOTE_NOT_FOUND, AUTHENTICATION_FAILED,
+   * INVALID_ARGUMENT for a URL libgit2 cannot parse or does not support,
+   * CLONE_INCOMPLETE for a transport failure after objects had already
+   * arrived, and REPOSITORY_NOT_FOUND, IO_ERROR or GIT_OPERATION_FAILURE
+   * for anything else libgit2 or the filesystem reports. Every failure
+   * after the destination is created also reports `destination` and
+   * `partialRemoved` in its details.
+   */
+  clone(url: string, destPath: string, credentials?: RemoteCredentials | undefined | null, options?: CloneOptions | undefined | null): Promise<CloneResult>
   /** Push a local branch to a remote. */
   push(repoPath: string, remoteName: string, branch: string, credentials?: RemoteCredentials | undefined | null): Promise<PushResult>
   /**
@@ -400,6 +421,37 @@ export interface BranchInfo {
   lastUpdated: string
   /** How many commits ahead/behind the default branch (for local branches) */
   aheadBehind?: AheadBehind
+}
+
+export interface CloneOptions {
+  /** Branch to check out. Defaults to the remote's HEAD. */
+  branch?: string
+}
+
+export interface CloneResult {
+  /**
+   * The branch checked out.
+   *
+   * Present even for an empty remote, where it is unborn — a name the
+   * first commit will land on rather than one that exists. For an empty
+   * remote that name may come from local `init.defaultBranch` rather than
+   * from the remote, which advertises no refs when it holds nothing. Do
+   * not read it as a fact about the remote in that case.
+   */
+  branch: string
+  /**
+   * The commit `branch` resolved to. Absent when the branch is unborn.
+   *
+   * napi-rs generates `commit?: string` for this field. Observed at
+   * runtime (Node v26.7.0, napi v3.3.0): when absent, the property is
+   * missing from the object entirely (`"commit" in result` is `false`)
+   * and `result.commit` reads as `undefined`, never `null`. Check with
+   * `result.commit == null`, which is true for both, rather than
+   * `=== null`.
+   */
+  commit?: string
+  receivedObjects: number
+  receivedBytes: number
 }
 
 export interface CommitDiff {
