@@ -21,12 +21,13 @@ npm install liminal-git
 platform, so installing needs no Rust toolchain and no C compiler, and takes as
 long as any other package.
 
-Three platforms are published, which are exactly the three CI builds and tests:
+Four platforms are published, which are exactly the four CI builds and tests:
 
 | Platform            | Package                      |
 | ------------------- | ---------------------------- |
 | Linux x64 (glibc)   | `liminal-git-linux-x64-gnu`  |
 | macOS Apple Silicon | `liminal-git-darwin-arm64`   |
+| macOS Intel         | `liminal-git-darwin-x64`     |
 | Windows x64         | `liminal-git-win32-x64-msvc` |
 
 They are wired as `optionalDependencies`, so npm fetches only the one matching
@@ -35,7 +36,7 @@ nobody made, which is why the list is not longer than the CI matrix.
 
 ### Building from source
 
-Anywhere else — Intel macOS, musl, ARM Linux — and for working on the library
+Anywhere else — musl, ARM Linux, ARM Windows — and for working on the library
 itself, install from a git tag:
 
 ```bash
@@ -723,9 +724,9 @@ cargo llvm-cov --no-default-features
 
 ### CI
 
-Every push and pull request runs the full matrix on Linux, macOS and Windows.
-A single platform can be targeted manually when iterating on something
-platform-specific:
+Every push and pull request runs the full matrix on Linux, macOS (Apple Silicon
+and Intel) and Windows. A single platform can be targeted manually when
+iterating on something platform-specific:
 
 ```bash
 gh workflow run ci.yml -R liminalfield/liminal-git -f platforms=windows
@@ -754,19 +755,19 @@ happened to have, with no record of either.
 
 Pushing a `v*` tag runs the whole matrix again on that commit and then, only if
 every job passes, publishes. The publish job checks the tag against
-`package.json`, collects the three addons the matrix just built and loaded,
-verifies each declared target has one, dry-runs, publishes the three platform
+`package.json`, collects the four addons the matrix just built and loaded,
+verifies each declared target has one, dry-runs, publishes the four platform
 packages, and publishes the main package last — so it never exists on npm
 pointing at platform packages that do not.
 
-**There is no npm secret in this repository.** All four packages use npm
+**There is no npm secret in this repository.** All five packages use npm
 trusted publishing, so `npm publish` exchanges the OIDC token from the job's
 `id-token: write` permission for a short-lived registry token. Nothing to leak,
 to expire, or to paste in empty — which is how the first attempt at 1.6.0 failed.
 
 The trust is bound to this repository **and this workflow's filename**, which npm
 matches exactly and case-sensitively. Renaming `ci.yml` breaks publishing until
-all four package configurations on npmjs.com are updated to match.
+all five package configurations on npmjs.com are updated to match.
 
 The first release could not work this way: npm requires a package to **exist**
 before a trusted publisher can be configured for it, and there is no way to

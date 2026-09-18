@@ -1,7 +1,7 @@
 name: CI
 
 # The repository is public, so Actions minutes are free and every push and pull
-# request runs the full three-platform matrix. While it was private this was
+# request runs the full four-platform matrix. While it was private this was
 # workflow_dispatch only, and defaulted to Linux, because private-repo minutes
 # bill at 1x for Linux, 2x for Windows and 10x for macOS.
 #
@@ -43,7 +43,7 @@ env:
 
 jobs:
   # Cheapest job, and it gates the rest: a formatting slip should fail in
-  # ninety seconds on one runner rather than after three platforms have built
+  # ninety seconds on one runner rather than after four platforms have built
   # libgit2 from source.
   lint:
     name: Format and lint
@@ -77,12 +77,12 @@ jobs:
       fail-fast: false
       matrix:
         # A specific platform narrows the matrix; anything else — including a
-        # push or pull request, where `inputs` is empty — runs all three.
+        # push or pull request, where `inputs` is empty — runs all four.
         os: ${{ fromJSON(
           inputs.platforms == 'linux' && '["ubuntu-latest"]'
           || inputs.platforms == 'windows' && '["windows-latest"]'
-          || inputs.platforms == 'macos' && '["macos-latest"]'
-          || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
+          || inputs.platforms == 'macos' && '["macos-latest", "macos-15-intel"]'
+          || '["ubuntu-latest", "macos-latest", "macos-15-intel", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -141,12 +141,12 @@ jobs:
       fail-fast: false
       matrix:
         # A specific platform narrows the matrix; anything else — including a
-        # push or pull request, where `inputs` is empty — runs all three.
+        # push or pull request, where `inputs` is empty — runs all four.
         os: ${{ fromJSON(
           inputs.platforms == 'linux' && '["ubuntu-latest"]'
           || inputs.platforms == 'windows' && '["windows-latest"]'
-          || inputs.platforms == 'macos' && '["macos-latest"]'
-          || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
+          || inputs.platforms == 'macos' && '["macos-latest", "macos-15-intel"]'
+          || '["ubuntu-latest", "macos-latest", "macos-15-intel", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -170,7 +170,7 @@ jobs:
       # once described 38 async methods as synchronous, because the methods
       # became async and nobody re-ran the generator.
       #
-      # Linux only. The check is about content, and running it on three
+      # Linux only. The check is about content, and running it on four
       # platforms only adds line-ending false positives.
       - name: The committed bindings match the Rust source
         if: runner.os == 'Linux'
@@ -288,7 +288,7 @@ jobs:
           fi
 
       # Checked before anything is published, because publishing is not atomic
-      # across four packages and a version number can never be reused. The
+      # across five packages and a version number can never be reused. The
       # first 1.6.0 attempt got half-way into `napi prepublish` before failing
       # on authentication, and moving that class of failure to the front is
       # what this step is for.
@@ -329,7 +329,7 @@ jobs:
 
       # `napi artifacts` writes each binary to the repository root as well as
       # into its platform package, and package.json's `files` allowlist
-      # includes *.node — so without this the main package ships all three
+      # includes *.node — so without this the main package ships every
       # binaries on top of the platform packages that already carry them. That
       # is what 1.6.1 did: 25MB where ~85KB was needed, downloaded by every
       # consumer on every platform, two thirds of it for machines they are not.
@@ -361,7 +361,7 @@ jobs:
 
       # AUTHENTICATION.
       #
-      # There is none in this file, and that is the point. All four packages
+      # There is none in this file, and that is the point. All five packages
       # have GitHub Actions configured as their trusted publisher on npmjs.com,
       # so `npm publish` exchanges the OIDC token from `id-token: write` for a
       # short-lived registry token by itself. No secret to leak, to expire, or
@@ -375,7 +375,7 @@ jobs:
       # does not need --provenance.
       #
       # Catches a malformed npm/ layout or a bad config before any package is
-      # published for real. Publishing is not atomic across the four packages,
+      # published for real. Publishing is not atomic across the five packages,
       # and a version number can never be reused, so a failure discovered
       # half-way costs a version bump.
       # --no-gh-release because the option defaults to *true*: without it napi
@@ -386,7 +386,7 @@ jobs:
       - name: Dry run
         run: npx napi prepublish -t npm --no-gh-release --dry-run
 
-      # Publishes the three platform packages, then rewrites the main
+      # Publishes the four platform packages, then rewrites the main
       # package's optionalDependencies to point at this exact version.
       - name: Publish the platform packages
         run: npx napi prepublish -t npm --no-gh-release
@@ -397,7 +397,7 @@ jobs:
       # ship. The addon reaches consumers through the optionalDependencies
       # above, and index.js falls back to requiring them by name.
       # The main package's optionalDependencies name exact versions of the
-      # three platform packages, so it must not be published until those are
+      # four platform packages, so it must not be published until those are
       # actually fetchable. If one is missing, npm installs the main package
       # happily — optional dependencies fail quietly — and the error surfaces
       # at require time, on that platform only.
