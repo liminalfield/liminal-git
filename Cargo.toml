@@ -27,6 +27,10 @@ crate-type = ["cdylib", "rlib"]
 #   libgit2   statically linked
 #   libssh2   statically linked (vendored C source)
 #   OpenSSL   DYNAMICALLY linked on Linux — libssl.so.3, libcrypto.so.3
+#   OpenSSL   DYNAMICALLY linked on macOS, to whichever copy the build found —
+#             on CI that is Homebrew, so the published binary carries absolute
+#             /opt/homebrew/opt/openssl@3 load paths and does not load on a Mac
+#             without it. A defect; see THIRD-PARTY-NOTICES.md.
 #
 # So on Linux the compiled addon now has a *runtime* dependency it did not
 # have before. Anything packaging this must declare it: Nocturne's pacman
@@ -41,7 +45,8 @@ crate-type = ["cdylib", "rlib"]
 # ever matter more than they do now.
 #
 # Build-time requirements per platform, which are the reverse of what people
-# assume — read from libgit2-sys 0.16.2, not from memory:
+# assume — read from libgit2-sys 0.16.2, not from memory, and still true of
+# 0.18.8:
 #
 #   Windows  nothing. openssl-sys is declared under
 #            [target."cfg(unix)".dependencies], so Windows never pulls it;
@@ -50,8 +55,10 @@ crate-type = ["cdylib", "rlib"]
 #   macOS    also OpenSSL — macOS is cfg(unix) — and its system LibreSSL is
 #            not accepted, so Homebrew or vendored.
 #
-# Build-time cost lands on whoever compiles. Run-time cost, on Linux only,
-# now lands on whoever runs it.
+# Build-time cost lands on whoever compiles. Run-time cost lands on whoever
+# runs it — on Linux by design, and on macOS by accident: building against
+# Homebrew's OpenSSL does not stay a build-time choice, because the absolute
+# path it resolved is written into the binary.
 git2 = { version = "0.21", default-features = false, features = ["https", "ssh"] }
 #
 # 0.21 changed a family of string accessors from Option<&str> to

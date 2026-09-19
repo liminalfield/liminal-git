@@ -4,9 +4,10 @@
 produces is not only liminal-git: it is a single `.node` file with several other
 projects' code linked into it. This file records what those are.
 
-Verified against the Linux x64 build. Figures come from reading the binary, not
-from crate metadata — see the warning under libgit2 for why that distinction
-matters.
+Verified against the published 1.10.0 binaries for all three platforms. Figures
+come from reading the binaries — embedded version strings, ELF `NEEDED` entries,
+Mach-O load commands and PE imports — not from crate metadata. See the warning
+under libgit2 for why that distinction matters.
 
 ---
 
@@ -15,9 +16,10 @@ matters.
 This is the one that needs attention.
 
 libgit2 is **statically linked** into every distributed binary. There is no
-`libgit2.so` dependency; the code is compiled in. On the Linux x64 build, the
-6.5 MB addon contains 1020 `git_*` symbols and the vendored libgit2 1.7.2 source
-tree from `libgit2-sys 0.16.2`.
+`libgit2.so` dependency; the code is compiled in. All three platform binaries
+embed the version string `libgit2 1.9.7`, from the source tree vendored by
+`libgit2-sys 0.18.8`. On Linux x64 the 10.7 MB addon carries 1256 `git_*`
+symbols.
 
 > ### Why a license scanner will not tell you this
 >
@@ -73,13 +75,14 @@ it.
 
 ## zlib
 
-Linkage is **platform-dependent**, so this is worth checking per platform rather
-than assuming:
+Linkage is **platform-dependent**, and differs between the published binaries:
 
-- **Linux x64** — dynamically linked against the system zlib
-  (`libz.so.1 => /usr/lib/libz.so.1`). Not redistributed.
-- **Other platforms** — `libz-sys` may vendor and statically link zlib instead,
-  in which case zlib's notice must travel with those binaries.
+- **Linux x64** — dynamically linked against the system zlib (`libz.so.1`). Not
+  redistributed.
+- **macOS arm64** — dynamically linked against the system zlib
+  (`/usr/lib/libz.1.dylib`). Not redistributed.
+- **Windows x64** — **statically linked**. `libz-sys` vendors zlib there, and the
+  binary embeds `deflate 1.3.1`. This notice travels with the Windows binary.
 
 Verify on any platform you ship with:
 
@@ -93,8 +96,9 @@ license — permissive, with no attribution requirement for binary distribution.
 
 ## libssh2
 
-Statically linked, from vendored C source, because `remote_ops` supports SSH
-remotes. libssh2 is Copyright (c) the libssh2 contributors, under the
+Statically linked on all three platforms, from vendored C source, because
+`remote_ops` supports SSH remotes. The binaries embed `libssh2_1.11.1`. libssh2
+is Copyright (c) the libssh2 contributors, under the
 **BSD 3-Clause** license — permissive, requiring that the copyright notice and
 disclaimer be retained in redistributions, which this file does.
 
@@ -112,9 +116,22 @@ package. The licence obligations that attach to redistributing OpenSSL
 therefore do not arise here — but the *runtime dependency* does, and anything
 packaging this must declare it.
 
-On **Windows**, OpenSSL is not involved at all: `openssl-sys` is declared under
-`[target."cfg(unix)".dependencies]`, and libgit2 uses winhttp and schannel
-instead.
+On **macOS**, OpenSSL is also **dynamically** linked, but not from the system —
+macOS ships no OpenSSL. The published arm64 binary carries hard load commands on
+Homebrew's copy at an absolute path:
+
+```
+/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib
+/opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib
+```
+
+No OpenSSL is redistributed, so again no redistribution obligation arises. The
+runtime consequence is serious, though: on a Mac without Homebrew's `openssl@3`
+at exactly that path, the addon fails to load. This is a defect in the macOS
+build, not a requirement consumers are expected to meet.
+
+On **Windows**, OpenSSL is not involved at all: the binary imports no OpenSSL,
+and libgit2 uses winhttp and schannel instead.
 
 If `vendored-openssl` is ever enabled, OpenSSL becomes statically linked and
 this section must change: it would then be redistributed, and OpenSSL's terms
@@ -132,14 +149,14 @@ otool -L <binary> | grep -iE 'ssl|crypto' # macOS
 
 ## Rust crates
 
-77 crates are compiled into the addon with default features. All are permissive.
-Tally by declared SPDX expression:
+80 crates are compiled into the Linux x64 addon with default features. All are
+permissive. Tally by declared SPDX expression:
 
 | licenses | crates |
 |---|---:|
-| MIT OR Apache-2.0 (in either spelling) | 45 |
+| MIT OR Apache-2.0 (in either spelling) | 46 |
 | Unicode-3.0 | 18 |
-| MIT | 8 |
+| MIT | 9 |
 | Unlicense OR MIT | 5 |
 | (MIT OR Apache-2.0) AND Unicode-3.0 | 1 |
 | Apache-2.0 OR BSL-1.0 | 1 |
@@ -154,7 +171,8 @@ for consistency with its own license.
 To regenerate the tally:
 
 ```sh
-cargo tree -e normal --prefix none | awk 'NF>=2 {print $1" "$2}' | sort -u
+cargo tree -e normal --target x86_64-unknown-linux-gnu --prefix none \
+  | awk 'NF>=2 {print $1" "$2}' | sort -u
 ```
 
 then read `license` from each crate's `Cargo.toml` in the cargo registry. Note
