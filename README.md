@@ -40,7 +40,7 @@ Anywhere else — musl, ARM Linux, ARM Windows — and for working on the librar
 itself, install from a git tag:
 
 ```bash
-npm install github:liminalfield/liminal-git#v1.10.0
+npm install github:liminalfield/liminal-git#v1.11.0
 ```
 
 That route runs the `prepare` script, which compiles the addon on the installing
