@@ -23,12 +23,13 @@
       "default": "./index.js"
     }
   },
-  "//napi": "targets lists exactly what CI builds and tests, and nothing else. x86_64-apple-darwin was declared here for a long time without any CI leg ever producing or exercising it; publishing a binary nobody tests is a support promise nobody made, so it is gone. Intel macOS installs from a git tag and builds from source, which is the same route every consumer used before npm publishing existed.",
+  "//napi": "targets lists exactly what CI builds and tests, and nothing else. x86_64-apple-darwin was once declared here without any CI leg ever producing or exercising it, and was removed on the principle that publishing a binary nobody tests is a support promise nobody made. It is back because CI now builds and tests it natively on an Intel macOS runner. Every other platform installs from a git tag and builds from source.",
   "napi": {
     "binaryName": "liminal-git",
     "targets": [
       "x86_64-unknown-linux-gnu",
       "aarch64-apple-darwin",
+      "x86_64-apple-darwin",
       "x86_64-pc-windows-msvc"
     ]
   },
