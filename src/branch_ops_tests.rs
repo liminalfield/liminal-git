@@ -695,3 +695,196 @@ fn test_a_tracked_file_still_reports_unstaged_changes_would_be_lost() {
         other => panic!("expected UnstagedChangesWouldBeLost, got {:?}", other),
     }
 }
+
+/// A clone on a detached HEAD with two linked worktrees, `request-1` and
+/// `request-2`, each holding its own branch with a different `page.md`.
+/// Returns the worktree paths; the temp dir owns them all.
+fn clone_with_two_worktrees(temp_dir: &TempDir, repo_path: &Path) -> (PathBuf, PathBuf) {
+    create_test_file(repo_path, "page.md", "base");
+    commit_file(repo_path, "page.md", "Initial commit");
+
+    let repo = Repository::open(repo_path).expect("open repository");
+    let mut paths = Vec::new();
+    for name in ["request-1", "request-2"] {
+        create_branch(repo_path, name);
+        let reference = repo
+            .find_reference(&format!("refs/heads/{}", name))
+            .expect("find branch");
+        let mut opts = git2::WorktreeAddOptions::new();
+        opts.reference(Some(&reference));
+        let path = temp_dir.path().join(format!("wt-{}", name));
+        repo.worktree(name, &path, Some(&opts))
+            .expect("add worktree");
+
+        create_test_file(&path, "page.md", &format!("from {}", name));
+        commit_file(&path, "page.md", &format!("Change page.md on {}", name));
+        paths.push(path);
+    }
+
+    // The main clone lets go of its branch, as gantry's does.
+    let head = repo.head().unwrap().target().unwrap();
+    repo.set_head_detached(head).expect("detach HEAD");
+
+    (paths.remove(0), paths.remove(0))
+}
+
+fn assert_refused_as_checked_out(error: GitError, branch: &str, holder: &Path) {
+    match error {
+        GitError::BranchCheckedOutInWorktree {
+            name,
+            worktree_path,
+        } => {
+            assert_eq!(name, branch);
+            assert!(
+                !worktree_path.ends_with(['/', '\\']),
+                "a worktree path has no trailing separator: {}",
+                worktree_path
+            );
+            assert_eq!(
+                std::fs::canonicalize(&worktree_path).unwrap(),
+                std::fs::canonicalize(holder).unwrap()
+            );
+        }
+        other => panic!("expected BranchCheckedOutInWorktree, got {:?}", other),
+    }
+}
+
+fn assert_untouched(worktree: &Path, branch: &str, content: &str) {
+    let repo = Repository::open(worktree).expect("open worktree");
+    assert_eq!(
+        repo.head().unwrap().shorthand().ok(),
+        Some(branch),
+        "HEAD must not move"
+    );
+    assert_eq!(
+        std::fs::read_to_string(worktree.join("page.md")).unwrap(),
+        content,
+        "the working tree must not change"
+    );
+    let statuses = repo.statuses(None).expect("status");
+    assert!(
+        statuses.is_empty(),
+        "the index must not change: {:?}",
+        statuses
+            .iter()
+            .map(|s| (s.path().map(str::to_string), s.status()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn test_checkout_branch_refuses_a_branch_another_worktree_has() {
+    let (temp_dir, repo_path) = setup_test_repo();
+    let (wt1, wt2) = clone_with_two_worktrees(&temp_dir, &repo_path);
+
+    let error = checkout_branch_impl(wt1.to_str().unwrap(), "request-2")
+        .expect_err("a branch another worktree has must be refused");
+
+    assert_refused_as_checked_out(error, "request-2", &wt2);
+    assert_untouched(&wt1, "request-1", "from request-1");
+}
+
+#[test]
+#[serial_test::serial]
+fn test_checkout_branch_refuses_a_branch_another_worktree_has_under_force() {
+    let (temp_dir, repo_path) = setup_test_repo();
+    let (wt1, wt2) = clone_with_two_worktrees(&temp_dir, &repo_path);
+    Repository::open(&wt1)
+        .unwrap()
+        .config()
+        .unwrap()
+        .set_str("liminal.checkoutStrategy", "force")
+        .unwrap();
+
+    let error = checkout_branch_impl(wt1.to_str().unwrap(), "request-2")
+        .expect_err("force discards edits, not another worktree's claim");
+
+    assert_refused_as_checked_out(error, "request-2", &wt2);
+    assert_untouched(&wt1, "request-1", "from request-1");
+}
+
+#[test]
+#[serial_test::serial]
+fn test_checkout_branch_refuses_from_a_detached_head() {
+    // libgit2 checks only from an attached HEAD; git refuses either way.
+    let (temp_dir, repo_path) = setup_test_repo();
+    let (_wt1, wt2) = clone_with_two_worktrees(&temp_dir, &repo_path);
+
+    let error = checkout_branch_impl(repo_path.to_str().unwrap(), "request-2")
+        .expect_err("a detached HEAD must not take another worktree's branch");
+
+    assert_refused_as_checked_out(error, "request-2", &wt2);
+    let repo = Repository::open(&repo_path).unwrap();
+    assert!(repo.head_detached().unwrap(), "HEAD must stay detached");
+    assert_eq!(
+        std::fs::read_to_string(repo_path.join("page.md")).unwrap(),
+        "base"
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn test_checkout_branch_refuses_the_main_worktrees_branch() {
+    let (temp_dir, repo_path) = setup_test_repo();
+    let (wt1, _wt2) = clone_with_two_worktrees(&temp_dir, &repo_path);
+    create_branch(&repo_path, "main-work");
+    Repository::open(&repo_path)
+        .unwrap()
+        .set_head("refs/heads/main-work")
+        .unwrap();
+
+    let error = checkout_branch_impl(wt1.to_str().unwrap(), "main-work")
+        .expect_err("the main worktree's branch is taken too");
+
+    assert_refused_as_checked_out(error, "main-work", &repo_path);
+    assert_untouched(&wt1, "request-1", "from request-1");
+}
+
+#[test]
+#[serial_test::serial]
+fn test_checkout_branch_allows_the_branch_this_worktree_has() {
+    let (temp_dir, repo_path) = setup_test_repo();
+    let (wt1, _wt2) = clone_with_two_worktrees(&temp_dir, &repo_path);
+
+    let info = checkout_branch_impl(wt1.to_str().unwrap(), "request-1")
+        .expect("re-checking out your own branch is not a conflict");
+
+    assert!(info.is_current);
+    assert_untouched(&wt1, "request-1", "from request-1");
+}
+
+#[test]
+#[serial_test::serial]
+fn test_checkout_branch_refuses_a_branch_held_by_a_worktree_gone_from_disk() {
+    // libgit2 skips such a worktree; git does not, and neither does this.
+    // The directory may be on a drive that is only unmounted, and when it
+    // returns two worktrees would share one branch. `git worktree prune`
+    // releases the claim.
+    let (temp_dir, repo_path) = setup_test_repo();
+    let (wt1, wt2) = clone_with_two_worktrees(&temp_dir, &repo_path);
+    std::fs::remove_dir_all(&wt2).unwrap();
+
+    let error = checkout_branch_impl(wt1.to_str().unwrap(), "request-2")
+        .expect_err("a missing worktree still holds its branch");
+
+    match error {
+        GitError::BranchCheckedOutInWorktree {
+            name,
+            worktree_path,
+        } => {
+            // The directory is gone, so only its parent can be canonicalized.
+            // Comparing whole strings would trip over Windows, where
+            // canonicalize gives `\\?\C:\...` and libgit2 `C:/...`.
+            assert_eq!(name, "request-2");
+            let reported = PathBuf::from(worktree_path);
+            assert_eq!(reported.file_name(), wt2.file_name());
+            assert_eq!(
+                std::fs::canonicalize(reported.parent().unwrap()).unwrap(),
+                std::fs::canonicalize(temp_dir.path()).unwrap()
+            );
+        }
+        other => panic!("expected BranchCheckedOutInWorktree, got {:?}", other),
+    }
+    assert_untouched(&wt1, "request-1", "from request-1");
+}
