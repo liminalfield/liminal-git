@@ -494,6 +494,7 @@ pub fn git_error_to_napi_with_flags(error: GitError, structured: bool) -> NapiEr
         GitError::ConfigMissing { .. } => Status::GenericFailure,
         GitError::CannotDeleteCurrentBranch { .. } => Status::GenericFailure,
         GitError::BranchNotMerged { .. } => Status::GenericFailure,
+        GitError::BranchCheckedOutInWorktree { .. } => Status::GenericFailure,
         GitError::NotFastForward { .. } => Status::GenericFailure,
         GitError::RepositoryCorrupted { .. } => Status::GenericFailure,
         GitError::InvalidRepository { .. } => Status::InvalidArg,

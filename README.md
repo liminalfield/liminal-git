@@ -474,6 +474,19 @@ a host application can offer the right thing.
 Untracked files that the incoming tree does not want are none of these
 operations' business and never block anything.
 
+### A branch another worktree has
+
+`checkoutBranch` refuses a branch that another worktree of the same repository
+has checked out, with `BRANCH_CHECKED_OUT_IN_WORKTREE`. `details.name` is the
+branch and `details.worktreePath` the worktree holding it. It refuses before
+touching anything, so the working tree, the index and HEAD stay as they were,
+under either checkout strategy.
+
+This matches git, which is stricter than libgit2 in two places. The refusal
+applies from a detached HEAD too, and a linked worktree whose directory is gone
+still holds its branch until `git worktree prune` releases it. Checking out the
+branch the worktree already has is not a conflict.
+
 **Not** supported, deliberately: `revert`, cherry-pick ranges, and any
 automatic conflict resolution strategy. Which of two versions of a writer's
 work survives is not a decision this library will make on their behalf.
@@ -553,7 +566,7 @@ The codes are stable:
 - **Files** — `FILE_NOT_FOUND`, `FILE_NOT_IN_REPOSITORY`, `BLOB_NOT_UTF8`, `PATH_TRAVERSAL`
 - **Operations** — `NOTHING_TO_COMMIT`, `MERGE_CONFLICT`, `UNCOMMITTED_CHANGES`, `UNSTAGED_CHANGES_WOULD_BE_LOST`, `UNTRACKED_FILES_WOULD_BE_OVERWRITTEN`, `DETACHED_HEAD`, `CONFIG_MISSING`
 - **Merge resolution** — `HEAD_MOVED`, `UNRESOLVED_CONFLICTS`, `MERGE_NO_LONGER_CONFLICTS`
-- **Branches** — `BRANCH_NOT_FOUND`, `BRANCH_ALREADY_EXISTS`, `CANNOT_DELETE_CURRENT_BRANCH`, `BRANCH_NOT_MERGED`, `NOT_FAST_FORWARD`
+- **Branches** — `BRANCH_NOT_FOUND`, `BRANCH_ALREADY_EXISTS`, `CANNOT_DELETE_CURRENT_BRANCH`, `BRANCH_NOT_MERGED`, `BRANCH_CHECKED_OUT_IN_WORKTREE`, `NOT_FAST_FORWARD`
 - **Tags** — `TAG_NOT_FOUND`, `TAG_ALREADY_EXISTS`
 - **Refs** — `REF_NOT_FOUND`, `EMPTY_REPOSITORY`
 - **Validation** — `INVALID_PATH`, `INVALID_ARGUMENT`, `INVALID_COMMIT_HASH`, `INVALID_BRANCH_NAME`, `INVALID_TAG_NAME`

@@ -153,6 +153,15 @@ pub enum GitError {
         name: String,
         commits_ahead: u32,
     },
+    /// `checkoutBranch` was asked for a branch another worktree of the same
+    /// repository has checked out. Two worktrees on one branch each commit
+    /// over the other's view of it, so git refuses this, and so does this
+    /// library — before touching the tree, so the refusal changes nothing.
+    /// `worktree_path` is the worktree holding the branch.
+    BranchCheckedOutInWorktree {
+        name: String,
+        worktree_path: String,
+    },
     /// `fastForward` was asked to move a branch to `branch`, but that is not
     /// a strict fast-forward: HEAD is either already up to date with it or
     /// has diverged from it. `reason` is `"up-to-date"` or `"diverged"`.
@@ -326,6 +335,14 @@ impl fmt::Display for GitError {
                 f,
                 "Branch '{}' not merged ({} commits ahead)",
                 name, commits_ahead
+            ),
+            GitError::BranchCheckedOutInWorktree {
+                name,
+                worktree_path,
+            } => write!(
+                f,
+                "Branch '{}' is checked out in another worktree: {}",
+                name, worktree_path
             ),
             GitError::NotFastForward { branch, reason } => {
                 write!(f, "Cannot fast-forward to '{}': {}", branch, reason)
@@ -670,6 +687,7 @@ impl GitError {
             GitError::BranchAlreadyExists { .. } => "BRANCH_ALREADY_EXISTS",
             GitError::CannotDeleteCurrentBranch { .. } => "CANNOT_DELETE_CURRENT_BRANCH",
             GitError::BranchNotMerged { .. } => "BRANCH_NOT_MERGED",
+            GitError::BranchCheckedOutInWorktree { .. } => "BRANCH_CHECKED_OUT_IN_WORKTREE",
             GitError::NotFastForward { .. } => "NOT_FAST_FORWARD",
             GitError::TagNotFound { .. } => "TAG_NOT_FOUND",
             GitError::TagAlreadyExists { .. } => "TAG_ALREADY_EXISTS",
@@ -832,6 +850,13 @@ impl GitError {
             } => {
                 details.set("name", name.as_str())?;
                 details.set("commitsAhead", *commits_ahead)?;
+            }
+            GitError::BranchCheckedOutInWorktree {
+                name,
+                worktree_path,
+            } => {
+                details.set("name", name.as_str())?;
+                details.set("worktreePath", worktree_path.as_str())?;
             }
             GitError::NotFastForward { branch, reason } => {
                 details.set("branch", branch.as_str())?;
@@ -1064,6 +1089,16 @@ impl GitError {
                 details.insert(
                     "commitsAhead".to_string(),
                     serde_json::Value::Number((*commits_ahead as u64).into()),
+                );
+            }
+            GitError::BranchCheckedOutInWorktree {
+                name,
+                worktree_path,
+            } => {
+                details.insert("name".to_string(), serde_json::Value::String(name.clone()));
+                details.insert(
+                    "worktreePath".to_string(),
+                    serde_json::Value::String(worktree_path.clone()),
                 );
             }
             GitError::NotFastForward { branch, reason } => {
@@ -1566,6 +1601,28 @@ mod tests {
         assert_eq!(
             serialized.details.get("commitsAhead").unwrap(),
             &serde_json::Value::Number(5u64.into())
+        );
+    }
+
+    #[test]
+    fn test_serialization_branch_checked_out_in_worktree() {
+        let err = GitError::BranchCheckedOutInWorktree {
+            name: "request-2".to_string(),
+            worktree_path: "/work/request-2".to_string(),
+        };
+        let serialized = err.to_serializable();
+
+        assert_eq!(serialized.code, "BRANCH_CHECKED_OUT_IN_WORKTREE");
+        assert!(serialized.message.contains("request-2"));
+        assert!(!serialized.retriable);
+        assert_eq!(serialized.details.len(), 2);
+        assert_eq!(
+            serialized.details.get("name").unwrap(),
+            &serde_json::Value::String("request-2".to_string())
+        );
+        assert_eq!(
+            serialized.details.get("worktreePath").unwrap(),
+            &serde_json::Value::String("/work/request-2".to_string())
         );
     }
 

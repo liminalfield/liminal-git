@@ -348,6 +348,19 @@ fn checkout_branch_internal_impl(
         })?;
 
     let branch_ref = branch.get();
+
+    // libgit2 makes this check only inside `set_head`, after the tree and
+    // index have already been rewritten, and only from an attached HEAD.
+    // Both paths below write the tree first, so it has to happen here.
+    if let Some(refname) = branch_ref.name().ok()
+        && let Some(worktree_path) = worktree_holding_branch(repo, refname)?
+    {
+        return Err(GitError::BranchCheckedOutInWorktree {
+            name: branch_name.to_string(),
+            worktree_path,
+        });
+    }
+
     let target_tree = branch_ref
         .peel_to_tree()
         .map_err(|e| GitError::from(e).with_operation("peel_to_tree"))?;
@@ -369,9 +382,9 @@ fn checkout_branch_internal_impl(
                 })?)
                 .map_err(|e| GitError::from(e).with_operation("set_head"))?;
 
-                // Refresh working tree to match new HEAD
-                // The checkout_tree above was essentially a dry-run; now we need to
-                // actually update the working directory to match the branch
+                // Refresh working tree to match new HEAD. The checkout_tree
+                // above already wrote the tree and index; this settles
+                // anything it left that differs from the new HEAD.
                 let mut final_builder = git2::build::CheckoutBuilder::new();
                 final_builder.safe();
                 repo.checkout_head(Some(&mut final_builder))
@@ -403,6 +416,67 @@ fn checkout_branch_internal_impl(
 
         Ok(())
     }
+}
+
+/// The worktree, other than `repo`'s own, that has `refname` checked out.
+///
+/// Mirrors libgit2's `branch_is_checked_out`, which git2 does not wrap, with
+/// one difference taken from git: a linked worktree whose directory is gone
+/// still holds its branch. Its HEAD survives in the admin directory, and the
+/// directory may be on a drive that is only unmounted. `git worktree prune`
+/// releases the claim.
+fn worktree_holding_branch(
+    repo: &Repository,
+    refname: &str,
+) -> std::result::Result<Option<String>, GitError> {
+    let holds = |head: Option<String>| head.as_deref() == Some(refname);
+
+    // Checking out the branch this worktree already has is a no-op, not a
+    // conflict, and it would otherwise match itself below.
+    if holds(symbolic_head(repo)) {
+        return Ok(None);
+    }
+
+    if let Ok(main) = Repository::open(repo.commondir())
+        && !main.is_bare()
+        && holds(symbolic_head(&main))
+        && let Some(workdir) = main.workdir()
+    {
+        // libgit2 ends a workdir with a separator and a worktree path without
+        // one; the caller gets the same shape from either.
+        let path = workdir.display().to_string();
+        return Ok(Some(path.trim_end_matches(['/', '\\']).to_string()));
+    }
+
+    let names = repo
+        .worktrees()
+        .map_err(|e| GitError::from(e).with_operation("list_worktrees"))?;
+    // A name that is not UTF-8 cannot be looked up by git2 anyway.
+    for name in names.iter().flatten().flatten() {
+        let admin_head = repo.commondir().join("worktrees").join(name).join("HEAD");
+        let head = std::fs::read_to_string(&admin_head)
+            .ok()
+            .and_then(|s| s.trim().strip_prefix("ref: ").map(str::to_string));
+        if holds(head) {
+            let path = repo
+                .find_worktree(name)
+                .map(|wt| wt.path().display().to_string())
+                .unwrap_or_else(|_| name.to_string());
+            return Ok(Some(path));
+        }
+    }
+
+    Ok(None)
+}
+
+/// The ref HEAD points at, or `None` when HEAD is detached or unreadable.
+fn symbolic_head(repo: &Repository) -> Option<String> {
+    repo.find_reference("HEAD")
+        .ok()?
+        .symbolic_target()
+        .ok()
+        .flatten()
+        .map(str::to_string)
 }
 
 /// The error a refused safe checkout should report, derived from the state on
